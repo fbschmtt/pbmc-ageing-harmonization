@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pbmc-ageing-pipeline"
+version = "0.1.0"
+description = "Configuration-driven harmonization of PBMC ageing scRNA-seq studies"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "anndata>=0.10,<0.13",
+  "celltypist>=1.6,<2",
+  "openpyxl>=3.1,<4",
+  "pandas>=2.0,<3",
+  "scanpy>=1.10,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.9,<1"]
+
+[project.scripts]
+pbmc-harmonize = "pbmc_pipeline.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

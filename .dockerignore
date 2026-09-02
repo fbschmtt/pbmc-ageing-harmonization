@@ -1,0 +1,13 @@
+.git
+.venv
+.cache
+input_data
+converted_cache
+homogenized
+output
+test/files
+legacy_notebooks
+tools
+*.ipynb
+__pycache__
+*.pyc

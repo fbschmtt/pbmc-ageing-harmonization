@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "studies_config": "config/studies.json",
+  "obs_schema": "config/harmonized_obs_schema.json",
+  "input_root": ".",
+  "test_input_root": "test/files",
+  "output_dir": "output/harmonized",
+  "report_dir": "output/reports",
+  "models": {
+    "aifi_l1": "aifi_models/ref_pbmc_clean_celltypist_model_AIFI_L1_2024-04-18.pkl",
+    "aifi_l2": "aifi_models/ref_pbmc_clean_celltypist_model_AIFI_L2_2024-04-19.pkl",
+    "aifi_l3": "aifi_models/ref_pbmc_clean_celltypist_model_AIFI_L3_2024-04-19.pkl"
+  },
+  "processing": {
+    "target_sum": 10000,
+    "hvg": {"min_mean": 0.0125, "max_mean": 3.0, "min_disp": 0.5},
+    "exclude_vdj_regex": "^(TRA[VDJ]|TRB[VDJ]|IGL[VDJ]|IGH[VDJ])",
+    "neighbors": {"n_neighbors": 50, "n_pcs": 30},
+    "random_seed": 42,
+    "output_compression": "gzip"
+  }
+}
+

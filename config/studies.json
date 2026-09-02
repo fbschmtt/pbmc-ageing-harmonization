@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "studies": {
+    "aida25": {
+      "input": "input_data/3a8a77a6-f069-479c-a2c1-252feafd0106.h5ad",
+      "test_input": "3a8a77a6-f069-479c-a2c1-252feafd0106.h5ad",
+      "counts_source": "raw",
+      "features": {"source_column": "feature_name", "duplicate_policy": "drop_all"},
+      "joins": [{
+        "path": "input_data/metadata/aida25/mmc1.xlsx",
+        "format": "excel", "on": ["donor_id", "Country"], "how": "left",
+        "read_options": {"skiprows": 1},
+        "rename": {"DCP_ID": "donor_id", "scRNA-seq Experimental Batch": "batch_single_cell"},
+        "value_maps": {"Country": {"India": "IN", "Japan": "JP", "Singapore": "SG", "South Korea": "KR", "Thailand": "TH"}},
+        "resolve_duplicates": {"keys": ["Country", "donor_id"], "set": {"batch_single_cell": "unclear"}, "keep": "first"},
+        "required": true,
+        "note": "Legacy notebook marks duplicate country/donor batch assignments as unclear."
+      }],
+      "metadata": {
+        "study_celltype": {"source": "Annotation_Level2"},
+        "sample": {"concat": [{"constant": "aida"}, "Country", "donor_id"], "separator": "_"},
+        "subject": {"source": "donor_id"},
+        "age": {"source": "development_stage", "replace": {"-year-old stage": ""}, "dtype": "float"},
+        "sex": {"source": "sex", "lower": true},
+        "bmi": {"source": "donor_BMI_at_collection", "dtype": "float"},
+        "cmv": {"constant": "not_provided"},
+        "ethnicity": {"source": "self_reported_ethnicity", "map": {"European": "caucasian"}, "default": "asian"},
+        "ethnicity_fine": {"source": "self_reported_ethnicity", "lower": true},
+        "technology": {"constant": "10X5'"},
+        "aligner": {"source": "alignment_software"},
+        "genome": {"source": "reference_genome"},
+        "demultiplexing": {"constant": "genetic"},
+        "frozen": {"constant": "yes"},
+        "include_intronic": {"source": "intronic_reads_counted"},
+        "smoking_status": {"source": "Smoking Status", "map": {"0": "no", "1": "yes"}, "default": "not_provided"},
+        "study_site": {"concat": [{"constant": "aida"}, "Country"], "separator": "_"},
+        "country": {"source": "Country", "lower": true},
+        "batch_single_cell": {"source": "batch_single_cell", "prefix": "aida_"}
+      },
+      "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
+      "provenance": {"technology": "needs_review", "frozen": "reported_in_legacy", "ethnicity": "partly_inferred"}
+    },
+    "aifi": {
+      "input": "input_data/human_immune_health_atlas_full.h5ad",
+      "test_input": "human_immune_health_atlas_full.h5ad",
+      "counts_source": "raw",
+      "features": {"duplicate_policy": "error"},
+      "metadata": {
+        "study_celltype": {"source": "AIFI_L3"},
+        "sample": {"source": "specimen.specimenGuid"},
+        "subject": {"source": "specimen.specimenGuid", "split": {"separator": "-", "index": 0}},
+        "age": {"source": "sample.subjectAgeAtDraw", "dtype": "float"},
+        "sex": {"source": "subject.biologicalSex", "lower": true},
+        "bmi": {"source": "subject.bmi", "dtype": "float"},
+        "cmv": {"source": "subject.cmv", "lower": true},
+        "ethnicity": {"source": "subject.race", "lower": true},
+        "ethnicity_fine": {"concat": ["subject.race", "subject.ethnicity"], "separator": "_", "lower": true},
+        "technology": {"constant": "10X3'"}, "aligner": {"constant": "not_provided"},
+        "genome": {"constant": "not_provided"}, "demultiplexing": {"constant": "HTO"},
+        "frozen": {"constant": "yes"}, "include_intronic": {"constant": "not_provided"},
+        "smoking_status": {"constant": "not_provided"}, "study_site": {"constant": "aifi"},
+        "country": {"constant": "usa"}, "batch_single_cell": {"source": "well_id"},
+        "aifi_l1_majority": {"source": "AIFI_L1"}, "aifi_l2_majority": {"source": "AIFI_L2"},
+        "aifi_l3_majority": {"source": "AIFI_L3"}
+      },
+      "annotation": {"method": "existing"},
+      "provenance": {"celltypes": "native_AIFI_labels"}
+    },
+    "onek1k": {
+      "input": "input_data/81d84489-bff9-4fb6-b0ee-78348126eada.h5ad",
+      "test_input": "81d84489-bff9-4fb6-b0ee-78348126eada.h5ad",
+      "counts_source": "X",
+      "features": {"source_column": "feature_name", "split": {"separator": "_", "index": 0}, "duplicate_policy": "drop_all"},
+      "metadata": {
+        "study_celltype": {"source": "cell_type"}, "sample": {"source": "donor_id"},
+        "subject": {"source": "donor_id"}, "age": {"source": "age", "dtype": "float"},
+        "sex": {"source": "sex", "lower": true}, "bmi": {"constant": null},
+        "cmv": {"constant": "not_provided"}, "ethnicity": {"constant": "caucasian"},
+        "ethnicity_fine": {"constant": "northern_european"}, "technology": {"constant": "10X3'"},
+        "aligner": {"constant": "STAR"}, "genome": {"constant": "GRCh37"},
+        "demultiplexing": {"constant": "genetic"}, "frozen": {"constant": "no"},
+        "include_intronic": {"constant": "no"}, "smoking_status": {"constant": "not_provided"},
+        "study_site": {"constant": "onek1k"}, "country": {"constant": "aus"},
+        "batch_single_cell": {"source": "pool_number", "prefix": "onek1k_"}
+      },
+      "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
+      "provenance": {"sample": "needs_review", "include_intronic": "inferred", "ethnicity": "reported_in_legacy"}
+    },
+    "terekhova23": {
+      "input": "input_data/pbmc_gex_raw_with_var_obs.h5ad", "test_input": "pbmc_gex_raw_with_var_obs.h5ad",
+      "counts_source": "X", "features": {"duplicate_policy": "error"},
+      "joins": [{"path": "input_data/metadata/terekhova23/cell_to_tube.csv.gz", "format": "csv", "mode": "cell_lookup", "index_column": "cell_id", "columns": ["cell_id", "Tube_id"], "required": true},
+                  {"path": "input_data/metadata/terekhova23/mmc2.xlsx", "format": "excel", "mode": "terekhova_visits", "on": ["Tube_id"], "required": true}],
+      "metadata": {
+        "study_celltype": {"source": "Cluster_names"}, "sample": {"source": "Tube_id"}, "subject": {"source": "Donor_id"},
+        "age": {"source": "Age", "dtype": "float"}, "sex": {"source": "Gender", "lower": true}, "bmi": {"source": "BMI", "dtype": "float"},
+        "cmv": {"constant": "not_provided"}, "ethnicity": {"source": "Ethnicity", "lower": true},
+        "ethnicity_fine": {"source": "Ethnicity", "lower": true}, "technology": {"constant": "10X5'v2"},
+        "aligner": {"constant": "CRv7.0.0"}, "genome": {"constant": "GRCh38"}, "demultiplexing": {"constant": "genetic"},
+        "frozen": {"constant": "yes"}, "include_intronic": {"constant": "yes"}, "smoking_status": {"constant": "no"},
+        "study_site": {"constant": "terekhova23"}, "country": {"constant": "usa"},
+        "batch_single_cell": {"source_index": true, "split": {"separator": "_", "index": 0}, "prefix": "terekhova23_"}
+      },
+      "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
+      "provenance": {"frozen": "needs_review", "include_intronic": "inferred_from_cellranger", "smoking_status": "paper_exclusion_criterion"}
+    },
+    "wang25": {
+      "input": "converted_cache/scRNA-seqProcessedLabelledObject.h5ad", "test_input": "scRNA-seqProcessedLabelledObject.h5ad",
+      "conversion": {
+        "source": "input_data/scRNA-seqProcessedLabelledObject.rds",
+        "output": "converted_cache/scRNA-seqProcessedLabelledObject.h5ad",
+        "format": "seurat_rds",
+        "assay": "RNA"
+      },
+      "counts_source": "X", "features": {"duplicate_policy": "error"},
+      "joins": [{
+        "path": "input_data/metadata/wang25/41590_2024_2059_MOESM3_ESM.xlsx",
+        "format": "excel", "on": ["Sample ID"], "how": "left", "required": true,
+        "read_options": {"sheet_name": 1, "skiprows": 2},
+        "derive_left": {"Sample ID": {"source": "sampleName", "replace": {"sample": "sc_sample_"}}},
+        "note": "Reproduces the metadata join in legacy notebook wang25/2_create_anndata.ipynb."
+      }],
+      "metadata": {
+        "study_celltype": {"source": "secondary_type"}, "sample": {"source": "Sample ID"}, "subject": {"source": "Sample ID"},
+        "age": {"source": "Age (y)", "dtype": "float"}, "sex": {"source": "Gender", "lower": true},
+        "bmi": {"source": "BMI (kg/m2)", "dtype": "float"},
+        "cmv": {"source": "CMV IgM antibodies", "lower": true}, "ethnicity": {"constant": "asian"},
+        "ethnicity_fine": {"constant": "mainland_china"}, "technology": {"constant": "10X5'"},
+        "aligner": {"constant": "CRv3.0.2"}, "genome": {"constant": "GRCh38"}, "demultiplexing": {"constant": "none"},
+        "frozen": {"constant": "no"}, "include_intronic": {"constant": "no"}, "smoking_status": {"constant": "no"},
+        "study_site": {"constant": "wang25"}, "country": {"constant": "cn"},
+        "batch_single_cell": {"source": "Sample ID", "prefix": "wang25_"}
+      },
+      "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
+      "provenance": {"input": "converted_RDS_plus_published_supplementary_workbook", "sample_metadata": "join_recovered_from_legacy_wang25_2_create_anndata_notebook", "ethnicity": "needs_review", "frozen": "needs_review", "include_intronic": "inferred"}
+    }
+  }
+}
