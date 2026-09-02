@@ -2,12 +2,9 @@
 .venv
 .cache
 input_data
-converted_cache
-homogenized
+cache
 output
-test/files
 legacy_notebooks
-tools
 *.ipynb
 __pycache__
 *.pyc

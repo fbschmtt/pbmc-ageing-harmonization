@@ -18,7 +18,7 @@ download script should verify these values before starting the pipeline.
 | Wang25 | `input_data/scRNA-seqProcessedLabelledObject.rds` | Seurat RDS converted by `scripts/convert_rds.R` | Not yet recorded |
 
 The Wang RDS conversion produces
-`converted_cache/scRNA-seqProcessedLabelledObject.h5ad`. This is a generated
+`cache/converted/scRNA-seqProcessedLabelledObject.h5ad`. This is a generated
 intermediate, not an external input.
 
 ## Supplementary metadata
@@ -55,6 +55,6 @@ Source page:
 
 ## Test data
 
-Files under `test/files/` are deterministic 200-cell subsets produced from the
+Files under `cache/test_inputs/` are deterministic 200-cell subsets produced from the
 full expression inputs by `scripts/create_test_data.py`. They are generated test
 artifacts rather than external dependencies and are ignored by Git.

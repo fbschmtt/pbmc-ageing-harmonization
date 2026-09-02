@@ -35,31 +35,30 @@ cell-type labels. Merging and pseudobulk generation are deliberately deferred.
   - All five studies complete metadata harmonization, embeddings, CellTypist
     where required, H5AD writing, report generation, and round-trip loading.
 - [x] Add the AIDA and Terekhova auxiliary metadata and validate their joins.
-- [ ] Recover or document the preprocessing that produced Wang's intermediate
-  `2_wang.h5ad`.
+- [x] Recover and document the Wang metadata join and RDS conversion that
+  produced the legacy intermediate `2_wang.h5ad`.
 - [ ] Review all `needs_review` provenance entries against publications/source
   metadata.
 - [ ] Run the full datasets and review per-study QC reports.
 - [ ] Freeze the five harmonized files before designing the merge stage.
 - [x] Add the initial Python harmonization Docker image definition.
+- [x] Add an executable QC notebook and self-contained HTML report generation.
 - [x] Replace notebook-based RDS conversion with a one-input/one-output R script.
 - [ ] Add and test the R/Seurat/sceasy conversion image.
 - [ ] Build and execute the Python image on all five test inputs.
 - [ ] Add a Nextflow workflow after the per-study input contracts are settled.
 
-## Environment limitations in the current session
+## Local development state
 
-- The workspace exposes `.git` as an empty read-only mount. It cannot be removed,
-  written, or initialized, including through the approved elevated operation.
-  The requested initial commit must therefore be created once that mount is
-  removed by the workspace host.
-- The scientific dependencies are installed in the ignored `.venv`, and all five
-  studies pass test-data schema validation.
+- The scientific dependencies are installed in the ignored `.venv`.
+- All five studies pass the complete test-data workflow.
+- Test fixtures and conversion intermediates live under the ignored `cache/`
+  hierarchy; `tests/` contains test code only.
 
 ## Expected commands
 
 ```bash
-python -m pip install -e '.[dev]'
+python -m pip install -e '.[dev,qc]'
 python scripts/harmonize_study.py --study onek1k --test
 python scripts/harmonize_study.py --study all --test --validate-only
 pytest

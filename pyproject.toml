@@ -18,9 +18,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "ruff>=0.9,<1"]
+qc = ["ipykernel>=6,<8", "nbconvert>=7,<8"]
 
 [project.scripts]
 pbmc-harmonize = "pbmc_pipeline.cli:main"
+pbmc-qc = "pbmc_pipeline.qc:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -9,10 +9,11 @@ WORKDIR /opt/pbmc-pipeline
 
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN python -m pip install --no-cache-dir .
+RUN python -m pip install --no-cache-dir '.[qc]'
 
 COPY config ./config
 COPY scripts ./scripts
 COPY aifi_models ./aifi_models
+COPY reports ./reports
 
 ENTRYPOINT ["pbmc-harmonize"]

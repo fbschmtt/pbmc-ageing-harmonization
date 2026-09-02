@@ -105,10 +105,10 @@
       "provenance": {"frozen": "needs_review", "include_intronic": "inferred_from_cellranger", "smoking_status": "paper_exclusion_criterion"}
     },
     "wang25": {
-      "input": "converted_cache/scRNA-seqProcessedLabelledObject.h5ad", "test_input": "scRNA-seqProcessedLabelledObject.h5ad",
+      "input": "cache/converted/scRNA-seqProcessedLabelledObject.h5ad", "test_input": "scRNA-seqProcessedLabelledObject.h5ad",
       "conversion": {
         "source": "input_data/scRNA-seqProcessedLabelledObject.rds",
-        "output": "converted_cache/scRNA-seqProcessedLabelledObject.h5ad",
+        "output": "cache/converted/scRNA-seqProcessedLabelledObject.h5ad",
         "format": "seurat_rds",
         "assay": "RNA"
       },

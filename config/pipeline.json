@@ -3,7 +3,7 @@
   "studies_config": "config/studies.json",
   "obs_schema": "config/harmonized_obs_schema.json",
   "input_root": ".",
-  "test_input_root": "test/files",
+  "test_input_root": "cache/test_inputs",
   "output_dir": "output/harmonized",
   "report_dir": "output/reports",
   "models": {
@@ -20,4 +20,3 @@
     "output_compression": "gzip"
   }
 }
-
