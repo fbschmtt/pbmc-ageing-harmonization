@@ -1,8 +1,12 @@
 # Source data and generated artifacts
 input_data/**
 !input_data/README.md
+test_data/
 cache/
 output/
+work/
+.nextflow/
+.nextflow.log*
 
 # Externally distributed CellTypist models
 aifi_models/*.pkl

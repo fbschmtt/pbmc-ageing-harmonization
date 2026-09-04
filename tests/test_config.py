@@ -19,6 +19,10 @@ def test_all_json_files_are_valid():
 
 
 def test_test_inputs_are_unique():
-    _, document, _ = load_configuration(ROOT, Path("config/pipeline.json"))
+    pipeline, document, _ = load_configuration(ROOT, Path("config/pipeline.json"))
     names = [study["test_input"] for study in document["studies"].values()]
     assert len(names) == len(set(names))
+    assert pipeline["test_input_root"] != "input_data"
+    assert document["studies"]["wang25"]["conversion"]["test_source"].startswith(
+        f'{pipeline["test_input_root"]}/'
+    )

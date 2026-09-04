@@ -4,6 +4,11 @@ This directory is the single entry point for immutable pipeline inputs. Data
 files are ignored by Git; expected relative paths are declared in
 `config/studies.json`.
 
+Downsampled smoke-test fixtures are kept separately under `test_data/`, so full
+and test inputs can coexist. Create or refresh them with `make test-data`.
+Wang25's test fixture is an RDS, so test runs exercise the same RDS conversion
+process as production.
+
 Expression inputs currently use the top-level paths established by the original
 conversion notebook. Supplementary inputs are grouped by study:
 

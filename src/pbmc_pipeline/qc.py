@@ -14,11 +14,13 @@ def generate_qc_report(
     run_report_path: Path,
     output_dir: Path,
     study: str,
+    template_path: Path | None = None,
 ) -> Path:
     """Execute the QC notebook and return the generated HTML path."""
     input_path = input_path.resolve()
     run_report_path = run_report_path.resolve()
-    template = (root / "reports" / "qc_report.ipynb").resolve()
+    output_dir = output_dir.resolve()
+    template = (template_path or root / "reports" / "qc_report.ipynb").resolve()
     if not input_path.exists():
         raise FileNotFoundError(f"QC input does not exist: {input_path}")
     if not run_report_path.exists():
@@ -68,18 +70,21 @@ def generate_qc_report(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate an executed HTML QC report")
+    parser.add_argument("--project-root", type=Path, default=Path.cwd())
     parser.add_argument("--input", type=Path, required=True, help="Harmonized H5AD")
     parser.add_argument("--run-report", type=Path, required=True, help="Harmonization JSON report")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--study", required=True)
+    parser.add_argument("--template", type=Path, help="Override the QC notebook template")
     args = parser.parse_args()
-    root = Path.cwd()
+    root = args.project_root.resolve()
     html = generate_qc_report(
         root=root,
         input_path=args.input,
         run_report_path=args.run_report,
         output_dir=args.output_dir,
         study=args.study,
+        template_path=args.template,
     )
     print(html)
 

@@ -108,6 +108,7 @@
       "input": "cache/converted/scRNA-seqProcessedLabelledObject.h5ad", "test_input": "scRNA-seqProcessedLabelledObject.h5ad",
       "conversion": {
         "source": "input_data/scRNA-seqProcessedLabelledObject.rds",
+        "test_source": "test_data/scRNA-seqProcessedLabelledObject.rds",
         "output": "cache/converted/scRNA-seqProcessedLabelledObject.h5ad",
         "format": "seurat_rds",
         "assay": "RNA"

@@ -24,6 +24,9 @@ def main() -> None:
     destination = root / pipeline["test_input_root"]
     destination.mkdir(parents=True, exist_ok=True)
     for study_id, study in document["studies"].items():
+        if study.get("conversion"):
+            print(f"SKIP {study_id}: provide its downsampled RDS test fixture separately")
+            continue
         source = root / study["input"]
         target = destination / study["test_input"]
         if not source.exists():
@@ -41,4 +44,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

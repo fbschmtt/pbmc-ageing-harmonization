@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
 
+import pandas as pd
+
 from .config import config_digest
 from .metadata import apply_joins, build_homogeneous_obs
 from .validation import validate_counts, validate_output
@@ -20,11 +22,17 @@ def harmonize_study(
     *,
     test: bool = False,
     validate_only: bool = False,
+    input_path: Path | None = None,
+    output_path: Path | None = None,
+    report_path: Path | None = None,
 ) -> dict:
     import scanpy as sc
 
-    input_path = (root / pipeline["test_input_root"] / study["test_input"] if test
-                  else root / study["input"])
+    if input_path is None:
+        input_path = (root / pipeline["test_input_root"] / study["test_input"] if test
+                      else root / study["input"])
+    else:
+        input_path = input_path.resolve()
     if not input_path.exists():
         raise FileNotFoundError(f"Input for {study_id} does not exist: {input_path}")
 
@@ -76,18 +84,33 @@ def harmonize_study(
             "scanpy": version("scanpy"),
         },
     }
-    report_dir = root / pipeline["report_dir"]
-    report_dir.mkdir(parents=True, exist_ok=True)
     suffix = ".test" if test else ""
-    (report_dir / f"{study_id}{suffix}.json").write_text(json.dumps(report, indent=2) + "\n")
+    if report_path is None:
+        report_path = root / pipeline["report_dir"] / f"{study_id}{suffix}.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, indent=2) + "\n")
     if not validate_only:
-        output_dir = root / pipeline["output_dir"]
-        output_dir.mkdir(parents=True, exist_ok=True)
+        if output_path is None:
+            output_path = root / pipeline["output_dir"] / f"{study_id}{suffix}.h5ad"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        _normalize_nullable_strings_for_h5ad(adata)
         adata.write_h5ad(
-            output_dir / f"{study_id}{suffix}.h5ad",
+            output_path,
             compression=pipeline["processing"]["output_compression"],
         )
     return report
+
+
+def _normalize_nullable_strings_for_h5ad(adata) -> None:
+    """Use broadly compatible object strings instead of Pandas nullable strings."""
+    for frame in (adata.obs, adata.var):
+        if isinstance(frame.index.dtype, pd.StringDtype):
+            index = frame.index.astype(object).where(~frame.index.isna(), None)
+            frame.index = pd.Index(index, name=frame.index.name, dtype=object)
+        for column in frame.columns:
+            series = frame[column]
+            if isinstance(series.dtype, pd.StringDtype):
+                frame[column] = series.astype(object).where(series.notna(), None)
 
 
 def _repair_features(adata, spec: dict):

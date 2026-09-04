@@ -16,4 +16,4 @@ COPY scripts ./scripts
 COPY aifi_models ./aifi_models
 COPY reports ./reports
 
-ENTRYPOINT ["pbmc-harmonize"]
+CMD ["pbmc-harmonize", "--help"]

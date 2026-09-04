@@ -1,10 +1,11 @@
 .git
 .venv
 .cache
-input_data
 cache
+input_data
 output
 legacy_notebooks
-*.ipynb
-__pycache__
-*.pyc
+**/__pycache__
+**/.ipynb_checkpoints
+aifi_models/*.pkl
+*.log

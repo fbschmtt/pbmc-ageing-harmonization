@@ -55,6 +55,8 @@ Source page:
 
 ## Test data
 
-Files under `cache/test_inputs/` are deterministic 200-cell subsets produced from the
-full expression inputs by `scripts/create_test_data.py`. They are generated test
-artifacts rather than external dependencies and are ignored by Git.
+`make test-data` creates deterministic 200-cell fixtures under `test_data/` from
+the production expression inputs. Direct H5AD studies are sampled by
+`scripts/create_test_data.py`; each configured RDS conversion study is sampled by
+`scripts/create_test_rds.R`. These generated fixtures are ignored by Git and are
+used only by the Nextflow `test` profile.

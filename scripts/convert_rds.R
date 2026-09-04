@@ -2,10 +2,15 @@
 
 suppressPackageStartupMessages({
   library(Seurat)
-  library(sceasy)
+  library(Matrix)
+  library(reticulate)
 })
 
 parse_args <- function(args) {
+  if ("--help" %in% args || "-h" %in% args) {
+    cat("Usage: convert_rds.R --input INPUT.rds --output OUTPUT.h5ad [--assay RNA]\n")
+    quit(status = 0)
+  }
   result <- list(assay = "RNA")
   i <- 1
   while (i <= length(args)) {
@@ -52,12 +57,15 @@ if (nrow(counts) == 0 || ncol(counts) == 0) {
 minimal <- CreateSeuratObject(counts = counts, meta.data = object[[]])
 dir.create(dirname(args$output), recursive = TRUE, showWarnings = FALSE)
 message("Writing raw counts and observation metadata to ", args$output)
-sceasy::convertFormat(
-  minimal,
-  from = "seurat",
-  to = "anndata",
-  outFile = args$output,
-  assay = "RNA",
-  main_layer = "counts"
+feature_metadata <- minimal[["RNA"]][[]]
+if (ncol(feature_metadata) == 0) {
+  feature_metadata <- data.frame(row.names = rownames(counts))
+}
+anndata <- reticulate::import("anndata", convert = FALSE)
+anndata$settings$allow_write_nullable_strings <- TRUE
+adata <- anndata$AnnData(
+  X = Matrix::t(counts),
+  obs = minimal[[]],
+  var = feature_metadata
 )
-
+adata$write(args$output, compression = "gzip")
