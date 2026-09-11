@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 from pathlib import Path
 
 from .config import load_configuration
 from .harmonize import harmonize_study
+from .logging_utils import configure_logging
 from .qc import generate_qc_report
+
+LOGGER = logging.getLogger(__name__)
 
 
 def main() -> None:
@@ -21,6 +25,10 @@ def main() -> None:
     parser.add_argument("--test", action="store_true", help="Use downsampled test inputs")
     parser.add_argument("--validate-only", action="store_true", help="Skip CellTypist and H5AD output")
     parser.add_argument("--qc", action="store_true", help="Execute the QC notebook after writing H5AD")
+    parser.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO",
+        help="Progress-log severity written to standard error (default: INFO)",
+    )
     args = parser.parse_args()
     if args.qc and args.validate_only:
         parser.error("--qc cannot be combined with --validate-only")
@@ -29,6 +37,7 @@ def main() -> None:
     if args.validate_only and args.output:
         parser.error("--output cannot be combined with --validate-only")
 
+    configure_logging(args.log_level)
     root = args.project_root.resolve()
     os.environ.setdefault("MPLCONFIGDIR", str(root / ".cache" / "matplotlib"))
     os.environ.setdefault("CELLTYPIST_FOLDER", str(root / ".cache" / "celltypist"))
@@ -39,13 +48,17 @@ def main() -> None:
     if unknown:
         parser.error(f"unknown study: {', '.join(sorted(unknown))}")
     for study_id in selected:
-        report = harmonize_study(
-            root, study_id, studies[study_id], pipeline, schema,
-            test=args.test, validate_only=args.validate_only,
-            input_path=args.input,
-            output_path=args.output,
-            report_path=args.report_output,
-        )
+        try:
+            report = harmonize_study(
+                root, study_id, studies[study_id], pipeline, schema,
+                test=args.test, validate_only=args.validate_only,
+                input_path=args.input,
+                output_path=args.output,
+                report_path=args.report_output,
+            )
+        except Exception:
+            LOGGER.exception("study=%s step=failed", study_id)
+            raise
         print(json.dumps({"study": study_id, "status": report["status"], "cells": report["n_cells"]}))
         if args.qc:
             suffix = ".test" if args.test else ""

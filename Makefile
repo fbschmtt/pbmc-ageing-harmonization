@@ -9,10 +9,11 @@ PYTHON_IMAGE ?= pbmc-ageing-python:local
 R_IMAGE ?= pbmc-ageing-r:local
 TEST_CELLS ?= 200
 TEST_SEED ?= 42
+VALIDATE_OUTDIR ?= output/validation
 
 CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),docker-images,)
 
-.PHONY: help install lint workflow-lint test validate test-data docker-images docker-build docker-build-python docker-build-r pipeline pipeline-harmonize pipeline-test clean-work
+.PHONY: help install lint workflow-lint test validate-study validate-test validate-full test-data docker-images docker-build docker-build-python docker-build-r pipeline pipeline-harmonize pipeline-test clean-work
 
 help: ## Show available development commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target> [STUDIES=wang25]\n\n"} /^[a-zA-Z_-]+:.*## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -29,8 +30,16 @@ workflow-lint: ## Lint the Nextflow workflow (requires Nextflow >=25.04)
 test: ## Run unit tests
 	.venv/bin/pytest -q
 
-validate: ## Validate configured metadata and test inputs without annotation
-	.venv/bin/pbmc-harmonize --study $(STUDIES) --test --validate-only
+validate-study:
+	@case "$(STUDIES)" in all|*,*) echo "validation requires exactly one STUDIES value" >&2; exit 2;; esac
+
+validate-test: validate-study docker-build-python ## Validate one test fixture in the Python container
+	mkdir -p "$(VALIDATE_OUTDIR)"
+	docker run --rm -v "$(CURDIR):/work:ro" -v "$(abspath $(VALIDATE_OUTDIR)):/result" -w /work $(PYTHON_IMAGE) pbmc-harmonize --project-root /work --config config/pipeline.json --study $(STUDIES) --test --validate-only --report-output /result/$(STUDIES).test.json
+
+validate-full: validate-study docker-build-python ## Validate one full input in the Python container
+	mkdir -p "$(VALIDATE_OUTDIR)"
+	docker run --rm -v "$(CURDIR):/work:ro" -v "$(abspath $(VALIDATE_OUTDIR)):/result" -w /work -e PYTHONFAULTHANDLER=1 $(PYTHON_IMAGE) pbmc-harmonize --project-root /work --config config/pipeline.json --study $(STUDIES) --validate-only --report-output /result/$(STUDIES).json
 
 test-data: docker-images ## Create isolated 200-cell H5AD and RDS smoke-test fixtures
 	docker run --rm -v "$(CURDIR):/work" -w /work -e PYTHONPATH=/work/src $(PYTHON_IMAGE) python scripts/create_test_data.py --cells $(TEST_CELLS) --seed $(TEST_SEED) --overwrite
@@ -54,7 +63,7 @@ pipeline-harmonize: $(CONTAINER_PREREQS) ## Run through harmonization but skip Q
 
 pipeline-test: OUTDIR = output/test
 pipeline-test: $(CONTAINER_PREREQS) ## Run the selected 200-cell test workflow
-	$(NXF) run main.nf -profile $(NF_PROFILE),test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) -resume
+	$(NXF) run main.nf -profile $(NF_PROFILE),test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES)
 
 clean-work: ## Ask Nextflow to remove obsolete cached work directories
 	$(NXF) clean -f

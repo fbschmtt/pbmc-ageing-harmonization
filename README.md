@@ -74,6 +74,9 @@ python scripts/create_test_data.py --cells 200
 The installed commands also accept explicit artifact paths (`--input`,
 `--output`, `--report-output`, and the QC command's `--template`). These are
 used by Nextflow and are useful when debugging one task outside the workflow.
+They write timestamped progress logs to standard error and retain their final
+JSON/status output on standard output; Nextflow captures task logs in
+`.command.err` and `.command.out` respectively.
 
 ## Convert a Seurat RDS
 
@@ -178,6 +181,11 @@ through Nextflow. The Python image and a complete Wang25 test workflow have
 been verified. The R conversion image is defined separately because it is much
 larger and only needed for RDS inputs.
 
+To preserve the Python dependency-install layer during source-only changes, the
+Python image temporarily installs a minimal placeholder package, then copies
+the real `src/` tree and reinstalls it with `--no-deps`. The cleanup before the
+second install is required to prevent stale setuptools build artifacts.
+
 During development, note that Nextflow identifies a container by its configured
 image reference. Rebuilding a mutable `:local` tag does not invalidate an
 existing `-resume` cache entry; run once without `-resume` after rebuilding, or
@@ -192,7 +200,8 @@ workflow. Run `make help` to see its targets. Common commands include:
 make lint
 make workflow-lint
 make test
-make validate STUDIES=wang25
+make validate-test STUDIES=wang25
+make validate-full STUDIES=terekhova23
 make pipeline-test STUDIES=wang25
 make pipeline-harmonize STUDIES=wang25
 ```

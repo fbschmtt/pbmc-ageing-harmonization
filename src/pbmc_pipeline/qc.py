@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
+
+from .logging_utils import configure_logging
+
+LOGGER = logging.getLogger(__name__)
 
 
 def generate_qc_report(
@@ -27,6 +33,8 @@ def generate_qc_report(
         raise FileNotFoundError(f"Run report does not exist: {run_report_path}")
     if not template.exists():
         raise FileNotFoundError(f"QC notebook template does not exist: {template}")
+    total_started = time.perf_counter()
+    LOGGER.info("study=%s step=qc_start input=%s", study, input_path)
     output_dir.mkdir(parents=True, exist_ok=True)
     executed = output_dir / "executed.ipynb"
     html = output_dir / "report.html"
@@ -52,7 +60,12 @@ def generate_qc_report(
         f"--output-dir={output_dir}",
         str(template),
     ]
+    started = time.perf_counter()
     subprocess.run(execute_command, cwd=root, env=env, check=True)
+    LOGGER.info(
+        "study=%s step=execute_qc_notebook duration_seconds=%.2f path=%s",
+        study, time.perf_counter() - started, executed,
+    )
     export_command = [
         sys.executable,
         "-m",
@@ -64,7 +77,16 @@ def generate_qc_report(
         f"--output-dir={output_dir}",
         str(executed),
     ]
+    started = time.perf_counter()
     subprocess.run(export_command, cwd=root, env=env, check=True)
+    LOGGER.info(
+        "study=%s step=export_qc_html duration_seconds=%.2f path=%s",
+        study, time.perf_counter() - started, html,
+    )
+    LOGGER.info(
+        "study=%s step=qc_complete duration_seconds=%.2f",
+        study, time.perf_counter() - total_started,
+    )
     return html
 
 
@@ -76,7 +98,12 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--study", required=True)
     parser.add_argument("--template", type=Path, help="Override the QC notebook template")
+    parser.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO",
+        help="Progress-log severity written to standard error (default: INFO)",
+    )
     args = parser.parse_args()
+    configure_logging(args.log_level)
     root = args.project_root.resolve()
     html = generate_qc_report(
         root=root,

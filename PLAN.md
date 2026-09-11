@@ -31,6 +31,11 @@ cell-type labels. Merging and pseudobulk generation are deliberately deferred.
   inputs, so smoke tests exercise the RDS conversion process.
 - Nextflow's `work/` is the canonical cache for workflow intermediates. The
   existing `cache/converted` remains useful only for direct/manual conversion.
+- The Python image uses a temporary minimal package to cache dependency
+  installation before copying `src/`; the final install removes its setuptools
+  build artifacts and uses `--no-deps`. This is safe while packaging metadata
+  remains static in `pyproject.toml`.
+- SciPy is pinned to 1.16.0 to prevent a segmentation fault in `sc.tl.umap`.
 
 ## Milestones
 
@@ -64,6 +69,8 @@ cell-type labels. Merging and pseudobulk generation are deliberately deferred.
 - [ ] Run the containerized Nextflow test profile for all five studies.
 - [ ] Run the real Wang25 RDS conversion and compare its H5AD against the
   existing converted/test representation.
+- [x] Remove the redundant Docker project mount in `nextflow.config`; Nextflow
+  now stages the project inputs without a duplicate Docker mount.
 
 ## Local development state
 
@@ -73,7 +80,10 @@ cell-type labels. Merging and pseudobulk generation are deliberately deferred.
   errors (verified with Nextflow 26.04.6; minimum declared version is 25.04).
 - Both `pbmc-ageing-python:local` and `pbmc-ageing-r:local` build successfully.
 - A fresh `docker,test` Wang25 Nextflow run published its H5AD, JSON run report,
-  executed QC notebook, and HTML report under an ignored output directory.
+  executed QC notebook, and HTML report under an ignored temporary output
+  directory.
+- The AIFI Docker test run exercised harmonization and QC; timestamped
+  application progress logs are captured in each Nextflow task's `.command.err`.
 - Test fixtures live under ignored `test_data/`; conversion intermediates live
   in Nextflow's ignored `work/` directory. `tests/` contains test code only.
 
@@ -118,12 +128,13 @@ make pipeline-test STUDIES=wang25
 3. **Preserve source metadata for auditability.** The harmonized output currently
    replaces `obs` with the standardized schema. Consider a namespaced source
    metadata sidecar (preferably Parquet) so mappings can be debugged later.
-4. **Lock remaining dependencies.** The R base image is digest-pinned and key
-   Python packages in that bridge are pinned, but the main Python environment
-   still uses version ranges. Add a lock file and use immutable/versioned image
-   references in real runs. Rebuilding a mutable `:local` tag does not invalidate
-   Nextflow cache entries; run without `-resume` after rebuilding or change the
-   image tag.
+4. **Freeze remaining dependencies for production.** SciPy is pinned to 1.16.0
+   because later resolution caused a `sc.tl.umap` segmentation fault; the R base
+   image is digest-pinned and key Python packages in that bridge are pinned.
+   The main Python environment otherwise still uses version ranges. Add a lock
+   file and use immutable/versioned image references in real runs. Rebuilding a
+   mutable `:local` tag does not invalidate Nextflow cache entries; run without
+   `-resume` after rebuilding or change the image tag.
 5. **Improve provenance.** Reports currently include a configuration digest and
    package versions. Add the Git commit, input/model checksums, image digest,
    command invocation, and random seeds.
