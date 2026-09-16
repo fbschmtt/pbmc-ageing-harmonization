@@ -1,13 +1,14 @@
 # PBMC ageing scRNA-seq pipeline
 
-Configuration-driven processing of five PBMC ageing scRNA-seq studies. The
-current milestone produces one harmonized H5AD per study with raw counts,
-homogeneous metadata, and AIFI L1/L2/L3 cell-type labels. Merging and pseudobulk
-analysis are deliberately deferred.
+Configuration-driven processing of five PBMC ageing scRNA-seq studies. It produces
+one harmonized H5AD per study, per-study sample × AIFI-L2 pseudobulks, and a
+cross-study pseudobulk matrix. An explicitly enabled pathway also
+creates a jointly embedded, freshly AIFI-L2-annotated single-cell merge.
 
 Study-specific decisions live in `config/studies.json`. The output metadata
 contract lives in `config/harmonized_obs_schema.json`. See `PLAN.md` for scope,
-progress, and unresolved scientific questions.
+progress, and unresolved scientific questions. See `IMPLEMENTATION.md` for the
+high-level architecture.
 
 See `INPUT_FILES.md` for the complete list of external expression files,
 supplementary metadata, CellTypist models, expected paths, and checksums.
@@ -23,6 +24,9 @@ supplementary metadata, CellTypist models, expected paths, and checksums.
 - Both Docker images build successfully. A fresh containerized Wang25 test run
   completed harmonization and QC, and a synthetic Seurat object passed the RDS
   to H5AD conversion with counts, names, and metadata intact.
+- Pseudobulk aggregation and merge are part of the production Nextflow graph;
+  merge QC reports include study/sample contribution, AIFI-L2 overlap, depth,
+  gene coverage, and (when applicable) merged UMAP checks.
 - The full datasets and the real Wang25 RDS conversion have not yet been run.
 
 ## Data flow
@@ -38,6 +42,16 @@ input_data/ expression objects + metadata
                 ├──> output/harmonized/<study>.h5ad
                 ├──> output/reports/<study>.json
                 └──> output/qc/<study>/{executed.ipynb,report.html}
+                │
+                ▼
+  pseudobulk each study by sample/AIFI-L2
+                │
+                └──> output/pseudobulk/<study>.pseudobulk.h5ad
+                ▼
+       output/merged/pseudobulk_merged.h5ad
+                │
+                ├── optional: output/merged/single_cell_merged.h5ad
+                └──> output/qc/merged/{executed.ipynb,report.html}
 ```
 
 All immutable local inputs belong under `input_data/`. Generated conversions,
@@ -59,13 +73,13 @@ python -m pip install -e '.[dev,qc]'
 
 ```bash
 # Fast validation using the downsampled inputs, without CellTypist
-python scripts/harmonize_study.py --study all --test --validate-only
+pbmc-harmonize --study all --test --validate-only
 
 # Complete one study, including AIFI CellTypist labels
-python scripts/harmonize_study.py --study onek1k
+pbmc-harmonize --study onek1k
 
 # Complete all test studies and generate executed notebook/HTML QC reports
-python scripts/harmonize_study.py --study all --test --qc
+pbmc-harmonize --study all --test --qc
 
 # Recreate downsampled inputs from locally available full inputs
 python scripts/create_test_data.py --cells 200
@@ -112,12 +126,19 @@ To generate a report for an existing harmonized output without rerunning the
 study:
 
 ```bash
-python scripts/generate_qc_report.py \
+pbmc-qc \
   --input output/harmonized/onek1k.test.h5ad \
   --run-report output/reports/onek1k.test.json \
   --output-dir output/qc/onek1k.test \
   --study onek1k
 ```
+
+The merge workflow renders one combined document at `output/qc/merged/`. It
+starts with pseudobulk composition and a gene-presence UpSet plot; if the
+single-cell branch is enabled it appends its embedding, depth checks, and the
+matrix comparing newly merged AIFI L2 calls to each cell's original study-level
+call. `output/run_manifest.json` records selected studies, image references,
+configuration checksum, and checksums of the merged deliverables.
 
 ## Nextflow and Docker
 
@@ -127,9 +148,8 @@ processes, and publishes the final H5AD, JSON, and QC artifacts. Limit a run
 with a comma-separated study list:
 
 ```bash
-nextflow run main.nf -profile standard,test --studies wang25 -resume
-nextflow run main.nf -profile standard --studies aifi,onek1k -resume
-nextflow run main.nf -profile docker,test --studies wang25 -resume
+make run-test STUDIES=wang25
+make run STUDIES=aifi,onek1k
 ```
 
 The `test` profile lowers resource requests and uses isolated 200-cell fixtures
@@ -137,40 +157,46 @@ from `test_data/`. RDS-based studies retain an RDS fixture and therefore still
 pass through the same `CONVERT_RDS` process as a production run. Create or refresh fixtures
 from the production inputs once with `make test-data`; this never modifies
 `input_data/`. Override the fixture size with `make test-data TEST_CELLS=500`
-when needed. `--skip_qc` stops after harmonization. Nextflow's `work/`
-directory is the cache for converted and other intermediate artifacts; only
+when needed. `--skip_qc` stops after the H5AD merge artifacts are created (it
+skips only notebook/HTML QC). By default the workflow does not create a
+whole-dataset single-cell merge, because all studies must fit in RAM at once.
+Enable that separate path on a runner sized for the selected inputs:
+
+```bash
+make run STUDIES=all MERGE_SINGLE_CELL=true
+```
+
+Nextflow's `work/` directory is the cache for
+converted and other intermediate artifacts; only
 final deliverables are copied to `output/`.
 
 Build and use both containers with:
 
 ```bash
-make docker-build
+make images
 make test-data
-make pipeline-test STUDIES=wang25
-make pipeline STUDIES=all
+make run-test STUDIES=wang25
+make run STUDIES=all
 ```
 
-`make pipeline`, `make pipeline-test`, and `make pipeline-harmonize` build the
-two local images automatically whenever `NF_PROFILE` contains `docker`; use
-`make docker-images` to build them without launching a workflow. The image tags
-(`pbmc-ageing-python:local` and `pbmc-ageing-r:local`) are intentionally local
-Docker tags, not images available from a registry.
+`make run`, `make run-test`, and `make run-no-qc` build the two content-tagged
+local images automatically whenever `NF_PROFILE` contains `docker`; use `make
+images` to build them without launching a workflow. `IMAGE_TAG` defaults to
+the current image build context and may be set explicitly for a release build.
 
 For a production run whose repository and task filesystem are separate, keep
 the repository path readable by Docker and choose an external work/output
 location:
 
 ```bash
-make pipeline NF_PROFILE=docker STUDIES=all \
+make run NF_PROFILE=docker STUDIES=all \
   WORK_DIR=/path/to/run/work OUTDIR=/path/to/run/output
 ```
 
-The Docker profile read-only mounts the repository into each task. This lets the
-task use the configured project root for metadata, models, and configuration
-while keeping all generated task data in `WORK_DIR`. Do not place `WORK_DIR`
-inside the repository when using this profile: the repository is mounted
-read-only. Input staging retains Nextflow's default symbolic-link behavior, so
-use a work filesystem that supports symbolic links.
+Nextflow stages each declared task input into the Docker work directory. Keep
+the repository readable to Nextflow, and ensure `WORK_DIR` supports symbolic
+links; do not rely on arbitrary host repository paths being available inside a
+container.
 
 The Python image is defined by `docker/python.Dockerfile`; the conversion image is defined by
 `docker/r-conversion.Dockerfile`. The latter starts from a digest-pinned Seurat
@@ -186,10 +212,8 @@ Python image temporarily installs a minimal placeholder package, then copies
 the real `src/` tree and reinstalls it with `--no-deps`. The cleanup before the
 second install is required to prevent stale setuptools build artifacts.
 
-During development, note that Nextflow identifies a container by its configured
-image reference. Rebuilding a mutable `:local` tag does not invalidate an
-existing `-resume` cache entry; run once without `-resume` after rebuilding, or
-use a new versioned image tag.
+The content-derived image tag participates in Nextflow task identity, so a
+changed build context automatically receives separate resumable cache entries.
 
 ## Make shortcuts
 
@@ -200,15 +224,18 @@ workflow. Run `make help` to see its targets. Common commands include:
 make lint
 make workflow-lint
 make test
+make verify
 make validate-test STUDIES=wang25
 make validate-full STUDIES=terekhova23
-make pipeline-test STUDIES=wang25
-make pipeline-harmonize STUDIES=wang25
+make run-test STUDIES=wang25
+make run-no-qc STUDIES=wang25
+make run-test STUDIES=all MERGE_SINGLE_CELL=true
 ```
 
-For a local Nextflow run, activate `.venv` first so the installed
-`pbmc-harmonize` and `pbmc-qc` commands are on `PATH`. The Docker profile does
-not require the Python environment on the host.
+For a non-Docker Nextflow run, activate `.venv` so the installed
+`pbmc-harmonize`, `pbmc-qc`, `pbmc-merge`, `pbmc-merge-qc`, and `pbmc-manifest`
+commands are on `PATH`. The
+Docker profile does not require the Python environment on the host.
 
 See `input_data/README.md` for the expected input layout and `PLAN.md` for the
 remaining reproducibility work.

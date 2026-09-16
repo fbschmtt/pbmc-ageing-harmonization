@@ -4,14 +4,17 @@
 
 Produce one independently reproducible, validated H5AD file per study. Each file
 must contain raw counts, homogeneous observation metadata, and AIFI L1/L2/L3
-cell-type labels. Merging and pseudobulk generation are deliberately deferred.
+cell-type labels. The workflow also builds study/sample/AIFI-L2 pseudobulks and
+a merged pseudobulk matrix; an opt-in whole-dataset single-cell
+merge is available.
 
 ## Decisions
 
 - `config/studies.json` is the source of truth for study-specific inputs,
   metadata mappings, assumptions, and processing choices.
 - `config/harmonized_obs_schema.json` defines the output metadata contract.
-- `scripts/harmonize_study.py` is the only per-study processing entry point.
+- Installed `pbmc-*` package commands are the only processing entry points;
+  Make invokes Nextflow for complete workflows.
 - Raw counts remain in `X` in final outputs. Normalized values are temporary.
 - Legacy notebooks are retained as provenance but are not pipeline dependencies.
 - Exploratory notebooks are kept locally but excluded from the initial Git
@@ -53,7 +56,12 @@ cell-type labels. Merging and pseudobulk generation are deliberately deferred.
 - [ ] Review all `needs_review` provenance entries against publications/source
   metadata.
 - [ ] Run the full datasets and review per-study QC reports.
-- [ ] Freeze the five harmonized files before designing the merge stage.
+- [x] Add legacy-compatible per-study sample × AIFI-L2 pseudobulks,
+  outer-joined pseudobulk merge with gene-availability flags, a combined merge
+  report, and a gene-presence UpSet plot.
+- [x] Add an opt-in whole-dataset single-cell merge with a
+  shared-gene embedding and fresh AIFI L2 predictions.
+- [ ] Run and review merge artifacts on the full frozen studies.
 - [x] Add the initial Python harmonization Docker image definition.
 - [x] Add an executable QC notebook and self-contained HTML report generation.
 - [x] Replace notebook-based RDS conversion with a one-input/one-output R script.
@@ -66,7 +74,8 @@ cell-type labels. Merging and pseudobulk generation are deliberately deferred.
   Wang25 test workflow through both harmonization and QC.
 - [x] Add a lint-clean DSL2 Nextflow workflow for conversion, harmonization, QC,
   per-study selection, test inputs, Docker execution, and resumable caching.
-- [ ] Run the containerized Nextflow test profile for all five studies.
+- [x] Run the containerized Nextflow test profile for all five studies,
+  including pseudobulk merge and merge QC (18 successful processes).
 - [ ] Run the real Wang25 RDS conversion and compare its H5AD against the
   existing converted/test representation.
 - [x] Remove the redundant Docker project mount in `nextflow.config`; Nextflow
@@ -76,9 +85,9 @@ cell-type labels. Merging and pseudobulk generation are deliberately deferred.
 
 - The scientific dependencies are installed in the ignored `.venv`.
 - All five studies pass the complete test-data workflow.
-- Ruff passes, all seven Python tests pass, and `nextflow lint main.nf` reports no
+- Ruff passes, all eight Python tests pass, and `nextflow lint main.nf` reports no
   errors (verified with Nextflow 26.04.6; minimum declared version is 25.04).
-- Both `pbmc-ageing-python:local` and `pbmc-ageing-r:local` build successfully.
+- Revision-tagged Python and R images build successfully.
 - A fresh `docker,test` Wang25 Nextflow run published its H5AD, JSON run report,
   executed QC notebook, and HTML report under an ignored temporary output
   directory.
@@ -90,13 +99,10 @@ cell-type labels. Merging and pseudobulk generation are deliberately deferred.
 ## Expected commands
 
 ```bash
-python -m pip install -e '.[dev,qc]'
-python scripts/harmonize_study.py --study onek1k --test
-python scripts/harmonize_study.py --study all --test --validate-only
-pytest
-nextflow lint main.nf
-make docker-build
-make pipeline-test STUDIES=wang25
+make install
+make verify
+make run-test STUDIES=wang25
+make run STUDIES=all MERGE_SINGLE_CELL=true
 ```
 
 ## Known blockers and scientific questions
@@ -133,11 +139,11 @@ make pipeline-test STUDIES=wang25
    image is digest-pinned and key Python packages in that bridge are pinned.
    The main Python environment otherwise still uses version ranges. Add a lock
    file and use immutable/versioned image references in real runs. Rebuilding a
-   mutable `:local` tag does not invalidate Nextflow cache entries; run without
-   `-resume` after rebuilding or change the image tag.
-5. **Improve provenance.** Reports currently include a configuration digest and
-   package versions. Add the Git commit, input/model checksums, image digest,
-   command invocation, and random seeds.
+   mutable image tags are avoided by revision-derived local tags. A lock file
+   remains desirable for the main Python image.
+5. **Improve provenance.** `run_manifest.json` now records the Git revision,
+   image references, configuration checksum, selected studies, and hashes of
+   merged artifacts. Add input/model checksums and random seeds next.
 6. **Atomic writes are low priority inside Nextflow.** Failed processes remain in
    isolated work directories and outputs are published only after success. A
    temporary-write/validate/rename helper remains useful for large H5AD files
@@ -148,7 +154,7 @@ make pipeline-test STUDIES=wang25
 
 ## Recommended next sequence
 
-1. Run `make pipeline-test STUDIES=all` and inspect all QC.
+1. Run `make run-test STUDIES=all` and inspect all QC.
 2. Refactor harmonization and QC memory behavior, then measure peak memory on
    the largest testable inputs.
 3. Run and validate the real Wang25 conversion through Nextflow.

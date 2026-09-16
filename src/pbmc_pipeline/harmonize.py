@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from .config import config_digest
@@ -134,6 +135,13 @@ def harmonize_study(
             output_path = root / pipeline["output_dir"] / f"{study_id}{suffix}.h5ad"
         started = time.perf_counter()
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        adata.uns["pipeline_provenance"] = {
+            "artifact_kind": "harmonized",
+            "study": study_id,
+            "configuration_sha256": report["configuration_sha256"],
+            "input": str(input_path),
+            "pipeline_version": "0.1.0",
+        }
         _normalize_nullable_strings_for_h5ad(adata)
         adata.write_h5ad(
             output_path,
@@ -177,8 +185,16 @@ def _repair_features(adata, spec: dict):
 
 
 def _annotate_celltypist(
-    adata, annotation: dict, pipeline: dict, root: Path, study_id: str
-) -> None:
+    adata,
+    annotation: dict,
+    pipeline: dict,
+    root: Path,
+    study_id: str,
+    *,
+    embedding_batch_key: str | None = None,
+    embedding_genes: pd.Index | None = None,
+    harmony_basis: str = "X_pca_harmony",
+) -> dict[str, object]:
     import celltypist
     import scanpy as sc
 
@@ -187,7 +203,14 @@ def _annotate_celltypist(
     sc.pp.normalize_total(adata, target_sum=pipeline["processing"]["target_sum"])
     sc.pp.log1p(adata)
     _log_step(study_id, "normalize_log1p", started)
-    _compute_embedding(adata, pipeline, study_id)
+    embedding = _compute_embedding(
+        adata,
+        pipeline,
+        study_id,
+        batch_key=embedding_batch_key,
+        embedding_genes=embedding_genes,
+        harmony_basis=harmony_basis,
+    )
     for level in annotation["levels"]:
         started = time.perf_counter()
         model_path = root / pipeline["models"][f"aifi_{level}"]
@@ -200,32 +223,109 @@ def _annotate_celltypist(
         adata.obs[f"aifi_{level}_majority"] = labels
         _log_step(study_id, "annotate_celltypist", started, level=level, model=model_path.name)
     adata.X = raw_counts
+    return embedding
 
 
-def _compute_embedding(adata, pipeline: dict, study_id: str) -> None:
+def _compute_embedding(
+    adata,
+    pipeline: dict,
+    study_id: str,
+    *,
+    batch_key: str | None = None,
+    embedding_genes: pd.Index | None = None,
+    harmony_basis: str = "X_pca_harmony",
+) -> dict[str, object]:
+    """Compute an embedding, optionally correcting its PCs with Harmony.
+
+    When ``embedding_genes`` is supplied, feature selection is deliberately
+    confined to that intersection before HVG calculation. Only the selected
+    HVGs are copied and densified for scaling/PCA, keeping the full raw count
+    matrix out of the dense embedding path.
+    """
     import scanpy as sc
+
+    if embedding_genes is None or adata.var_names.equals(embedding_genes):
+        embedding_input = adata
+    else:
+        missing = embedding_genes.difference(adata.var_names)
+        if not missing.empty:
+            raise ValueError(f"{study_id}: embedding genes absent from expression matrix")
+        embedding_input = adata[:, embedding_genes].copy()
+    if batch_key is not None and batch_key not in embedding_input.obs:
+        raise ValueError(f"{study_id}: Harmony batch key {batch_key!r} is absent")
+    embedding_input_genes = int(embedding_input.n_vars)
 
     hvg = pipeline["processing"]["hvg"]
     started = time.perf_counter()
-    sc.pp.highly_variable_genes(adata, **hvg)
-    vdj = adata.var_names.to_series().str.contains(
+    sc.pp.highly_variable_genes(embedding_input, **hvg)
+    vdj = embedding_input.var_names.to_series().str.contains(
         pipeline["processing"]["exclude_vdj_regex"], regex=True
     )
-    selected = adata.var["highly_variable"].to_numpy() & ~vdj.to_numpy()
-    embedding = adata[:, selected].copy()
-    _log_step(study_id, "select_embedding_features", started, selected_features=int(selected.sum()))
+    selected = embedding_input.var["highly_variable"].to_numpy() & ~vdj.to_numpy()
+    embedding = embedding_input[:, selected].copy()
+    if embedding.n_vars == 0:
+        raise ValueError(f"{study_id}: no non-VDJ highly variable genes were selected")
+    # Scaling may densify the selected matrix. Use float32 and only reach this
+    # point after feature selection to bound the dense working-set size.
+    embedding.X = embedding.X.astype(np.float32, copy=False)
+    _log_step(
+        study_id,
+        "select_embedding_features",
+        started,
+        input_features=embedding_input.n_vars,
+        selected_features=int(selected.sum()),
+    )
+    if embedding is not adata and embedding_input is not adata:
+        del embedding_input
     started = time.perf_counter()
     sc.pp.scale(embedding)
     _log_step(study_id, "scale_embedding", started)
     started = time.perf_counter()
     sc.tl.pca(embedding, svd_solver="arpack", random_state=pipeline["processing"]["random_seed"])
     _log_step(study_id, "pca", started, components=embedding.obsm["X_pca"].shape[1])
+    neighbor_rep = "X_pca"
+    if batch_key is not None:
+        import scanpy.external as sce
+
+        started = time.perf_counter()
+        sce.pp.harmony_integrate(
+            embedding,
+            batch_key,
+            basis="X_pca",
+            adjusted_basis=harmony_basis,
+            random_state=pipeline["processing"]["random_seed"],
+            verbose=False,
+        )
+        neighbor_rep = harmony_basis
+        _log_step(study_id, "harmony_integrate", started, batch_key=batch_key, basis=harmony_basis)
     neighbors = pipeline["processing"]["neighbors"]
     started = time.perf_counter()
-    sc.pp.neighbors(embedding, **neighbors, random_state=pipeline["processing"]["random_seed"])
-    _log_step(study_id, "neighbors", started, n_neighbors=neighbors["n_neighbors"])
+    neighbor_args = {key: value for key, value in neighbors.items() if key != "n_pcs"}
+    sc.pp.neighbors(
+        embedding,
+        **neighbor_args,
+        use_rep=neighbor_rep,
+        random_state=pipeline["processing"]["random_seed"],
+    )
+    _log_step(
+        study_id,
+        "neighbors",
+        started,
+        n_neighbors=neighbors["n_neighbors"],
+        use_rep=neighbor_rep,
+    )
     started = time.perf_counter()
     sc.tl.umap(embedding, random_state=pipeline["processing"]["random_seed"])
     _log_step(study_id, "umap", started)
     for key in ("uns", "obsm", "obsp"):
         setattr(adata, key, getattr(embedding, key))
+    return {
+        "basis": "X_umap",
+        "input_genes": embedding_input_genes,
+        "hvg_genes": int(embedding.n_vars),
+        "n_pcs": int(embedding.obsm["X_pca"].shape[1]),
+        "neighbors_use_rep": neighbor_rep,
+        "integration": None if batch_key is None else {
+            "method": "harmony", "batch_key": batch_key, "adjusted_basis": harmony_basis,
+        },
+    }

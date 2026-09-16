@@ -18,5 +18,20 @@
     "neighbors": {"n_neighbors": 50, "n_pcs": 30},
     "random_seed": 42,
     "output_compression": "gzip"
+  },
+  "merge": {
+    "pseudobulk": {
+      "groupby": ["sample", "aifi_l2_majority"]
+    },
+    "single_cell": {
+      "enabled": false,
+      "gene_join": "inner",
+      "annotation_level": "l2",
+      "integration": {
+        "method": "harmony",
+        "batch_key": "study",
+        "adjusted_basis": "X_pca_harmony"
+      }
+    }
   }
 }

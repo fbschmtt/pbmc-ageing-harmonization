@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
   "anndata>=0.10,<0.13",
   "celltypist>=1.6,<2",
+  "harmonypy==0.0.10",
   "openpyxl>=3.1,<4",
   "pandas>=2.0,<3",
   "scanpy>=1.10,<2",
@@ -19,11 +20,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "ruff>=0.9,<1"]
-qc = ["ipykernel>=6,<8", "nbconvert>=7,<8"]
+qc = ["ipykernel>=6,<8", "jupytext>=1.16,<2", "nbconvert>=7,<8", "upsetplot>=0.9,<1"]
 
 [project.scripts]
 pbmc-harmonize = "pbmc_pipeline.cli:main"
 pbmc-qc = "pbmc_pipeline.qc:main"
+pbmc-merge = "pbmc_pipeline.merge_cli:main"
+pbmc-merge-qc = "pbmc_pipeline.merge_qc:main"
+pbmc-manifest = "pbmc_pipeline.manifest:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

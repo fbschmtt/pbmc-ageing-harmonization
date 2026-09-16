@@ -5,21 +5,25 @@ NF_PROFILE ?= docker
 NXF ?= nextflow
 WORK_DIR ?= work
 OUTDIR ?= output
-PYTHON_IMAGE ?= pbmc-ageing-python:local
-R_IMAGE ?= pbmc-ageing-r:local
+IMAGE_TAG ?= $(shell git ls-files -co --exclude-standard docker config src scripts reports pyproject.toml README.md | sort | while IFS= read -r file; do test -f "$$file" && sha256sum "$$file"; done | sha256sum | cut -c1-12)
+PYTHON_IMAGE ?= pbmc-ageing-python:$(IMAGE_TAG)
+R_IMAGE ?= pbmc-ageing-r:$(IMAGE_TAG)
+PIPELINE_REVISION ?= $(shell git describe --always --dirty)
 TEST_CELLS ?= 200
 TEST_SEED ?= 42
 VALIDATE_OUTDIR ?= output/validation
+MERGE_SINGLE_CELL ?= false
 
-CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),docker-images,)
+CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),images,)
+MERGE_ARGS := $(if $(filter true 1 yes,$(MERGE_SINGLE_CELL)),--merge_single_cell,)
 
-.PHONY: help install lint workflow-lint test validate-study validate-test validate-full test-data docker-images docker-build docker-build-python docker-build-r pipeline pipeline-harmonize pipeline-test clean-work
+.PHONY: help install lint workflow-lint test test-unit test-integration verify validate-study validate-test validate-full test-data images image-python image-r run run-no-qc run-test pipeline pipeline-harmonize pipeline-test notebook-sync clean-work
 
 help: ## Show available development commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target> [STUDIES=wang25]\n\n"} /^[a-zA-Z_-]+:.*## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-install: ## Install the editable Python package and development/QC dependencies
-	python -m pip install -e '.[dev,qc]'
+install: ## Install development/QC dependencies into the local .venv
+	.venv/bin/python -m pip install -e '.[dev,qc]'
 
 lint: ## Run Ruff
 	.venv/bin/ruff check src scripts tests
@@ -27,43 +31,57 @@ lint: ## Run Ruff
 workflow-lint: ## Lint the Nextflow workflow (requires Nextflow >=25.04)
 	$(NXF) lint main.nf
 
-test: ## Run unit tests
+test-unit: ## Run deterministic unit and output-contract tests
 	.venv/bin/pytest -q
+
+test: test-unit ## Backward-compatible alias for unit tests
+
+test-integration: run-test ## Run the deterministic Docker integration workflow
+
+verify: lint test-unit workflow-lint test-integration ## Run all checks and a fresh cached Docker test workflow
 
 validate-study:
 	@case "$(STUDIES)" in all|*,*) echo "validation requires exactly one STUDIES value" >&2; exit 2;; esac
 
-validate-test: validate-study docker-build-python ## Validate one test fixture in the Python container
+validate-test: validate-study image-python ## Validate one test fixture in the Python container
 	mkdir -p "$(VALIDATE_OUTDIR)"
 	docker run --rm -v "$(CURDIR):/work:ro" -v "$(abspath $(VALIDATE_OUTDIR)):/result" -w /work $(PYTHON_IMAGE) pbmc-harmonize --project-root /work --config config/pipeline.json --study $(STUDIES) --test --validate-only --report-output /result/$(STUDIES).test.json
 
-validate-full: validate-study docker-build-python ## Validate one full input in the Python container
+validate-full: validate-study image-python ## Validate one full input in the Python container
 	mkdir -p "$(VALIDATE_OUTDIR)"
 	docker run --rm -v "$(CURDIR):/work:ro" -v "$(abspath $(VALIDATE_OUTDIR)):/result" -w /work -e PYTHONFAULTHANDLER=1 $(PYTHON_IMAGE) pbmc-harmonize --project-root /work --config config/pipeline.json --study $(STUDIES) --validate-only --report-output /result/$(STUDIES).json
 
-test-data: docker-images ## Create isolated 200-cell H5AD and RDS smoke-test fixtures
+test-data: images ## Create isolated 200-cell H5AD and RDS smoke-test fixtures
 	docker run --rm -v "$(CURDIR):/work" -w /work -e PYTHONPATH=/work/src $(PYTHON_IMAGE) python scripts/create_test_data.py --cells $(TEST_CELLS) --seed $(TEST_SEED) --overwrite
 	docker run --rm -v "$(CURDIR):/work" -w /work $(R_IMAGE) Rscript scripts/create_test_rds.R --project-root /work --cells $(TEST_CELLS) --seed $(TEST_SEED)
 
-docker-images: docker-build ## Build both workflow images required by the Docker profile
+images: image-python image-r ## Build cached local workflow images
 
-docker-build: docker-build-python docker-build-r ## Build both workflow images
+image-python:
+	docker build -f docker/python.Dockerfile -t $(PYTHON_IMAGE) .
 
-docker-build-python: ## Build the harmonization and QC image
-	docker build -f docker/python.Dockerfile -t pbmc-ageing-python:local .
+image-r:
+	docker build -f docker/r-conversion.Dockerfile -t $(R_IMAGE) .
 
-docker-build-r: ## Build the Seurat RDS conversion image
-	docker build -f docker/r-conversion.Dockerfile -t pbmc-ageing-r:local .
+run: $(CONTAINER_PREREQS) ## Resumable production workflow; opt in with MERGE_SINGLE_CELL=true
+	$(NXF) run main.nf -profile $(NF_PROFILE) -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) --python_image $(PYTHON_IMAGE) --r_image $(R_IMAGE) --pipeline_revision $(PIPELINE_REVISION) $(MERGE_ARGS) -resume
 
-pipeline: $(CONTAINER_PREREQS) ## Run selected studies; Docker images build automatically with NF_PROFILE=docker
-	$(NXF) run main.nf -profile $(NF_PROFILE) -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) -resume
+run-no-qc: $(CONTAINER_PREREQS) ## Resumable workflow without rendered QC reports
+	$(NXF) run main.nf -profile $(NF_PROFILE) -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) --python_image $(PYTHON_IMAGE) --r_image $(R_IMAGE) --pipeline_revision $(PIPELINE_REVISION) $(MERGE_ARGS) --skip_qc -resume
 
-pipeline-harmonize: $(CONTAINER_PREREQS) ## Run through harmonization but skip QC reports
-	$(NXF) run main.nf -profile $(NF_PROFILE) -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) --skip_qc -resume
+run-test: OUTDIR = output/test
+run-test: $(CONTAINER_PREREQS) ## Fresh deterministic 200-cell integration workflow
+	$(NXF) run main.nf -profile $(NF_PROFILE),test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) --python_image $(PYTHON_IMAGE) --r_image $(R_IMAGE) --pipeline_revision $(PIPELINE_REVISION) $(MERGE_ARGS)
 
-pipeline-test: OUTDIR = output/test
-pipeline-test: $(CONTAINER_PREREQS) ## Run the selected 200-cell test workflow
-	$(NXF) run main.nf -profile $(NF_PROFILE),test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES)
+pipeline: run ## Backward-compatible alias for run
+
+pipeline-harmonize: run-no-qc ## Backward-compatible alias for run-no-qc
+
+pipeline-test: run-test ## Backward-compatible alias for run-test
+
+notebook-sync: ## Regenerate the merge QC notebook from its paired Python source
+	mkdir -p .cache/jupyter
+	JUPYTER_DATA_DIR="$(CURDIR)/.cache/jupyter" .venv/bin/jupytext --to ipynb --output reports/merge_qc_report.ipynb reports/merge_qc_report.py
 
 clean-work: ## Ask Nextflow to remove obsolete cached work directories
 	$(NXF) clean -f

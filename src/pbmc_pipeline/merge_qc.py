@@ -1,0 +1,75 @@
+"""Render one combined QC document for pseudobulk and optional single-cell merges."""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from .logging_utils import configure_logging
+
+
+def generate_merge_qc_report(
+    *, root: Path, inputs: list[Path], reports: list[Path], output_dir: Path,
+    template_path: Path | None = None,
+) -> Path:
+    reports_by_stem = {report_path.stem: report_path for report_path in reports}
+    if len(reports_by_stem) != len(reports):
+        raise ValueError("Merge report names must be unique")
+    by_kind: dict[str, tuple[Path, Path]] = {}
+    for input_path in inputs:
+        report_path = reports_by_stem.get(input_path.stem)
+        if report_path is None:
+            raise ValueError(f"{input_path}: matching merge report is absent")
+        document = json.loads(report_path.read_text())
+        kind = document.get("kind")
+        if kind not in {"pseudobulk_merge", "single_cell_merge"}:
+            raise ValueError(f"{report_path}: unsupported merge report kind {kind!r}")
+        if kind in by_kind:
+            raise ValueError(f"More than one {kind} report supplied")
+        by_kind[kind] = (input_path.resolve(), report_path.resolve())
+    if "pseudobulk_merge" not in by_kind:
+        raise ValueError("Combined merge QC requires a pseudobulk_merge report")
+
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    template = (template_path or root / "reports" / "merge_qc_report.ipynb").resolve()
+    env = os.environ.copy()
+    pseudo_input, pseudo_report = by_kind["pseudobulk_merge"]
+    env.update({
+        "QC_PSEUDOBULK_H5AD": str(pseudo_input),
+        "QC_PSEUDOBULK_REPORT": str(pseudo_report),
+        "MPLCONFIGDIR": str((root / ".cache" / "matplotlib").resolve()),
+    })
+    if "single_cell_merge" in by_kind:
+        single_input, single_report = by_kind["single_cell_merge"]
+        env.update({"QC_SINGLE_CELL_H5AD": str(single_input), "QC_SINGLE_CELL_REPORT": str(single_report)})
+    executed, html = output_dir / "executed.ipynb", output_dir / "report.html"
+    subprocess.run([
+        sys.executable, "-m", "jupyter", "nbconvert", "--execute", "--to", "notebook",
+        "--ExecutePreprocessor.timeout=-1", f"--output={executed.name}",
+        f"--output-dir={output_dir}", str(template),
+    ], cwd=root, env=env, check=True)
+    subprocess.run([
+        sys.executable, "-m", "jupyter", "nbconvert", "--to", "html",
+        f"--output={html.name}", f"--output-dir={output_dir}", str(executed),
+    ], cwd=root, env=env, check=True)
+    return html
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Render one combined cross-study merge QC report")
+    parser.add_argument("--project-root", type=Path, default=Path.cwd())
+    parser.add_argument("--input", type=Path, nargs="+", required=True)
+    parser.add_argument("--run-report", type=Path, nargs="+", required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--template", type=Path)
+    parser.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+    args = parser.parse_args()
+    configure_logging(args.log_level)
+    print(generate_merge_qc_report(
+        root=args.project_root.resolve(), inputs=args.input, reports=args.run_report,
+        output_dir=args.output_dir, template_path=args.template,
+    ))

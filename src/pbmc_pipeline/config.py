@@ -28,6 +28,26 @@ def validate_configuration(pipeline: dict, studies: dict, schema: dict) -> None:
         raise ConfigurationError("Only configuration schema_version 1 is supported")
     if not studies.get("studies"):
         raise ConfigurationError("No studies are configured")
+    merge = pipeline.get("merge", {})
+    groupby = merge.get("pseudobulk", {}).get("groupby", [])
+    if not groupby or not {"sample", "aifi_l2_majority"}.issubset(groupby):
+        raise ConfigurationError(
+            "merge.pseudobulk.groupby must include sample and aifi_l2_majority"
+        )
+    single_cell = merge.get("single_cell", {})
+    if single_cell.get("gene_join") not in {"inner"}:
+        raise ConfigurationError("merge.single_cell.gene_join currently supports only 'inner'")
+    if single_cell.get("annotation_level") != "l2":
+        raise ConfigurationError("merge.single_cell.annotation_level must be 'l2'")
+    integration = single_cell.get("integration", {})
+    if integration.get("method") != "harmony":
+        raise ConfigurationError("merge.single_cell.integration.method must be 'harmony'")
+    if not isinstance(integration.get("batch_key"), str) or not integration["batch_key"]:
+        raise ConfigurationError("merge.single_cell.integration.batch_key must be a non-empty string")
+    if integration.get("adjusted_basis") != "X_pca_harmony":
+        raise ConfigurationError(
+            "merge.single_cell.integration.adjusted_basis must be 'X_pca_harmony'"
+        )
 
     required = set(schema["required"])
     prediction_columns = {f"aifi_{level}_majority" for level in ("l1", "l2", "l3")}
@@ -48,4 +68,3 @@ def validate_configuration(pipeline: dict, studies: dict, schema: dict) -> None:
 def config_digest(*documents: dict) -> str:
     payload = json.dumps(documents, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(payload).hexdigest()
-
