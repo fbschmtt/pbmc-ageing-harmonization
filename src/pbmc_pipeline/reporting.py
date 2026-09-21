@@ -24,3 +24,23 @@ def aifi_l2_concordance(obs: pd.DataFrame) -> pd.DataFrame:
         obs["aifi_l2_majority"].astype(str),
         normalize="index",
     )
+
+
+def pseudobulk_celltype_fractions(obs: pd.DataFrame) -> pd.DataFrame:
+    """Return within-study cell fractions, weighting pseudobulk rows by ``n_cells``."""
+    required = {"study", "aifi_l2_majority", "n_cells"}
+    missing = required - set(obs)
+    if missing:
+        raise ValueError(f"Pseudobulk observations are missing columns: {sorted(missing)}")
+    composition = pd.pivot_table(
+        obs.assign(
+            study=obs["study"].astype(str),
+            aifi_l2_majority=obs["aifi_l2_majority"].astype(str),
+        ),
+        index="study",
+        columns="aifi_l2_majority",
+        values="n_cells",
+        aggfunc="sum",
+        fill_value=0,
+    )
+    return composition.div(composition.sum(axis=1), axis=0)

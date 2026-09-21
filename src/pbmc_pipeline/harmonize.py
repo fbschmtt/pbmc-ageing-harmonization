@@ -80,14 +80,15 @@ def harmonize_study(
     _log_step(study_id, "validate_input", started)
     input_cells, input_genes = adata.shape
     started = time.perf_counter()
-    adata, dropped_features = _repair_features(adata, study.get("features", {}))
+    adata, aggregated_features = _repair_features(adata, study.get("features", {}))
     _log_step(
-        study_id, "repair_features", started, dropped_duplicate_features=dropped_features,
+        study_id, "repair_features", started, aggregated_duplicate_features=aggregated_features,
         cells=adata.n_obs, genes=adata.n_vars,
     )
     started = time.perf_counter()
     joined_obs = apply_joins(adata.obs, study.get("joins", []), root, warnings)
     adata.obs = build_homogeneous_obs(joined_obs, study_id, study["metadata"])
+    _normalize_missing_metadata(adata, schema)
     _log_step(study_id, "build_metadata", started, warnings=len(warnings))
 
     annotation = study["annotation"]
@@ -112,7 +113,7 @@ def harmonize_study(
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "input": str(input_path),
         "input_cells": int(input_cells), "input_genes": int(input_genes),
-        "dropped_duplicate_features": dropped_features,
+        "aggregated_duplicate_features": aggregated_features,
         **summary,
         "warnings": warnings,
         "provenance": study.get("provenance", {}),
@@ -164,8 +165,25 @@ def _normalize_nullable_strings_for_h5ad(adata) -> None:
                 frame[column] = series.astype(object).where(series.notna(), None)
 
 
+def _normalize_missing_metadata(adata, schema: dict) -> None:
+    """Apply the output contract's missing-value representation before validation."""
+    missing_string = schema["missing_string"]
+    for column, expected_type in schema["required"].items():
+        # CellTypist columns are materialized after this metadata step.  They
+        # are checked by validate_output once annotation is complete.
+        if column not in adata.obs:
+            continue
+        if expected_type == "string":
+            adata.obs[column] = adata.obs[column].astype("string").fillna(missing_string)
+        elif expected_type == "float":
+            adata.obs[column] = pd.to_numeric(adata.obs[column], errors="raise").astype(float)
+        else:
+            raise ValueError(f"Unsupported metadata type for {column}: {expected_type}")
+
+
 def _repair_features(adata, spec: dict):
     import pandas as pd
+    from scipy import sparse
 
     names = (adata.var[spec["source_column"]].astype(str)
              if spec.get("source_column") else pd.Series(adata.var_names, index=adata.var_names))
@@ -175,9 +193,18 @@ def _repair_features(adata, spec: dict):
     duplicated = names.duplicated(keep=False).to_numpy()
     duplicate_count = int(duplicated.sum())
     policy = spec.get("duplicate_policy", "error")
-    if duplicate_count and policy == "drop_all":
-        adata = adata[:, ~duplicated].copy()
-        names = names.loc[~duplicated]
+    if duplicate_count and policy == "sum":
+        codes, unique_names = pd.factorize(names, sort=False)
+        membership = sparse.csr_matrix(
+            (np.ones(adata.n_vars, dtype=np.int8), (np.arange(adata.n_vars), codes)),
+            shape=(adata.n_vars, len(unique_names)),
+        )
+        counts = (adata.X @ membership if sparse.issparse(adata.X)
+                  else sparse.csr_matrix(adata.X) @ membership)
+        representatives = ~names.duplicated(keep="first")
+        adata = adata[:, representatives].copy()
+        adata.X = counts
+        names = pd.Series(unique_names, index=adata.var_names)
     elif duplicate_count:
         raise ValueError(f"Found {duplicate_count} ambiguous feature names")
     adata.var_names = names.to_numpy()
@@ -195,7 +222,6 @@ def _annotate_celltypist(
     embedding_genes: pd.Index | None = None,
     harmony_basis: str = "X_pca_harmony",
 ) -> dict[str, object]:
-    import celltypist
     import scanpy as sc
 
     raw_counts = adata.X.copy()
@@ -211,6 +237,23 @@ def _annotate_celltypist(
         embedding_genes=embedding_genes,
         harmony_basis=harmony_basis,
     )
+    _predict_celltypist(adata, annotation, pipeline, root, study_id)
+    adata.X = raw_counts
+    return embedding
+
+
+def _predict_celltypist(
+    adata,
+    annotation: dict,
+    pipeline: dict,
+    root: Path,
+    study_id: str,
+    *,
+    label_suffix: str = "",
+) -> None:
+    """Run CellTypist majority voting using the graph currently on ``adata``."""
+    import celltypist
+
     for level in annotation["levels"]:
         started = time.perf_counter()
         model_path = root / pipeline["models"][f"aifi_{level}"]
@@ -220,10 +263,11 @@ def _annotate_celltypist(
         labels = prediction.predicted_labels["majority_voting"]
         if not labels.index.equals(adata.obs_names):
             raise ValueError(f"CellTypist {level} prediction index differs from input cells")
-        adata.obs[f"aifi_{level}_majority"] = labels
-        _log_step(study_id, "annotate_celltypist", started, level=level, model=model_path.name)
-    adata.X = raw_counts
-    return embedding
+        adata.obs[f"aifi_{level}{label_suffix}_majority"] = labels
+        _log_step(
+            study_id, "annotate_celltypist", started, level=level,
+            model=model_path.name, graph=adata.uns["neighbors"]["params"].get("use_rep"),
+        )
 
 
 def _compute_embedding(
@@ -300,7 +344,9 @@ def _compute_embedding(
         _log_step(study_id, "harmony_integrate", started, batch_key=batch_key, basis=harmony_basis)
     neighbors = pipeline["processing"]["neighbors"]
     started = time.perf_counter()
-    neighbor_args = {key: value for key, value in neighbors.items() if key != "n_pcs"}
+    neighbor_args = dict(neighbors)
+    effective_n_pcs = min(neighbor_args["n_pcs"], embedding.obsm[neighbor_rep].shape[1])
+    neighbor_args["n_pcs"] = effective_n_pcs
     sc.pp.neighbors(
         embedding,
         **neighbor_args,
@@ -311,7 +357,7 @@ def _compute_embedding(
         study_id,
         "neighbors",
         started,
-        n_neighbors=neighbors["n_neighbors"],
+        n_neighbors=neighbors["n_neighbors"], n_pcs=effective_n_pcs,
         use_rep=neighbor_rep,
     )
     started = time.perf_counter()
@@ -324,6 +370,7 @@ def _compute_embedding(
         "input_genes": embedding_input_genes,
         "hvg_genes": int(embedding.n_vars),
         "n_pcs": int(embedding.obsm["X_pca"].shape[1]),
+        "neighbors_n_pcs": effective_n_pcs,
         "neighbors_use_rep": neighbor_rep,
         "integration": None if batch_key is None else {
             "method": "harmony", "batch_key": batch_key, "adjusted_basis": harmony_basis,

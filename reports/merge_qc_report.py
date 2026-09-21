@@ -19,7 +19,7 @@ from IPython.display import Markdown, display
 from scipy import sparse
 from upsetplot import UpSet, from_indicators
 
-from pbmc_pipeline.reporting import aifi_l2_concordance, gene_presence_indicators
+from pbmc_pipeline.reporting import gene_presence_indicators, pseudobulk_celltype_fractions
 
 sns.set_theme(style="whitegrid")
 
@@ -62,13 +62,13 @@ show_summary(pseudobulk, pseudobulk_report, pseudobulk_path, "Pseudobulk merge")
 show_study_coverage(pseudobulk)
 
 # %% [markdown]
-# ### AIFI L2 composition
+# ### AIFI L2 composition by cell
 
 # %%
-composition = pd.crosstab(pseudobulk.obs["study"].astype(str), pseudobulk.obs["aifi_l2_majority"].astype(str), normalize="index")
+composition = pseudobulk_celltype_fractions(pseudobulk.obs)
 plt.figure(figsize=(max(10, 0.55 * composition.shape[1]), max(4, 0.55 * composition.shape[0])))
 sns.heatmap(composition, cmap="viridis", vmin=0)
-plt.title("AIFI L2 fraction within each study")
+plt.title("AIFI L2 fraction of cells within each study")
 plt.xlabel("AIFI L2")
 plt.ylabel("Study")
 plt.tight_layout()
@@ -79,8 +79,8 @@ plt.show()
 
 # %%
 presence = gene_presence_indicators(pseudobulk.var)
-if presence.empty:
-    display(Markdown("_No outer gene join was used, so this merge has no synthetic-zero gene-presence annotations._"))
+if presence.empty or presence.shape[1] < 2:
+    display(Markdown("_Gene-presence overlap requires an outer gene join across at least two studies._"))
 else:
     # UpSetPlot 0.9 has a rendering error with ``show_counts`` under current
     # Matplotlib, so intersection labels are intentionally omitted.
@@ -104,17 +104,33 @@ else:
     show_summary(single_cell, single_cell_report, single_cell_path, "Global single-cell merge")
     show_study_coverage(single_cell)
 
-    display(Markdown("### Merged versus individual-study AIFI L2 labels"))
-    concordance = aifi_l2_concordance(single_cell.obs)
-    if concordance.empty:
-        display(Markdown("_Individual-study AIFI L2 labels were unavailable for comparison._"))
+    display(Markdown("### AIFI L2 label concordance"))
+    label_columns = [
+        ("Original study-level", "aifi_l2_study_majority"),
+        ("Harmony graph", "aifi_l2_majority"),
+        ("Unintegrated PCA graph", "aifi_l2_unintegrated_majority"),
+    ]
+    available_labels = [item for item in label_columns if item[1] in single_cell.obs]
+    if len(available_labels) < 2:
+        display(Markdown("_Fewer than two AIFI L2 label sets were available for comparison._"))
     else:
-        plt.figure(figsize=(max(8, 0.6 * concordance.shape[1]), max(6, 0.45 * concordance.shape[0])))
-        sns.heatmap(concordance, cmap="viridis", vmin=0, annot=concordance.shape[0] <= 15, fmt=".2f")
-        plt.title("Merged AIFI L2 prediction by original study-level AIFI L2 label")
-        plt.xlabel("Merged AIFI L2 prediction")
-        plt.ylabel("Individual-study AIFI L2 label")
-        plt.tight_layout()
+        comparisons = [
+            (available_labels[left], available_labels[right])
+            for left in range(len(available_labels))
+            for right in range(left + 1, len(available_labels))
+        ]
+        fig, axes = plt.subplots(1, len(comparisons), figsize=(7 * len(comparisons), 6), squeeze=False)
+        for axis, ((left_name, left_column), (right_name, right_column)) in zip(axes.flat, comparisons):
+            concordance = pd.crosstab(
+                single_cell.obs[left_column].astype(str),
+                single_cell.obs[right_column].astype(str),
+                normalize="index",
+            )
+            sns.heatmap(concordance, cmap="viridis", vmin=0, annot=concordance.shape[0] <= 15, fmt=".2f", ax=axis)
+            axis.set_title(f"{left_name} vs {right_name}")
+            axis.set_xlabel(right_name)
+            axis.set_ylabel(left_name)
+        fig.tight_layout()
         plt.show()
     display(Markdown("### Embedding and depth"))
     values = single_cell.X
@@ -130,6 +146,8 @@ else:
     umap_colors = ["study", "aifi_l2_majority"]
     if "aifi_l2_study_majority" in single_cell.obs:
         umap_colors.insert(1, "aifi_l2_study_majority")
+    if "aifi_l2_unintegrated_majority" in single_cell.obs:
+        umap_colors.append("aifi_l2_unintegrated_majority")
     for color in umap_colors:
         sc.pl.umap(
             single_cell,
@@ -140,5 +158,23 @@ else:
         )
         figure = plt.gcf()
         figure.set_size_inches(12, 7)
+        figure.tight_layout()
+        plt.show()
+
+    display(Markdown("### Single-cell QC UMAPs"))
+    single_cell.obs["log_UMIs_per_cell"] = np.log1p(single_cell.obs["UMIs_per_cell"])
+    for color, kwargs in [
+        ("log_UMIs_per_cell", {}),
+        ("percent_mito", {"vmin": 0, "vmax": 15}),
+    ]:
+        sc.pl.umap(
+            single_cell,
+            color=color,
+            size=max(2, 120000 / single_cell.n_obs),
+            show=False,
+            **kwargs,
+        )
+        figure = plt.gcf()
+        figure.set_size_inches(10, 7)
         figure.tight_layout()
         plt.show()

@@ -57,6 +57,7 @@ process MERGE_SINGLE_CELLS {
 
     script:
     """
+    ${task.ext.harmony_thread_environment ?: ''}
     pbmc-merge --project-root . --config ${merge_config} --mode single-cell-merge \\
       --aifi-l2-model ${aifi_l2_model} --input ${studies} --output single_cell_merged.h5ad \\
       --report-output single_cell_merged.json

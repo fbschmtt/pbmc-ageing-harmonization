@@ -74,7 +74,7 @@ def apply_joins(obs, joins: list[dict[str, Any]], root: Path, warnings: list[str
             table = _reshape_terekhova_visits(table)
             result = _safe_merge(
                 result,
-                table[["Tube_id", "Donor_id", "Gender", "Age", "BMI", "Ethnicity"]],
+                table[["Tube_id", "Donor_id", "Gender", "Age", "BMI", "Ethnicity", "Visit"]],
                 ["Tube_id"],
             )
         elif mode == "merge":

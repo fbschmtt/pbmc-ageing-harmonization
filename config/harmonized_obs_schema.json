@@ -6,6 +6,7 @@
     "study_celltype": "string",
     "sample": "string",
     "subject": "string",
+    "sampling_timepoint": "string",
     "age": "float",
     "sex": "string",
     "bmi": "float",
@@ -26,7 +27,7 @@
     "aifi_l2_majority": "string",
     "aifi_l3_majority": "string"
   },
-  "non_nullable": ["study", "sample", "subject", "study_site", "batch_single_cell"],
+  "non_nullable": ["study", "sample", "subject", "sampling_timepoint", "study_site", "batch_single_cell"],
   "controlled_values": {
     "sex": ["female", "male", "not_provided"],
     "frozen": ["yes", "no", "not_provided"],
@@ -34,4 +35,3 @@
     "smoking_status": ["yes", "no", "not_provided"]
   }
 }
-

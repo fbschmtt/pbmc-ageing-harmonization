@@ -6,7 +6,12 @@ import pandas as pd
 from scipy import sparse
 
 from pbmc_pipeline.harmonize import _compute_embedding
-from pbmc_pipeline.merge import _shared_gene_names, merge_pseudobulks, pseudobulk_study
+from pbmc_pipeline.merge import (
+    _add_single_cell_qc_metrics,
+    _shared_gene_names,
+    merge_pseudobulks,
+    pseudobulk_study,
+)
 
 PIPELINE = {
     "processing": {"output_compression": "gzip"},
@@ -50,7 +55,13 @@ def test_pseudobulk_is_sample_and_l2_specific_then_outer_merged(tmp_path):
     assert merged.var.loc["A", "synthetic_zero_filled_studies"] == "two"
     assert not bool(merged.var.loc["B", "has_synthetic_zeros"])
     assert merged.uns["pipeline_provenance"]["gene_join"] == "outer"
-    assert json.loads(merged_report.read_text())["observations_by_study"] == {"one": 2, "two": 1}
+    report = json.loads(merged_report.read_text())
+    assert report["observations_by_study"] == {"one": 2, "two": 1}
+    assert report["aifi_l2_cells_by_study"] == [
+        {"study": "one", "aifi_l2_majority": "B", "n_cells": 1},
+        {"study": "one", "aifi_l2_majority": "T", "n_cells": 2},
+        {"study": "two", "aifi_l2_majority": "T", "n_cells": 1},
+    ]
 
 
 def test_single_cell_embedding_uses_shared_genes_then_harmony_neighbors(monkeypatch):
@@ -89,11 +100,25 @@ def test_single_cell_embedding_uses_shared_genes_then_harmony_neighbors(monkeypa
     assert seen["basis"] == "X_pca"
     assert details["input_genes"] == len(shared_genes)
     assert details["neighbors_use_rep"] == "X_pca_harmony"
+    assert details["neighbors_n_pcs"] == min(5, adata.obsm["X_pca_harmony"].shape[1])
     assert "X_pca_harmony" in adata.obsm
     assert adata.uns["neighbors"]["params"]["use_rep"] == "X_pca_harmony"
+    assert adata.uns["neighbors"]["params"]["n_pcs"] == details["neighbors_n_pcs"]
 
 
 def test_shared_gene_names_preserves_first_study_order():
     first = ad.AnnData(X=np.ones((1, 3)), var=pd.DataFrame(index=["C", "A", "B"]))
     second = ad.AnnData(X=np.ones((1, 2)), var=pd.DataFrame(index=["B", "C"]))
     assert _shared_gene_names([first, second]).tolist() == ["C", "B"]
+
+
+def test_single_cell_qc_metrics_use_raw_counts_and_mt_prefix():
+    adata = ad.AnnData(
+        X=sparse.csr_matrix([[3, 1, 6], [0, 0, 0]]),
+        var=pd.DataFrame(index=["MT-CO1", "mt-nd1", "MS4A1"]),
+    )
+
+    _add_single_cell_qc_metrics(adata)
+
+    assert adata.obs["UMIs_per_cell"].tolist() == [10, 0]
+    assert adata.obs["percent_mito"].tolist() == [40.0, 0.0]

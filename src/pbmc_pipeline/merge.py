@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import platform
+import time
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from importlib.metadata import version
@@ -14,7 +15,11 @@ import pandas as pd
 from scipy import sparse
 
 from .config import config_digest
-from .harmonize import _annotate_celltypist, _normalize_nullable_strings_for_h5ad
+from .harmonize import (
+    _annotate_celltypist,
+    _normalize_nullable_strings_for_h5ad,
+    _predict_celltypist,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -162,6 +167,7 @@ def merge_single_cells(
     # synthetic rather than observational zeros.
     if spec["gene_join"] == "outer":
         _annotate_gene_availability(merged, parts)
+    _add_single_cell_qc_metrics(merged)
     integration = spec["integration"]
     # CellTypist detects ``obsp['connectivities']`` and uses it for its
     # over-clustering/majority-voting stage. The helper therefore installs the
@@ -176,6 +182,28 @@ def merge_single_cells(
         embedding_genes=shared_genes,
         harmony_basis=integration["adjusted_basis"],
     )
+    # ``aifi_l2_majority`` above is the Harmony-graph prediction retained for
+    # backwards compatibility.  Repeat majority voting with a graph made from
+    # unintegrated PCs, then restore the Harmony graph/UMAP as the primary
+    # embedding stored in the merged artifact.
+    raw_counts = merged.X.copy()
+    sc.pp.normalize_total(merged, target_sum=pipeline["processing"]["target_sum"])
+    sc.pp.log1p(merged)
+    _compute_neighbors_and_umap(
+        merged, pipeline, "merged_single_cell", use_rep="X_pca", compute_umap=False
+    )
+    _predict_celltypist(
+        merged,
+        {"method": "celltypist", "levels": [spec["annotation_level"]]},
+        pipeline,
+        root,
+        "merged_single_cell",
+        label_suffix="_unintegrated",
+    )
+    merged.X = raw_counts
+    _compute_neighbors_and_umap(
+        merged, pipeline, "merged_single_cell", use_rep=integration["adjusted_basis"]
+    )
     merged.uns["pipeline_provenance"] = _merge_provenance(
         "single_cell_merge", paths, pipeline, gene_join=spec["gene_join"]
     )
@@ -188,6 +216,51 @@ def merge_single_cells(
     report.update({"embedding": embedding})
     _write_report(report_path, report)
     return report
+
+
+def _add_single_cell_qc_metrics(adata) -> None:
+    """Add raw-count depth and mitochondrial fraction for merged-cell QC."""
+    counts = adata.X
+    total_counts = np.asarray(counts.sum(axis=1)).ravel()
+    mitochondrial = adata.var_names.str.upper().str.startswith("MT-")
+    mito_counts = np.asarray(counts[:, mitochondrial].sum(axis=1)).ravel()
+    adata.obs["UMIs_per_cell"] = total_counts
+    adata.obs["percent_mito"] = np.divide(
+        mito_counts * 100,
+        total_counts,
+        out=np.zeros(adata.n_obs, dtype=float),
+        where=total_counts != 0,
+    )
+
+
+def _compute_neighbors_and_umap(
+    adata, pipeline: dict, study_id: str, *, use_rep: str, compute_umap: bool = True
+) -> None:
+    """Install a graph and UMAP derived from one existing PCA representation."""
+    import scanpy as sc
+
+    neighbors = pipeline["processing"]["neighbors"]
+    neighbor_args = dict(neighbors)
+    effective_n_pcs = min(neighbor_args["n_pcs"], adata.obsm[use_rep].shape[1])
+    neighbor_args["n_pcs"] = effective_n_pcs
+    started = time.perf_counter()
+    sc.pp.neighbors(
+        adata,
+        **neighbor_args,
+        use_rep=use_rep,
+        random_state=pipeline["processing"]["random_seed"],
+    )
+    LOGGER.info(
+        "study=%s step=neighbors duration_seconds=%.2f n_neighbors=%s n_pcs=%s use_rep=%s",
+        study_id, time.perf_counter() - started, neighbors["n_neighbors"], effective_n_pcs, use_rep,
+    )
+    if compute_umap:
+        started = time.perf_counter()
+        sc.tl.umap(adata, random_state=pipeline["processing"]["random_seed"])
+        LOGGER.info(
+            "study=%s step=umap duration_seconds=%.2f use_rep=%s",
+            study_id, time.perf_counter() - started, use_rep,
+        )
 
 
 def _distribution(values: pd.Series) -> dict[str, float]:
@@ -251,15 +324,19 @@ def _merge_provenance(kind: str, paths: list[Path], pipeline: dict, *, gene_join
 
 def _merge_report(kind: str, adata, paths: list[Path], pipeline: dict) -> dict:
     per_study = adata.obs.groupby("study", observed=True).size().sort_index()
-    celltype = (adata.obs.groupby(["study", "aifi_l2_majority"], observed=True).size()
-                .rename("n").reset_index())
+    if "n_cells" in adata.obs:
+        celltype = (adata.obs.groupby(["study", "aifi_l2_majority"], observed=True)["n_cells"]
+                    .sum().rename("n_cells").reset_index())
+    else:
+        celltype = (adata.obs.groupby(["study", "aifi_l2_majority"], observed=True).size()
+                    .rename("n_cells").reset_index())
     return {
         "kind": kind, "status": "complete", "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "inputs": [str(path) for path in paths], "n_observations": int(adata.n_obs),
         "n_genes": int(adata.n_vars), "observations_by_study": per_study.astype(int).to_dict(),
         "samples_by_study": adata.obs.groupby("study", observed=True)["sample"].nunique().astype(int).to_dict(),
         "subjects_by_study": adata.obs.groupby("study", observed=True)["subject"].nunique().astype(int).to_dict(),
-        "aifi_l2_by_study": celltype.to_dict(orient="records"),
+        "aifi_l2_cells_by_study": celltype.to_dict(orient="records"),
         "genes_with_synthetic_zeros": int(adata.var.get("has_synthetic_zeros", pd.Series(False)).sum()),
         "configuration_sha256": config_digest(pipeline),
         "versions": {"python": platform.python_version(), "anndata": version("anndata"), "scanpy": version("scanpy")},

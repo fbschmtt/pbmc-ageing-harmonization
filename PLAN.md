@@ -16,6 +16,13 @@ merge is available.
 - Installed `pbmc-*` package commands are the only processing entry points;
   Make invokes Nextflow for complete workflows.
 - Raw counts remain in `X` in final outputs. Normalized values are temporary.
+- Source-study QC is authoritative. The pipeline does not apply additional
+  manual cell filtering or QC thresholds.
+- `subject` identifies a biological individual; `sample` identifies one
+  specimen at one collection timepoint; and `batch_single_cell` identifies a
+  technical processing unit. Pseudobulks aggregate all technical partitions
+  of one sample. AIDA Lonza material is intentionally retained as separate
+  site-specific samples until it is excluded downstream.
 - Legacy notebooks are retained as provenance but are not pipeline dependencies.
 - Exploratory notebooks are kept locally but excluded from the initial Git
   history because their embedded outputs dominate file size and contain
@@ -114,7 +121,9 @@ make run STUDIES=all MERGE_SINGLE_CELL=true
 - OneK1K's sample-per-donor interpretation and intronic-read setting need review.
 - AIDA's technology version and ambiguous Lonza batch assignments need review.
 - Terekhova freezing and demultiplexing descriptions need review.
-- Wang's ancestry, freezing, intronic-read, and CMV interpretations need review.
+- Wang's freezing and intronic-read interpretations need review. Its published
+  CMV IgM field is retained as a qualitative serostatus and is negative for all
+  61 workbook records.
 - Decide whether final study files should retain UMAP/PCA artifacts or only labels.
 
 ## Architecture risks to address before full-data runs

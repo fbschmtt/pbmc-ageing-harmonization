@@ -1,6 +1,10 @@
 import pandas as pd
 
-from pbmc_pipeline.reporting import aifi_l2_concordance, gene_presence_indicators
+from pbmc_pipeline.reporting import (
+    aifi_l2_concordance,
+    gene_presence_indicators,
+    pseudobulk_celltype_fractions,
+)
 
 
 def test_gene_presence_indicators_uses_merge_provenance_columns():
@@ -18,3 +22,16 @@ def test_aifi_l2_concordance_normalizes_per_study_label():
     matrix = aifi_l2_concordance(obs)
     assert matrix.loc["T", "T"] == 0.5
     assert matrix.loc["B", "B"] == 1.0
+
+
+def test_pseudobulk_celltype_fractions_weights_each_row_by_cell_count():
+    obs = pd.DataFrame({
+        "study": ["one", "one", "one"],
+        "aifi_l2_majority": ["T", "T", "B"],
+        "n_cells": [90, 10, 100],
+    })
+
+    fractions = pseudobulk_celltype_fractions(obs)
+
+    assert fractions.loc["one", "T"] == 0.5
+    assert fractions.loc["one", "B"] == 0.5

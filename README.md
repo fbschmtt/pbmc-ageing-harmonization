@@ -57,6 +57,22 @@ input_data/ expression objects + metadata
 All immutable local inputs belong under `input_data/`. Generated conversions,
 reports, and harmonized outputs are kept outside it and ignored by Git.
 
+## Sample and metadata semantics
+
+`subject` is a biological individual. `sample` is one biological specimen at
+one collection timepoint; it is the unit aggregated into sample × AIFI-L2
+pseudobulks. `batch_single_cell` is a technical library, run, pool, or well and
+never defines a pseudobulk. Missing string metadata is written as
+`not_provided`; missing numeric metadata is `NaN`.
+
+| Study | Subject | Sample | Sampling timepoint | Technical batch | Notes |
+|---|---|---|---|---|---|
+| AIDA25 | `donor_id` | country-qualified donor ID | not provided | supplementary experimental batch | Lonza material replicated across sites remains intentionally split until downstream exclusion. BMI uses the supplementary donor metadata. |
+| AIFI | specimen GUID prefix | specimen GUID | `sample.visitName` | `well_id` | A specimen GUID may span multiple wells; pseudobulk combines those technical partitions. |
+| OneK1K | `donor_id` | `donor_id` | not provided | `pool_number` | No separate sampling-timepoint identifier is available. |
+| Terekhova23 | `Donor_id` | `Tube_id` | workbook visit | barcode-derived batch | Each tube maps to one donor and visit; a tube may span technical batches. |
+| Wang25 | `Sample ID` | `Sample ID` | not provided | not provided | No separate donor, timepoint, or technical-batch identifier has yet been recovered. |
+
 `tests/` contains only automated test code. Reproducible local intermediates
 are collected under `cache/` for RDS-to-H5AD conversions. Downsampled smoke-test
 fixtures are generated under the ignored `test_data/` directory.
@@ -135,9 +151,13 @@ pbmc-qc \
 
 The merge workflow renders one combined document at `output/qc/merged/`. It
 starts with pseudobulk composition and a gene-presence UpSet plot; if the
-single-cell branch is enabled it appends its embedding, depth checks, and the
-matrix comparing newly merged AIFI L2 calls to each cell's original study-level
-call. `output/run_manifest.json` records selected studies, image references,
+single-cell branch is enabled it appends its embedding, depth checks, UMAPs of
+log(UMIs per cell) and mitochondrial percentage (capped at 15%), and the matrix
+comparing newly merged AIFI L2 calls to each cell's original study-level call.
+The merged artifact retains the Harmony-graph calls in `aifi_l2_majority` and
+adds the unintegrated-PCA-graph calls in `aifi_l2_unintegrated_majority`; the
+QC report shows their UMAPs and all pairwise label-concordance heatmaps.
+`output/run_manifest.json` records selected studies, image references,
 configuration checksum, and checksums of the merged deliverables.
 
 ## Nextflow and Docker
@@ -160,6 +180,8 @@ from the production inputs once with `make test-data`; this never modifies
 when needed. `--skip_qc` stops after the H5AD merge artifacts are created (it
 skips only notebook/HTML QC). By default the workflow does not create a
 whole-dataset single-cell merge, because all studies must fit in RAM at once.
+The deterministic `make run-test` workflow enables that branch by default;
+production runs remain opt-in.
 Enable that separate path on a runner sized for the selected inputs:
 
 ```bash

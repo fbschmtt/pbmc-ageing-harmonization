@@ -71,8 +71,10 @@ all selected studies simultaneously. It preserves per-study predictions in
 Its embedding uses only the gene intersection across studies: it selects HVGs
 from that intersection, scales only those selected genes, runs PCA, applies
 Harmony over `obs['study']`, and builds the neighbor graph/UMAP from
-`X_pca_harmony`. CellTypist majority voting therefore reuses the
-Harmony-derived neighbor graph.
+`X_pca_harmony`. The backward-compatible `aifi_l2_majority` prediction uses
+that Harmony-derived neighbor graph; a second majority-voting result based on
+the unintegrated `X_pca` graph is retained in
+`aifi_l2_unintegrated_majority`. The saved graph and UMAP remain Harmony-based.
 
 ## Running and verification
 
