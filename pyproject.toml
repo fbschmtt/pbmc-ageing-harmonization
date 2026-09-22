@@ -24,6 +24,7 @@ qc = ["ipykernel>=6,<8", "jupytext>=1.16,<2", "nbconvert>=7,<8", "upsetplot>=0.9
 
 [project.scripts]
 pbmc-harmonize = "pbmc_pipeline.cli:main"
+pbmc-prepare = "pbmc_pipeline.prepare_cli:main"
 pbmc-qc = "pbmc_pipeline.qc:main"
 pbmc-merge = "pbmc_pipeline.merge_cli:main"
 pbmc-merge-qc = "pbmc_pipeline.merge_qc:main"

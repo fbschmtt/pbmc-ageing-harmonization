@@ -27,5 +27,13 @@ again, recreate the lookup with:
 python scripts/prepare_auxiliary_metadata.py
 ```
 
-Source URLs, versions, and checksums should be added to a tracked input manifest
-before the pipeline is considered release-ready.
+`config/input_sources.json` is the tracked input manifest. It currently records
+one direct AIFI expression URL, checksums for local supplementary files, and
+manual acquisition locations for the remaining inputs. Populate verified direct
+URLs and expression checksums before treating the pipeline as release-ready.
+
+For convenience, `make download-inputs STUDIES=<study>` reads the tracked
+`config/input_sources.json` manifest and makes a best-effort download of direct
+public files. It is opt-in and deliberately does not authenticate or scrape
+portals. Manual-only sources are reported with their acquisition instructions;
+the ignored `download_manifest.json` records what was obtained locally.

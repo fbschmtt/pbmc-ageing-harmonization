@@ -49,20 +49,14 @@ def validate_configuration(pipeline: dict, studies: dict, schema: dict) -> None:
             "merge.single_cell.integration.adjusted_basis must be 'X_pca_harmony'"
         )
 
-    required = set(schema["required"])
-    prediction_columns = {f"aifi_{level}_majority" for level in ("l1", "l2", "l3")}
     for study_id, study in studies["studies"].items():
-        missing_keys = {"input", "test_input", "counts_source", "metadata", "annotation"} - study.keys()
+        missing_keys = {"input", "test_input", "counts_source", "preparation", "annotation"} - study.keys()
         if missing_keys:
             raise ConfigurationError(f"{study_id}: missing keys {sorted(missing_keys)}")
-        supplied = set(study["metadata"])
-        if study["annotation"]["method"] == "celltypist":
-            supplied |= prediction_columns
-        missing_columns = required - supplied - {"study"}
-        if missing_columns:
-            raise ConfigurationError(
-                f"{study_id}: homogeneous metadata is missing {sorted(missing_columns)}"
-            )
+        if not isinstance(study["preparation"].get("adapter"), str):
+            raise ConfigurationError(f"{study_id}: preparation.adapter must be a string")
+        if not isinstance(study["preparation"].get("dependencies", []), list):
+            raise ConfigurationError(f"{study_id}: preparation.dependencies must be a list")
 
 
 def config_digest(*documents: dict) -> str:

@@ -69,7 +69,10 @@ def test_single_cell_embedding_uses_shared_genes_then_harmony_neighbors(monkeypa
 
     adata = ad.AnnData(
         X=sparse.csr_matrix(np.random.default_rng(42).poisson(2, size=(80, 20))),
-        obs=pd.DataFrame({"study": ["one"] * 40 + ["two"] * 40}),
+        obs=pd.DataFrame(
+            {"study": ["one"] * 40 + ["two"] * 40},
+            index=[f"cell_{index}" for index in range(80)],
+        ),
         var=pd.DataFrame(index=[f"gene_{index}" for index in range(20)]),
     )
     shared_genes = pd.Index([f"gene_{index}" for index in range(12)])

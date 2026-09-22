@@ -20,6 +20,7 @@ def main() -> None:
     parser.add_argument("--config", type=Path, default=Path("config/pipeline.json"))
     parser.add_argument("--project-root", type=Path, default=Path.cwd())
     parser.add_argument("--input", type=Path, help="Override the configured input (one study only)")
+    parser.add_argument("--prepared-obs", type=Path, help="Prepared one-row-per-cell metadata table")
     parser.add_argument("--output", type=Path, help="Override the H5AD output (one study only)")
     parser.add_argument("--report-output", type=Path, help="Override the JSON report (one study only)")
     parser.add_argument("--test", action="store_true", help="Use downsampled test inputs")
@@ -32,7 +33,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.qc and args.validate_only:
         parser.error("--qc cannot be combined with --validate-only")
-    if args.study == "all" and any((args.input, args.output, args.report_output)):
+    if args.study == "all" and any((args.input, args.prepared_obs, args.output, args.report_output)):
         parser.error("path overrides require exactly one --study")
     if args.validate_only and args.output:
         parser.error("--output cannot be combined with --validate-only")
@@ -53,6 +54,7 @@ def main() -> None:
                 root, study_id, studies[study_id], pipeline, schema,
                 test=args.test, validate_only=args.validate_only,
                 input_path=args.input,
+                prepared_obs_path=args.prepared_obs,
                 output_path=args.output,
                 report_path=args.report_output,
             )

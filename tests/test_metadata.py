@@ -59,7 +59,7 @@ def test_nullable_strings_are_normalized_before_h5ad_write():
 def test_duplicate_gene_symbols_are_aggregated():
     adata = ad.AnnData(
         X=np.array([[1, 2, 3], [4, 5, 6]]),
-        var=pd.DataFrame({"feature_name": ["A", "B", "A"]}),
+        var=pd.DataFrame({"feature_name": ["A", "B", "A"]}, index=["v1", "v2", "v3"]),
     )
 
     repaired, duplicate_count = _repair_features(

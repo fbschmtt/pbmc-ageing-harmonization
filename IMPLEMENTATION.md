@@ -14,6 +14,9 @@ source H5AD / Seurat RDS
         │
         ├─ RDS conversion (only configured studies)
         ▼
+per-study preparation adapter
+  exactly one canonical metadata row per source cell
+        ▼
 per-study harmonization
   raw counts + standardized obs + AIFI labels
         ├─ per-study QC
@@ -29,8 +32,13 @@ optional: all harmonized cells → shared-gene embedding → AIFI-L2 → merge Q
 
 ## Components
 
-- `config/studies.json`: input locations, feature repair, joins, metadata
-  mapping, and per-study annotation settings.
+- `config/studies.json`: input locations, feature repair, preparation-adapter
+  identity, auxiliary input dependencies, and annotation settings.
+- `src/pbmc_pipeline/studies/`: explicit per-study adapters. They own unusual
+  source joins and reshaping, then write one identity-checked metadata row for
+  every input cell.
+- `src/pbmc_pipeline/preparation.py`: validates exact expression-cell coverage
+  and writes the portable prepared-cell artifact.
 - `config/pipeline.json`: common processing parameters, model locations, and
 merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
   the legacy notebook; study-qualified row IDs prevent cross-study collisions.
@@ -50,6 +58,8 @@ merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
 For `--outdir <outdir>`, the normal outputs are:
 
 - `<outdir>/harmonized/<study>.h5ad`
+- `<outdir>/prepared/<study>.cells.csv.gz`
+- `<outdir>/prepared/<study>.prepare.json`
 - `<outdir>/pseudobulk/<study>.pseudobulk.h5ad`
 - `<outdir>/merged/pseudobulk_merged.h5ad`
 - `<outdir>/reports/*.json`

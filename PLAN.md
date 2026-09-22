@@ -11,7 +11,7 @@ merge is available.
 ## Decisions
 
 - `config/studies.json` is the source of truth for study-specific inputs,
-  metadata mappings, assumptions, and processing choices.
+  preparation-adapter dependencies, assumptions, and processing choices.
 - `config/harmonized_obs_schema.json` defines the output metadata contract.
 - Installed `pbmc-*` package commands are the only processing entry points;
   Make invokes Nextflow for complete workflows.
@@ -57,7 +57,8 @@ merge is available.
   five downsampled H5AD files.
   - All five studies complete metadata harmonization, embeddings, CellTypist
     where required, H5AD writing, report generation, and round-trip loading.
-- [x] Add the AIDA and Terekhova auxiliary metadata and validate their joins.
+- [x] Add the AIDA and Terekhova auxiliary metadata and validate their
+  preparation adapters.
 - [x] Recover and document the Wang metadata join and RDS conversion that
   produced the legacy intermediate `2_wang.h5ad`.
 - [ ] Review all `needs_review` provenance entries against publications/source
@@ -82,7 +83,8 @@ merge is available.
 - [x] Add a lint-clean DSL2 Nextflow workflow for conversion, harmonization, QC,
   per-study selection, test inputs, Docker execution, and resumable caching.
 - [x] Run the containerized Nextflow test profile for all five studies,
-  including pseudobulk merge and merge QC (18 successful processes).
+  including preparation, pseudobulk/single-cell merges, and QC (25 successful
+  processes).
 - [ ] Run the real Wang25 RDS conversion and compare its H5AD against the
   existing converted/test representation.
 - [x] Remove the redundant Docker project mount in `nextflow.config`; Nextflow
@@ -92,7 +94,7 @@ merge is available.
 
 - The scientific dependencies are installed in the ignored `.venv`.
 - All five studies pass the complete test-data workflow.
-- Ruff passes, all eight Python tests pass, and `nextflow lint main.nf` reports no
+- Ruff passes, 20 Python tests pass, and `nextflow lint main.nf` reports no
   errors (verified with Nextflow 26.04.6; minimum declared version is 25.04).
 - Revision-tagged Python and R images build successfully.
 - A fresh `docker,test` Wang25 Nextflow run published its H5AD, JSON run report,
@@ -128,18 +130,15 @@ make run STUDIES=all MERGE_SINGLE_CELL=true
 
 ## Architecture risks to address before full-data runs
 
-1. **Memory is the immediate risk.** Harmonization currently reads a complete
-   H5AD, copies the count matrix, and scales an HVG matrix for PCA. QC also loads
-   the complete object. This is especially unsafe for Terekhova (~1.9 million
-   cells). Refactor before attempting all full datasets: keep counts backed or
-   sparse, avoid dense scaling of all cells, load only marker-gene columns for
-   QC, and calculate summaries in chunks. Plotting every cell does not require
-   loading the full expression matrix.
-2. **Do not let study JSON become a transformation language.** It is appropriate
-   for mappings, constants, and join declarations. New complex study-specific
-   reshaping should live in a small preparation adapter that emits normalized
-   metadata for the generic harmonizer. Add formal JSON Schema or Pydantic
-   validation as the configuration grows.
+1. **Memory remains the principal full-data constraint.** Harmonization reads a
+   complete H5AD, copies counts, and performs selected-HVG scaling/PCA. Full
+   Terekhova (~1.9 million cells) needs a measured memory budget before
+   execution. QC also loads the complete object.
+2. **Keep study transformation code explicit.** `studies.json` now selects a
+   preparation adapter and declares only its auxiliary inputs. Each adapter
+   materializes exactly one canonical metadata row per expression cell before
+   the generic harmonizer runs. Add formal JSON Schema or Pydantic validation
+   as the configuration grows.
 3. **Preserve source metadata for auditability.** The harmonized output currently
    replaces `obs` with the standardized schema. Consider a namespaced source
    metadata sidecar (preferably Parquet) so mappings can be debugged later.
@@ -163,9 +162,9 @@ make run STUDIES=all MERGE_SINGLE_CELL=true
 
 ## Recommended next sequence
 
-1. Run `make run-test STUDIES=all` and inspect all QC.
-2. Refactor harmonization and QC memory behavior, then measure peak memory on
-   the largest testable inputs.
+1. Populate verified direct input URLs and checksums; manual-only sources are
+   recorded in `config/input_sources.json`.
+2. Measure peak memory on the largest testable/full study before full execution.
 3. Run and validate the real Wang25 conversion through Nextflow.
 4. Resolve the scientific `needs_review` entries and add complete input hashes.
 5. Lock the Python environment and record immutable image tags/digests.

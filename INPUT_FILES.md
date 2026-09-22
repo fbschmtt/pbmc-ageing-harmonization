@@ -4,8 +4,12 @@ The pipeline source does not redistribute expression data, supplementary study
 metadata, or trained CellTypist models. Place each external file at the exact
 path below. Paths are relative to the repository root.
 
-Checksums are recorded where the file is currently available locally. A future
-download script should verify these values before starting the pipeline.
+Checksums are recorded where the file is currently available locally. The
+best-effort `make download-inputs` command reads `config/input_sources.json`;
+it verifies a checksum when one is recorded and reports manual-only sources.
+At present, only the AIFI expression object has a direct URL; the remaining
+acquisition entries intentionally remain manual until their exact file URLs are
+verified.
 
 ## Expression data
 

@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from .config import config_digest
-from .metadata import apply_joins, build_homogeneous_obs
+from .preparation import normalize_metadata_frame, read_prepared_cells
 from .validation import validate_counts, validate_output
 
 LOGGER = logging.getLogger(__name__)
@@ -40,6 +40,7 @@ def harmonize_study(
     test: bool = False,
     validate_only: bool = False,
     input_path: Path | None = None,
+    prepared_obs_path: Path | None = None,
     output_path: Path | None = None,
     report_path: Path | None = None,
 ) -> dict:
@@ -85,11 +86,11 @@ def harmonize_study(
         study_id, "repair_features", started, aggregated_duplicate_features=aggregated_features,
         cells=adata.n_obs, genes=adata.n_vars,
     )
+    if prepared_obs_path is None:
+        raise ValueError("A prepared per-cell metadata artifact is required")
     started = time.perf_counter()
-    joined_obs = apply_joins(adata.obs, study.get("joins", []), root, warnings)
-    adata.obs = build_homogeneous_obs(joined_obs, study_id, study["metadata"])
-    _normalize_missing_metadata(adata, schema)
-    _log_step(study_id, "build_metadata", started, warnings=len(warnings))
+    adata.obs = read_prepared_cells(prepared_obs_path, adata.obs_names, schema)
+    _log_step(study_id, "attach_prepared_metadata", started, warnings=len(warnings))
 
     annotation = study["annotation"]
     if annotation["method"] == "celltypist" and not validate_only:
@@ -167,18 +168,7 @@ def _normalize_nullable_strings_for_h5ad(adata) -> None:
 
 def _normalize_missing_metadata(adata, schema: dict) -> None:
     """Apply the output contract's missing-value representation before validation."""
-    missing_string = schema["missing_string"]
-    for column, expected_type in schema["required"].items():
-        # CellTypist columns are materialized after this metadata step.  They
-        # are checked by validate_output once annotation is complete.
-        if column not in adata.obs:
-            continue
-        if expected_type == "string":
-            adata.obs[column] = adata.obs[column].astype("string").fillna(missing_string)
-        elif expected_type == "float":
-            adata.obs[column] = pd.to_numeric(adata.obs[column], errors="raise").astype(float)
-        else:
-            raise ValueError(f"Unsupported metadata type for {column}: {expected_type}")
+    adata.obs = normalize_metadata_frame(adata.obs, schema)
 
 
 def _repair_features(adata, spec: dict):
@@ -283,8 +273,8 @@ def _compute_embedding(
 
     When ``embedding_genes`` is supplied, feature selection is deliberately
     confined to that intersection before HVG calculation. Only the selected
-    HVGs are copied and densified for scaling/PCA, keeping the full raw count
-    matrix out of the dense embedding path.
+    HVGs are copied for scaling/PCA, keeping the full raw count matrix out of
+    the embedding path.
     """
     import scanpy as sc
 
@@ -309,8 +299,8 @@ def _compute_embedding(
     embedding = embedding_input[:, selected].copy()
     if embedding.n_vars == 0:
         raise ValueError(f"{study_id}: no non-VDJ highly variable genes were selected")
-    # Scaling may densify the selected matrix. Use float32 and only reach this
-    # point after feature selection to bound the dense working-set size.
+    # Use float32 and only reach this point after feature selection to bound the
+    # embedding working set.
     embedding.X = embedding.X.astype(np.float32, copy=False)
     _log_step(
         study_id,
@@ -322,7 +312,15 @@ def _compute_embedding(
     if embedding is not adata and embedding_input is not adata:
         del embedding_input
     started = time.perf_counter()
-    sc.pp.scale(embedding)
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="zero-centering a sparse array/matrix densifies it.",
+            category=UserWarning,
+        )
+        sc.pp.scale(embedding)
     _log_step(study_id, "scale_embedding", started)
     started = time.perf_counter()
     sc.tl.pca(embedding, svd_solver="arpack", random_state=pipeline["processing"]["random_seed"])

@@ -1,6 +1,7 @@
 nextflow.enable.dsl = 2
 
 include { CONVERT_RDS } from './modules/conversion'
+include { PREPARE_CELLS } from './modules/preparation'
 include { HARMONIZE } from './modules/harmonization'
 include { PSEUDOBULK; MERGE_PSEUDOBULKS; MERGE_SINGLE_CELLS } from './modules/merge'
 include { RENDER_STUDY_QC; RENDER_MERGE_QC } from './modules/qc'
@@ -35,7 +36,7 @@ workflow {
         } else {
             direct_inputs << tuple(study_id, file(root.resolve(input), checkIfExists: true))
         }
-        study.joins?.each { join -> dependencies << root.resolve(join.path as String) }
+        study.preparation?.dependencies?.each { path -> dependencies << root.resolve(path as String) }
         if (study.annotation.method == 'celltypist') {
             study.annotation.levels.each { level -> dependencies << root.resolve(pipeline.models["aifi_${level}"] as String) }
         }
@@ -50,7 +51,8 @@ workflow {
     def aifi_l2_model_ch = channel.value(file(root.resolve(pipeline.models.aifi_l2 as String), checkIfExists: true))
     def expression_ch = channel.fromList(direct_inputs).mix(CONVERT_RDS(channel.fromList(conversion_inputs)))
 
-    HARMONIZE(expression_ch, dependency_ch)
+    PREPARE_CELLS(expression_ch, dependency_ch)
+    HARMONIZE(PREPARE_CELLS.out.prepared, dependency_ch)
     PSEUDOBULK(HARMONIZE.out.harmonized, merge_config_ch)
     MERGE_PSEUDOBULKS(PSEUDOBULK.out.pseudobulk.map { _study_id, expression, _report -> expression }.collect(), merge_config_ch)
 

@@ -19,7 +19,7 @@ VENV_DEPS := .venv/.dev-qc-installed
 CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),images,)
 MERGE_ARGS = $(if $(filter true 1 yes,$(MERGE_SINGLE_CELL)),--merge_single_cell,)
 
-.PHONY: help install lint workflow-lint test test-unit test-integration verify validate-study validate-test validate-full test-data images image-python image-r run run-no-qc run-test pipeline pipeline-harmonize pipeline-test notebook-sync clean-work
+.PHONY: help install lint workflow-lint test test-unit test-integration verify validate-study validate-test validate-full test-data download-inputs images image-python image-r run run-no-qc run-test pipeline pipeline-harmonize pipeline-test notebook-sync clean-work
 
 help: ## Show available development commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target> [STUDIES=wang25]\n\n"} /^[a-zA-Z_-]+:.*## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -53,15 +53,20 @@ validate-study:
 
 validate-test: validate-study image-python ## Validate one test fixture in the Python container
 	mkdir -p "$(VALIDATE_OUTDIR)"
-	docker run --rm -v "$(CURDIR):/work:ro" -v "$(abspath $(VALIDATE_OUTDIR)):/result" -w /work $(PYTHON_IMAGE) pbmc-harmonize --project-root /work --config config/pipeline.json --study $(STUDIES) --test --validate-only --report-output /result/$(STUDIES).test.json
+	docker run --rm -v "$(CURDIR):/work:ro" -v "$(abspath $(VALIDATE_OUTDIR)):/result" -w /work $(PYTHON_IMAGE) pbmc-prepare --project-root /work --config config/pipeline.json --study $(STUDIES) --test --output /result/$(STUDIES).test.cells.csv.gz --report-output /result/$(STUDIES).test.prepare.json
+	docker run --rm -v "$(CURDIR):/work:ro" -v "$(abspath $(VALIDATE_OUTDIR)):/result" -w /work $(PYTHON_IMAGE) pbmc-harmonize --project-root /work --config config/pipeline.json --study $(STUDIES) --test --prepared-obs /result/$(STUDIES).test.cells.csv.gz --validate-only --report-output /result/$(STUDIES).test.json
 
 validate-full: validate-study image-python ## Validate one full input in the Python container
 	mkdir -p "$(VALIDATE_OUTDIR)"
-	docker run --rm -v "$(CURDIR):/work:ro" -v "$(abspath $(VALIDATE_OUTDIR)):/result" -w /work -e PYTHONFAULTHANDLER=1 $(PYTHON_IMAGE) pbmc-harmonize --project-root /work --config config/pipeline.json --study $(STUDIES) --validate-only --report-output /result/$(STUDIES).json
+	docker run --rm -v "$(CURDIR):/work:ro" -v "$(abspath $(VALIDATE_OUTDIR)):/result" -w /work $(PYTHON_IMAGE) pbmc-prepare --project-root /work --config config/pipeline.json --study $(STUDIES) --input /work/$(shell jq -r '.studies["$(STUDIES)"].input' config/studies.json) --output /result/$(STUDIES).cells.csv.gz --report-output /result/$(STUDIES).prepare.json
+	docker run --rm -v "$(CURDIR):/work:ro" -v "$(abspath $(VALIDATE_OUTDIR)):/result" -w /work -e PYTHONFAULTHANDLER=1 $(PYTHON_IMAGE) pbmc-harmonize --project-root /work --config config/pipeline.json --study $(STUDIES) --prepared-obs /result/$(STUDIES).cells.csv.gz --validate-only --report-output /result/$(STUDIES).json
 
 test-data: images ## Create isolated 200-cell H5AD and RDS smoke-test fixtures
 	docker run --rm -v "$(CURDIR):/work" -w /work -e PYTHONPATH=/work/src $(PYTHON_IMAGE) python scripts/create_test_data.py --cells $(TEST_CELLS) --seed $(TEST_SEED) --overwrite
 	docker run --rm -v "$(CURDIR):/work" -w /work $(R_IMAGE) Rscript scripts/create_test_rds.R --project-root /work --cells $(TEST_CELLS) --seed $(TEST_SEED)
+
+download-inputs: $(VENV_DEPS) ## Best-effort public input download; never runs implicitly
+	$(VENV_PYTHON) scripts/download_inputs.py --project-root "$(CURDIR)" --studies "$(STUDIES)"
 
 images: image-python image-r ## Build cached local workflow images
 

@@ -5,25 +5,27 @@ one harmonized H5AD per study, per-study sample × AIFI-L2 pseudobulks, and a
 cross-study pseudobulk matrix. An explicitly enabled pathway also
 creates a jointly embedded, freshly AIFI-L2-annotated single-cell merge.
 
-Study-specific decisions live in `config/studies.json`. The output metadata
-contract lives in `config/harmonized_obs_schema.json`. See `PLAN.md` for scope,
-progress, and unresolved scientific questions. See `IMPLEMENTATION.md` for the
-high-level architecture.
+Study-specific inputs and adapter dependencies live in `config/studies.json`.
+Explicit adapters under `src/pbmc_pipeline/studies/` own source-specific joins
+and reshaping. The output metadata contract lives in
+`config/harmonized_obs_schema.json`. See `PLAN.md` for scope, progress, and
+unresolved scientific questions. See `IMPLEMENTATION.md` for the high-level
+architecture.
 
 See `INPUT_FILES.md` for the complete list of external expression files,
 supplementary metadata, CellTypist models, expected paths, and checksums.
 
 ## Current status
 
-- The complete five-study workflow has run successfully on the 200-cell test
-  inputs using the local `.venv`.
+- The complete five-study Docker test workflow has passed with all five
+  preparation adapters, per-study harmonization/QC, pseudobulks, and both merge
+  branches (25 successful processes).
 - Executed QC notebooks can produce self-contained per-study HTML reports.
 - The full datasets have not been run in this workspace.
-- A DSL2 Nextflow workflow connects conversion, harmonization, and QC, with a
-  test profile for the 200-cell inputs.
-- Both Docker images build successfully. A fresh containerized Wang25 test run
-  completed harmonization and QC, and a synthetic Seurat object passed the RDS
-  to H5AD conversion with counts, names, and metadata intact.
+- A DSL2 Nextflow workflow connects conversion, preparation, harmonization,
+  merge, and QC, with a test profile for the 200-cell inputs.
+- Both Docker images build successfully. A synthetic Seurat object passed the
+  RDS-to-H5AD conversion with counts, names, and metadata intact.
 - Pseudobulk aggregation and merge are part of the production Nextflow graph;
   merge QC reports include study/sample contribution, AIFI-L2 overlap, depth,
   gene coverage, and (when applicable) merged UMAP checks.
@@ -36,6 +38,10 @@ input_data/ expression objects + metadata
                 │
                 ├── Seurat RDS ──> converted H5AD
                 │
+                ▼
+ prepare one canonical metadata row per cell
+                │
+                └──> output/prepared/<study>.cells.csv.gz
                 ▼
       harmonize one configured study
                 │
@@ -56,6 +62,9 @@ input_data/ expression objects + metadata
 
 All immutable local inputs belong under `input_data/`. Generated conversions,
 reports, and harmonized outputs are kept outside it and ignored by Git.
+
+Per-cell preparation artifacts are generated under `<outdir>/prepared/`; they
+are reproducible from the expression object plus the declared study dependencies.
 
 ## Sample and metadata semantics
 
@@ -88,25 +97,28 @@ python -m pip install -e '.[dev,qc]'
 ## Run harmonization
 
 ```bash
-# Fast validation using the downsampled inputs, without CellTypist
-pbmc-harmonize --study all --test --validate-only
-
-# Complete one study, including AIFI CellTypist labels
-pbmc-harmonize --study onek1k
-
-# Complete all test studies and generate executed notebook/HTML QC reports
-pbmc-harmonize --study all --test --qc
+# Complete all downsampled test studies and generate QC reports
+make run-test STUDIES=all
 
 # Recreate downsampled inputs from locally available full inputs
 python scripts/create_test_data.py --cells 200
 ```
 
-The installed commands also accept explicit artifact paths (`--input`,
-`--output`, `--report-output`, and the QC command's `--template`). These are
-used by Nextflow and are useful when debugging one task outside the workflow.
-They write timestamped progress logs to standard error and retain their final
-JSON/status output on standard output; Nextflow captures task logs in
-`.command.err` and `.command.out` respectively.
+Each study is prepared before harmonization. `pbmc-prepare` materializes a
+gzip-compressed CSV with exactly one canonical metadata row for every expression
+cell; `pbmc-harmonize --prepared-obs <study>.cells.csv.gz` then attaches that
+artifact to raw counts. This is the debugging boundary used by Nextflow.
+
+## Download public inputs
+
+`make download-inputs STUDIES=aifi` runs the opt-in, best-effort downloader.
+It never runs automatically with analysis commands, does not authenticate or
+scrape portals, and records outcomes in ignored
+`input_data/download_manifest.json`. Sources requiring terms acceptance or a
+manual portal download are reported with instructions rather than treated as a
+pipeline failure. At present, the manifest has one direct AIFI expression URL;
+the other study inputs are explicitly manual-only until stable, verified file
+URLs are recorded. See `config/input_sources.json` and [INPUT_FILES.md](INPUT_FILES.md).
 
 ## Convert a Seurat RDS
 
