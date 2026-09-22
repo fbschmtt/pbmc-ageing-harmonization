@@ -14,12 +14,12 @@ def main() -> None:
     parser.add_argument(
         "--terekhova-source",
         type=Path,
-        default=Path("input_data/metadata/terekhova23/all_pbmcs_metadata.csv"),
+        default=Path("input_data/terekhova23/all_pbmcs_metadata.csv"),
     )
     parser.add_argument(
         "--terekhova-output",
         type=Path,
-        default=Path("input_data/metadata/terekhova23/cell_to_tube.csv.gz"),
+        default=Path("input_data/terekhova23/cell_to_tube.csv.gz"),
     )
     args = parser.parse_args()
     mapping = pd.read_csv(args.terekhova_source, usecols=["Unnamed: 0", "Tube_id"])

@@ -9,7 +9,7 @@ def prepare_cells(source, root):
     cells = source.copy()
     cells["Sample ID"] = cells["sampleName"].astype("string").str.replace("sample", "sc_sample_", regex=False)
     table = pd.read_excel(
-        root / "input_data/metadata/wang25/41590_2024_2059_MOESM3_ESM.xlsx",
+        root / "input_data/wang25/41590_2024_2059_MOESM3_ESM.xlsx",
         sheet_name=1, skiprows=2,
     )
     joined = safe_left_join(cells, table, ["Sample ID"])

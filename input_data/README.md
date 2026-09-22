@@ -2,21 +2,19 @@
 
 This directory is the single entry point for immutable pipeline inputs. Data
 files are ignored by Git; expected relative paths are declared in
-`config/studies.json`.
+`config/studies.json`. Each study owns a directory containing its expression
+object and every study-specific supplementary file.
 
 Downsampled smoke-test fixtures are kept separately under `test_data/`, so full
 and test inputs can coexist. Create or refresh them with `make test-data`.
 Wang25's test fixture is an RDS, so test runs exercise the same RDS conversion
 process as production.
 
-Expression inputs currently use the top-level paths established by the original
-conversion notebook. Supplementary inputs are grouped by study:
-
-- `metadata/aida25/mmc1.xlsx`
-- `metadata/terekhova23/mmc2.xlsx`
-- `metadata/terekhova23/cell_to_tube.csv.gz`
-- `metadata/wang25/41590_2024_2059_MOESM3_ESM.xlsx`
-- `metadata/nehar_belaid26/41467_2026_73729_MOESM3_ESM.xls`
+The current study directories are `aida25/`, `aifi/`, `nehar_belaid26/`,
+`onek1k/`, `terekhova23/`, and `wang25/`. Keep source filenames intact so they
+remain recognizable against their accessions and publications. Generated
+conversions belong in `cache/`, and smoke-test fixtures belong in `test_data/`;
+neither is an immutable study input.
 
 Nehar-Belaid26 uses Supplementary Data 1, sheet `1a`, as the authoritative
 metadata for the in-house scRNA-seq cohort. Its all-PBMC H5AD also includes

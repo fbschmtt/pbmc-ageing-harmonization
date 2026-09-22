@@ -117,8 +117,8 @@ make run STUDIES=all MERGE_SINGLE_CELL=true
 
 ## Known blockers and scientific questions
 
-- AIDA, Terekhova, and Wang metadata are local ignored inputs under
-  `input_data/metadata/`. The 424 MB Terekhova
+- AIDA, Terekhova, and Wang source metadata are local ignored inputs in their
+  respective `input_data/<study_id>/` directories. The 424 MB Terekhova
   table has been losslessly reduced for pipeline purposes to a 9.2 MB compressed
   cell-to-tube lookup; its original should be archived externally.
 - OneK1K's sample-per-donor interpretation and intronic-read setting need review.

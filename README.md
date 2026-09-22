@@ -179,7 +179,7 @@ and retains only raw counts plus observation metadata:
 
 ```bash
 Rscript scripts/convert_rds.R \
-  --input input_data/scRNA-seqProcessedLabelledObject.rds \
+  --input input_data/wang25/scRNA-seqProcessedLabelledObject.rds \
   --output cache/converted/scRNA-seqProcessedLabelledObject.h5ad
 ```
 

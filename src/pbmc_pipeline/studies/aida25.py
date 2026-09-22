@@ -6,7 +6,7 @@ from .common import canonical, safe_left_join
 
 
 def prepare_cells(source, root):
-    table = pd.read_excel(root / "input_data/metadata/aida25/mmc1.xlsx", skiprows=1)
+    table = pd.read_excel(root / "input_data/aida25/mmc1.xlsx", skiprows=1)
     table = table.rename(columns={"DCP_ID": "donor_id", "scRNA-seq Experimental Batch": "batch_single_cell"})
     table["Country"] = table["Country"].replace({"India": "IN", "Japan": "JP", "Singapore": "SG", "South Korea": "KR", "Thailand": "TH"})
     duplicate = table.duplicated(["Country", "donor_id"], keep=False)

@@ -15,12 +15,12 @@ entries intentionally remain manual until their exact file URLs are verified.
 
 | Study | Required path | Role | SHA-256 |
 |---|---|---|---|
-| AIDA25 | `input_data/3a8a77a6-f069-479c-a2c1-252feafd0106.h5ad` | Raw-count H5AD | Not yet recorded |
-| AIFI | `input_data/human_immune_health_atlas_full.h5ad` | Immune Health Atlas H5AD | Not yet recorded |
-| Nehar-Belaid26 | `input_data/GSE233321_all_PBMCs.h5ad` | [Direct GEO all-PBMC H5AD](https://ftp.ncbi.nlm.nih.gov/geo/series/GSE233nnn/GSE233321/suppl/GSE233321_all_PBMCs.h5ad); adapter keeps only the in-house cohort | Not yet recorded |
-| OneK1K | `input_data/81d84489-bff9-4fb6-b0ee-78348126eada.h5ad` | Raw-count H5AD | Not yet recorded |
-| Terekhova23 | `input_data/pbmc_gex_raw_with_var_obs.h5ad` | Raw-count H5AD | Not yet recorded |
-| Wang25 | `input_data/scRNA-seqProcessedLabelledObject.rds` | Seurat RDS converted by `scripts/convert_rds.R` | Not yet recorded |
+| AIDA25 | `input_data/aida25/3a8a77a6-f069-479c-a2c1-252feafd0106.h5ad` | Raw-count H5AD | Not yet recorded |
+| AIFI | `input_data/aifi/human_immune_health_atlas_full.h5ad` | Immune Health Atlas H5AD | Not yet recorded |
+| Nehar-Belaid26 | `input_data/nehar_belaid26/GSE233321_all_PBMCs.h5ad` | [Direct GEO all-PBMC H5AD](https://ftp.ncbi.nlm.nih.gov/geo/series/GSE233nnn/GSE233321/suppl/GSE233321_all_PBMCs.h5ad); adapter keeps only the in-house cohort | Not yet recorded |
+| OneK1K | `input_data/onek1k/81d84489-bff9-4fb6-b0ee-78348126eada.h5ad` | Raw-count H5AD | Not yet recorded |
+| Terekhova23 | `input_data/terekhova23/pbmc_gex_raw_with_var_obs.h5ad` | Raw-count H5AD | Not yet recorded |
+| Wang25 | `input_data/wang25/scRNA-seqProcessedLabelledObject.rds` | Seurat RDS converted by `scripts/convert_rds.R` | Not yet recorded |
 
 The Wang RDS conversion produces
 `cache/converted/scRNA-seqProcessedLabelledObject.h5ad`. This is a generated
@@ -30,19 +30,18 @@ intermediate, not an external input.
 
 | Study | Required path | Role | SHA-256 |
 |---|---|---|---|
-| AIDA25 | `input_data/metadata/aida25/mmc1.xlsx` | Donor and single-cell batch metadata | `7610edd1105181e7fecb9e61e25e2668d57433524cc801838ed9c76f92bb4eef` |
-| Terekhova23 | `input_data/metadata/terekhova23/mmc2.xlsx` | Donor, visit, BMI, and ethnicity metadata | `af8da63efbaf6800da79f4660412ea3100aac88b18748b01679593e29b4444a2` |
-| Terekhova23 | `input_data/metadata/terekhova23/cell_to_tube.csv.gz` | Cell ID to demultiplexed tube mapping | `bf0dede2434136b6f5515210c6c48fb2a7105c60e836ad007b7407856705df5a` |
-| Nehar-Belaid26 | `input_data/metadata/nehar_belaid26/41467_2026_73729_MOESM3_ESM.xls` | Nehar-Belaid et al. (2026) Supplementary Data 1; sheet 1a in-house donor metadata | `c55555c2765b0fb4cbe872ffdd37271dde4d0aefa5a92d3343d2368778f8b0b5` |
-| Wang25 | `input_data/metadata/wang25/41590_2024_2059_MOESM3_ESM.xlsx` | Published sample-level metadata | `a46e3aa3f877890fa6100e42a6ffc641ec481e7f122b00b5a68fa89689b9fd2f` |
+| AIDA25 | `input_data/aida25/mmc1.xlsx` | Donor and single-cell batch metadata | `7610edd1105181e7fecb9e61e25e2668d57433524cc801838ed9c76f92bb4eef` |
+| Terekhova23 | `input_data/terekhova23/mmc2.xlsx` | Donor, visit, BMI, and ethnicity metadata | `af8da63efbaf6800da79f4660412ea3100aac88b18748b01679593e29b4444a2` |
+| Terekhova23 | `input_data/terekhova23/cell_to_tube.csv.gz` | Cell ID to demultiplexed tube mapping | `bf0dede2434136b6f5515210c6c48fb2a7105c60e836ad007b7407856705df5a` |
+| Nehar-Belaid26 | `input_data/nehar_belaid26/41467_2026_73729_MOESM3_ESM.xls` | Nehar-Belaid et al. (2026) Supplementary Data 1; sheet 1a in-house donor metadata | `c55555c2765b0fb4cbe872ffdd37271dde4d0aefa5a92d3343d2368778f8b0b5` |
+| Wang25 | `input_data/wang25/41590_2024_2059_MOESM3_ESM.xlsx` | Published sample-level metadata | `a46e3aa3f877890fa6100e42a6ffc641ec481e7f122b00b5a68fa89689b9fd2f` |
 
 `cell_to_tube.csv.gz` is the compact canonical Terekhova runtime input. It was
 derived from the much larger published `all_pbmcs_metadata.csv` by
 `scripts/prepare_auxiliary_metadata.py`. It cannot be reconstructed from
 `mmc2.xlsx`, because that workbook contains no cell barcodes. To recreate the
 compact lookup, first place the original file at
-`input_data/metadata/terekhova23/all_pbmcs_metadata.csv` and run the preparation
-script.
+`input_data/terekhova23/all_pbmcs_metadata.csv` and run the preparation script.
 
 ## CellTypist models
 

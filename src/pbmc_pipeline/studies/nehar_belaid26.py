@@ -8,7 +8,7 @@ from .common import canonical, safe_left_join
 
 STUDY_COLUMN = "Study"
 STUDY_VALUE = "Nehar-Belaid_et_al"
-METADATA_PATH = "input_data/metadata/nehar_belaid26/41467_2026_73729_MOESM3_ESM.xls"
+METADATA_PATH = "input_data/nehar_belaid26/41467_2026_73729_MOESM3_ESM.xls"
 
 
 def prepare_cells(source, root):

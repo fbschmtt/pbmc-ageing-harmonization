@@ -2,16 +2,16 @@
   "schema_version": 1,
   "studies": {
     "aida25": {
-      "input": "input_data/3a8a77a6-f069-479c-a2c1-252feafd0106.h5ad",
+      "input": "input_data/aida25/3a8a77a6-f069-479c-a2c1-252feafd0106.h5ad",
       "test_input": "3a8a77a6-f069-479c-a2c1-252feafd0106.h5ad",
       "counts_source": "raw",
       "features": {"source_column": "feature_name", "duplicate_policy": "sum"},
-      "preparation": {"adapter": "aida25", "dependencies": ["input_data/metadata/aida25/mmc1.xlsx"]},
+      "preparation": {"adapter": "aida25", "dependencies": ["input_data/aida25/mmc1.xlsx"]},
       "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
       "provenance": {"technology": "needs_review", "frozen": "reported_in_legacy", "ethnicity": "confirmed_broad_mapping"}
     },
     "aifi": {
-      "input": "input_data/human_immune_health_atlas_full.h5ad",
+      "input": "input_data/aifi/human_immune_health_atlas_full.h5ad",
       "test_input": "human_immune_health_atlas_full.h5ad",
       "counts_source": "raw",
       "features": {"duplicate_policy": "error"},
@@ -20,13 +20,13 @@
       "provenance": {"celltypes": "native_AIFI_labels"}
     },
     "nehar_belaid26": {
-      "input": "input_data/GSE233321_all_PBMCs.h5ad",
+      "input": "input_data/nehar_belaid26/GSE233321_all_PBMCs.h5ad",
       "test_input": "GSE233321_all_PBMCs.h5ad",
       "counts_source": "layer:counts",
       "features": {"source_column": "gene_symbol", "duplicate_policy": "error"},
       "preparation": {
         "adapter": "nehar_belaid26",
-        "dependencies": ["input_data/metadata/nehar_belaid26/41467_2026_73729_MOESM3_ESM.xls"],
+        "dependencies": ["input_data/nehar_belaid26/41467_2026_73729_MOESM3_ESM.xls"],
         "allow_cell_subset": true
       },
       "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
@@ -45,7 +45,7 @@
       }
     },
     "onek1k": {
-      "input": "input_data/81d84489-bff9-4fb6-b0ee-78348126eada.h5ad",
+      "input": "input_data/onek1k/81d84489-bff9-4fb6-b0ee-78348126eada.h5ad",
       "test_input": "81d84489-bff9-4fb6-b0ee-78348126eada.h5ad",
       "counts_source": "X",
       "features": {"source_column": "feature_name", "split": {"separator": "_", "index": 0}, "duplicate_policy": "sum"},
@@ -54,11 +54,11 @@
       "provenance": {"sample": "needs_review", "include_intronic": "inferred", "ethnicity": "reported_in_legacy"}
     },
     "terekhova23": {
-      "input": "input_data/pbmc_gex_raw_with_var_obs.h5ad",
+      "input": "input_data/terekhova23/pbmc_gex_raw_with_var_obs.h5ad",
       "test_input": "pbmc_gex_raw_with_var_obs.h5ad",
       "counts_source": "X",
       "features": {"duplicate_policy": "error"},
-      "preparation": {"adapter": "terekhova23", "dependencies": ["input_data/metadata/terekhova23/cell_to_tube.csv.gz", "input_data/metadata/terekhova23/mmc2.xlsx"]},
+      "preparation": {"adapter": "terekhova23", "dependencies": ["input_data/terekhova23/cell_to_tube.csv.gz", "input_data/terekhova23/mmc2.xlsx"]},
       "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
       "provenance": {"frozen": "needs_review", "include_intronic": "inferred_from_cellranger", "smoking_status": "paper_exclusion_criterion"}
     },
@@ -66,7 +66,7 @@
       "input": "cache/converted/scRNA-seqProcessedLabelledObject.h5ad",
       "test_input": "scRNA-seqProcessedLabelledObject.h5ad",
       "conversion": {
-        "source": "input_data/scRNA-seqProcessedLabelledObject.rds",
+        "source": "input_data/wang25/scRNA-seqProcessedLabelledObject.rds",
         "test_source": "test_data/scRNA-seqProcessedLabelledObject.rds",
         "output": "cache/converted/scRNA-seqProcessedLabelledObject.h5ad",
         "format": "seurat_rds",
@@ -74,7 +74,7 @@
       },
       "counts_source": "X",
       "features": {"duplicate_policy": "error"},
-      "preparation": {"adapter": "wang25", "dependencies": ["input_data/metadata/wang25/41590_2024_2059_MOESM3_ESM.xlsx"]},
+      "preparation": {"adapter": "wang25", "dependencies": ["input_data/wang25/41590_2024_2059_MOESM3_ESM.xlsx"]},
       "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
       "provenance": {"input": "converted_RDS_plus_published_supplementary_workbook", "sample_metadata": "join_recovered_from_legacy_wang25_2_create_anndata_notebook", "ethnicity": "confirmed", "cmv": "qualitative_CMV_IgM_serostatus_all_negative", "frozen": "needs_review", "include_intronic": "inferred"}
     }

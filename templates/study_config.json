@@ -1,12 +1,12 @@
 {
   "study_id": {
-    "input": "input_data/replace_me.h5ad",
+    "input": "input_data/replace_me/replace_me.h5ad",
     "test_input": "replace_me.h5ad",
     "counts_source": "X",
     "features": {"duplicate_policy": "error"},
     "preparation": {
       "adapter": "replace_me",
-      "dependencies": ["input_data/metadata/replace_me/supplement.xlsx"],
+      "dependencies": ["input_data/replace_me/supplement.xlsx"],
       "allow_cell_subset": false
     },
     "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},

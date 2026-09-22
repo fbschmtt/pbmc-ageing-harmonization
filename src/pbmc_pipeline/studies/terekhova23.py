@@ -7,7 +7,7 @@ from .common import canonical, safe_left_join
 
 
 def prepare_cells(source, root):
-    lookup = pd.read_csv(root / "input_data/metadata/terekhova23/cell_to_tube.csv.gz", usecols=["cell_id", "Tube_id"])
+    lookup = pd.read_csv(root / "input_data/terekhova23/cell_to_tube.csv.gz", usecols=["cell_id", "Tube_id"])
     if lookup["cell_id"].duplicated().any():
         raise MetadataError("Terekhova cell-to-tube lookup contains duplicate cell IDs")
     lookup = lookup.set_index("cell_id")
@@ -17,7 +17,7 @@ def prepare_cells(source, root):
     cells = source.copy()
     cells["Tube_id"] = lookup.loc[cells.index, "Tube_id"].to_numpy()
 
-    table = pd.read_excel(root / "input_data/metadata/terekhova23/mmc2.xlsx")
+    table = pd.read_excel(root / "input_data/terekhova23/mmc2.xlsx")
     visits = _reshape_visits(table)
     joined = safe_left_join(cells, visits, ["Tube_id"])
     return canonical(joined, "terekhova23", {
