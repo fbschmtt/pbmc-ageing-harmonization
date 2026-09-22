@@ -17,7 +17,8 @@ merge is available.
   Make invokes Nextflow for complete workflows.
 - Raw counts remain in `X` in final outputs. Normalized values are temporary.
 - Source-study QC is authoritative. The pipeline does not apply additional
-  manual cell filtering or QC thresholds.
+  manual cell filtering or QC thresholds, except for an adapter's explicitly
+  declared cohort-exclusion rule when a source object combines studies.
 - `subject` identifies a biological individual; `sample` identifies one
   specimen at one collection timepoint; and `batch_single_cell` identifies a
   technical processing unit. Pseudobulks aggregate all technical partitions
@@ -54,8 +55,8 @@ merge is available.
 - [x] Add a parameterized harmonization command and validation/reporting modules.
 - [x] Add dependency metadata and configuration-level tests.
 - [x] Install the scientific Python environment and run full smoke tests on all
-  five downsampled H5AD files.
-  - All five studies complete metadata harmonization, embeddings, CellTypist
+  configured downsampled H5AD files.
+  - All configured studies complete metadata harmonization, embeddings, CellTypist
     where required, H5AD writing, report generation, and round-trip loading.
 - [x] Add the AIDA and Terekhova auxiliary metadata and validate their
   preparation adapters.
@@ -82,8 +83,8 @@ merge is available.
   Wang25 test workflow through both harmonization and QC.
 - [x] Add a lint-clean DSL2 Nextflow workflow for conversion, harmonization, QC,
   per-study selection, test inputs, Docker execution, and resumable caching.
-- [x] Run the containerized Nextflow test profile for all five studies,
-  including preparation, pseudobulk/single-cell merges, and QC (25 successful
+- [x] Run the containerized Nextflow test profile for all configured studies,
+  including preparation, pseudobulk/single-cell merges, and QC (29 successful
   processes).
 - [ ] Run the real Wang25 RDS conversion and compare its H5AD against the
   existing converted/test representation.
@@ -93,8 +94,8 @@ merge is available.
 ## Local development state
 
 - The scientific dependencies are installed in the ignored `.venv`.
-- All five studies pass the complete test-data workflow.
-- Ruff passes, 20 Python tests pass, and `nextflow lint main.nf` reports no
+- All configured studies pass the complete test-data workflow.
+- Ruff passes, 23 Python tests pass, and `nextflow lint main.nf` reports no
   errors (verified with Nextflow 26.04.6; minimum declared version is 25.04).
 - Revision-tagged Python and R images build successfully.
 - A fresh `docker,test` Wang25 Nextflow run published its H5AD, JSON run report,
@@ -136,9 +137,10 @@ make run STUDIES=all MERGE_SINGLE_CELL=true
    execution. QC also loads the complete object.
 2. **Keep study transformation code explicit.** `studies.json` now selects a
    preparation adapter and declares only its auxiliary inputs. Each adapter
-   materializes exactly one canonical metadata row per expression cell before
-   the generic harmonizer runs. Add formal JSON Schema or Pydantic validation
-   as the configuration grows.
+   materializes exactly one canonical metadata row per retained expression cell
+   before the generic harmonizer runs. A subset is permitted only when the
+   adapter explicitly declares a cohort-exclusion rule in configuration. Add
+   formal JSON Schema or Pydantic validation as the configuration grows.
 3. **Preserve source metadata for auditability.** The harmonized output currently
    replaces `obs` with the standardized schema. Consider a namespaced source
    metadata sidecar (preferably Parquet) so mappings can be debugged later.
@@ -146,8 +148,8 @@ make run STUDIES=all MERGE_SINGLE_CELL=true
    because later resolution caused a `sc.tl.umap` segmentation fault; the R base
    image is digest-pinned and key Python packages in that bridge are pinned.
    The main Python environment otherwise still uses version ranges. Add a lock
-   file and use immutable/versioned image references in real runs. Rebuilding a
-   mutable image tags are avoided by revision-derived local tags. A lock file
+   file and use immutable/versioned image references in real runs. Rebuilding
+   mutable image tags is avoided by revision-derived local tags. A lock file
    remains desirable for the main Python image.
 5. **Improve provenance.** `run_manifest.json` now records the Git revision,
    image references, configuration checksum, selected studies, and hashes of

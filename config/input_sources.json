@@ -24,6 +24,14 @@
       "note": "Locate the published OneK1K source object and place it at the configured path."
     },
     {
+      "id": "nehar_belaid26_expression",
+      "studies": ["nehar_belaid26"],
+      "path": "input_data/GSE233321_all_PBMCs.h5ad",
+      "url": "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE233nnn/GSE233321/suppl/GSE233321_all_PBMCs.h5ad",
+      "source_page": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE233321",
+      "note": "Direct GEO processed-data download. The adapter deliberately retains only Study == Nehar-Belaid_et_al."
+    },
+    {
       "id": "terekhova_expression",
       "studies": ["terekhova23"],
       "path": "input_data/pbmc_gex_raw_with_var_obs.h5ad",
@@ -50,6 +58,15 @@
       "path": "input_data/metadata/terekhova23/mmc2.xlsx",
       "manual_url": "https://www.cell.com/immunity/home",
       "sha256": "af8da63efbaf6800da79f4660412ea3100aac88b18748b01679593e29b4444a2"
+    },
+    {
+      "id": "nehar_belaid26_metadata",
+      "studies": ["nehar_belaid26"],
+      "path": "input_data/metadata/nehar_belaid26/41467_2026_73729_MOESM3_ESM.xls",
+      "url": "https://media.springernature.com/original/springer-static/esm/art%3A10.1038%2Fs41467-026-73729-2/MediaObjects/41467_2026_73729_MOESM3_ESM.xls",
+      "source_page": "https://www.nature.com/articles/s41467-026-73729-2",
+      "sha256": "c55555c2765b0fb4cbe872ffdd37271dde4d0aefa5a92d3343d2368778f8b0b5",
+      "note": "Supplementary Data 1; sheet 1a is the in-house scRNA-seq donor metadata used by the adapter."
     },
     {
       "id": "terekhova_cell_lookup",

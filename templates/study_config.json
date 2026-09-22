@@ -1,0 +1,20 @@
+{
+  "study_id": {
+    "input": "input_data/replace_me.h5ad",
+    "test_input": "replace_me.h5ad",
+    "counts_source": "X",
+    "features": {"duplicate_policy": "error"},
+    "preparation": {
+      "adapter": "replace_me",
+      "dependencies": ["input_data/metadata/replace_me/supplement.xlsx"],
+      "allow_cell_subset": false
+    },
+    "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
+    "provenance": {
+      "source": "replace with paper and accession",
+      "selection": "all source cells retained, or state the explicit cohort filter",
+      "technology": "reported assay and most specific available chemistry/revision; state the source field used by the adapter",
+      "inferences": "state every inferred metadata value and its rationale"
+    }
+  }
+}

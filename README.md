@@ -1,6 +1,6 @@
 # PBMC ageing scRNA-seq pipeline
 
-Configuration-driven processing of five PBMC ageing scRNA-seq studies. It produces
+Configuration-driven processing of PBMC ageing scRNA-seq studies. It produces
 one harmonized H5AD per study, per-study sample × AIFI-L2 pseudobulks, and a
 cross-study pseudobulk matrix. An explicitly enabled pathway also
 creates a jointly embedded, freshly AIFI-L2-annotated single-cell merge.
@@ -17,11 +17,12 @@ supplementary metadata, CellTypist models, expected paths, and checksums.
 
 ## Current status
 
-- The complete five-study Docker test workflow has passed with all five
-  preparation adapters, per-study harmonization/QC, pseudobulks, and both merge
-  branches (25 successful processes).
+- The complete Docker test workflow has passed with every configured
+  preparation adapter, per-study harmonization/QC, pseudobulks, and both merge
+  branches (29 successful processes).
 - Executed QC notebooks can produce self-contained per-study HTML reports.
-- The full datasets have not been run in this workspace.
+- The full datasets, including the real Wang25 RDS conversion, have not been
+  run in this workspace.
 - A DSL2 Nextflow workflow connects conversion, preparation, harmonization,
   merge, and QC, with a test profile for the 200-cell inputs.
 - Both Docker images build successfully. A synthetic Seurat object passed the
@@ -29,7 +30,6 @@ supplementary metadata, CellTypist models, expected paths, and checksums.
 - Pseudobulk aggregation and merge are part of the production Nextflow graph;
   merge QC reports include study/sample contribution, AIFI-L2 overlap, depth,
   gene coverage, and (when applicable) merged UMAP checks.
-- The full datasets and the real Wang25 RDS conversion have not yet been run.
 
 ## Data flow
 
@@ -66,6 +66,51 @@ reports, and harmonized outputs are kept outside it and ignored by Git.
 Per-cell preparation artifacts are generated under `<outdir>/prepared/`; they
 are reproducible from the expression object plus the declared study dependencies.
 
+## Add a study
+
+Start with [templates/study_adapter.py](templates/study_adapter.py) and
+[templates/study_config.json](templates/study_config.json). Copy the adapter to
+`src/pbmc_pipeline/studies/<study_id>.py`, replace its rules with the source's
+cell and sample metadata, then add the configuration object under `studies` in
+`config/studies.json`. Add every expression object and supplementary metadata
+file to `config/input_sources.json` and `INPUT_FILES.md`; paths must be relative
+to the repository root. Declare supplementary files in
+`preparation.dependencies` so Nextflow stages them and configuration changes are
+tracked in task identity.
+
+An adapter receives the expression object's `.obs` table and must return the
+canonical metadata fields, with exactly one row for each retained cell. Use
+`safe_left_join` for sample-level supplements: it rejects ambiguous joins and
+preserves the expression-cell order. The usual route is to retain every input
+cell. When an object deliberately mixes cohorts, filter it explicitly in the
+adapter, explain the condition in `provenance.selection`, and set
+`preparation.allow_cell_subset` to `true`. The preparation and harmonization
+steps then verify that retained IDs are a strict subset of the source IDs and
+drop the excluded cells from the count matrix before annotation. This prevents
+metadata-only filtering from leaking excluded cells into downstream outputs.
+
+Choose `counts_source` as `X`, `raw`, or `layer:<layer_name>` after checking
+which matrix contains unnormalized integer counts. The harmonized output always
+stores only those selected counts in `.X`; source `.raw` and every source layer
+are removed.
+
+Set `technology` to the most specific reported assay information. For example,
+use `10X3'v3` rather than `10X3'` when the reagent-kit revision is available;
+use the assay-family value only when no more specific source information is
+reported. Record the source field in `provenance`, and retain a per-cell run or
+library identifier in `batch_single_cell` when the source supplies one. Record
+every inferred metadata value in `provenance` with its rationale; do not make
+it look like a reported source field.
+
+Before enabling the study in an all-study run, verify that the adapter's cell
+selection, sample-level joins, count source, technology/provenance fields, and
+input download declarations match the publication and supplements. Generate a
+test fixture with
+`make test-data`, then run `make run-test STUDIES=<study_id>` and inspect its
+prepared-table report, harmonized H5AD, and QC report. Confirm that the output
+has integer counts in `.X`, `raw is None`, and no layers before adding it to an
+all-study run.
+
 ## Sample and metadata semantics
 
 `subject` is a biological individual. `sample` is one biological specimen at
@@ -81,6 +126,7 @@ never defines a pseudobulk. Missing string metadata is written as
 | OneK1K | `donor_id` | `donor_id` | not provided | `pool_number` | No separate sampling-timepoint identifier is available. |
 | Terekhova23 | `Donor_id` | `Tube_id` | workbook visit | barcode-derived batch | Each tube maps to one donor and visit; a tube may span technical batches. |
 | Wang25 | `Sample ID` | `Sample ID` | not provided | not provided | No separate donor, timepoint, or technical-batch identifier has yet been recovered. |
+| Nehar-Belaid26 | Supplementary Data 1a `IDs` | `sample_id` | not provided | Supplementary Data 1a `runs_10x` | Retains only `Study == Nehar-Belaid_et_al`; reused public cohorts in the source H5AD are excluded before harmonization. |
 
 `tests/` contains only automated test code. Reproducible local intermediates
 are collected under `cache/` for RDS-to-H5AD conversions. Downsampled smoke-test
@@ -116,9 +162,15 @@ It never runs automatically with analysis commands, does not authenticate or
 scrape portals, and records outcomes in ignored
 `input_data/download_manifest.json`. Sources requiring terms acceptance or a
 manual portal download are reported with instructions rather than treated as a
-pipeline failure. At present, the manifest has one direct AIFI expression URL;
-the other study inputs are explicitly manual-only until stable, verified file
-URLs are recorded. See `config/input_sources.json` and [INPUT_FILES.md](INPUT_FILES.md).
+pipeline failure. The Nehar-Belaid26 expression H5AD and Supplementary Data 1
+are also direct, verified downloads, so a fresh input can be acquired with:
+
+```bash
+make download-inputs STUDIES=nehar_belaid26
+```
+
+The remaining study inputs are explicitly manual-only until stable, verified
+file URLs are recorded. See `config/input_sources.json` and [INPUT_FILES.md](INPUT_FILES.md).
 
 ## Convert a Seurat RDS
 

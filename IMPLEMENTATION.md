@@ -15,7 +15,7 @@ source H5AD / Seurat RDS
         ├─ RDS conversion (only configured studies)
         ▼
 per-study preparation adapter
-  exactly one canonical metadata row per source cell
+  exactly one canonical metadata row per retained source cell
         ▼
 per-study harmonization
   raw counts + standardized obs + AIFI labels
@@ -26,8 +26,6 @@ sample × AIFI-L2 pseudobulk per study
 outer-gene merged pseudobulk ─┐
                               ├─ one combined merge QC report
 optional: all harmonized cells → shared-gene embedding → AIFI-L2 ─┘
-
-optional: all harmonized cells → shared-gene embedding → AIFI-L2 → merge QC
 ```
 
 ## Components
@@ -36,9 +34,11 @@ optional: all harmonized cells → shared-gene embedding → AIFI-L2 → merge Q
   identity, auxiliary input dependencies, and annotation settings.
 - `src/pbmc_pipeline/studies/`: explicit per-study adapters. They own unusual
   source joins and reshaping, then write one identity-checked metadata row for
-  every input cell.
-- `src/pbmc_pipeline/preparation.py`: validates exact expression-cell coverage
-  and writes the portable prepared-cell artifact.
+  every retained input cell. An adapter may retain a strict cohort subset only
+  when its configuration explicitly permits it.
+- `src/pbmc_pipeline/preparation.py`: validates exact expression-cell coverage,
+  or an explicitly permitted source-cell subset, and writes the portable
+  prepared-cell artifact.
 - `config/pipeline.json`: common processing parameters, model locations, and
 merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
   the legacy notebook; study-qualified row IDs prevent cross-study collisions.
@@ -66,6 +66,14 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/qc/<study>/report.html`
 - `<outdir>/qc/merged/report.html` (one report for both merge branches)
 - `<outdir>/run_manifest.json`
+
+### Harmonized expression contract
+
+Each harmonized H5AD has exactly one expression representation: `.X` contains
+the configured unnormalized integer count matrix. `.raw` is `None` and
+`.layers` is empty. Normalized matrices may be created transiently for
+annotation or embeddings, but are never retained in the output. This prevents
+an alternate normalized matrix from being mistaken for analysis input.
 
 Merged pseudobulk `.var` records per-study gene availability. A gene absent
 from an input study is represented by an outer-join zero only for that study;

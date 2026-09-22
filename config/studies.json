@@ -19,6 +19,31 @@
       "annotation": {"method": "existing"},
       "provenance": {"celltypes": "native_AIFI_labels"}
     },
+    "nehar_belaid26": {
+      "input": "input_data/GSE233321_all_PBMCs.h5ad",
+      "test_input": "GSE233321_all_PBMCs.h5ad",
+      "counts_source": "layer:counts",
+      "features": {"source_column": "gene_symbol", "duplicate_policy": "error"},
+      "preparation": {
+        "adapter": "nehar_belaid26",
+        "dependencies": ["input_data/metadata/nehar_belaid26/41467_2026_73729_MOESM3_ESM.xls"],
+        "allow_cell_subset": true
+      },
+      "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
+      "provenance": {
+        "article": "Nehar-Belaid et al., Nature Communications 2026, DOI: 10.1038/s41467-026-73729-2",
+        "accession": "GSE233321",
+        "selection": "Study == Nehar-Belaid_et_al; all reused public cohorts excluded",
+        "sample_metadata": "Supplementary Data 1a",
+        "technology": "Supplementary Data 1a Chemistry_10x; adapter preserves 10X3'v2/10X3'v3 per cell and retains runs_10x as batch_single_cell",
+        "aligner": "Cell Ranger 3.0.2",
+        "genome": "hg19",
+        "demultiplexing": "inferred_none; no demultiplexing method reported for this release",
+        "frozen": "inferred_from_thawed_PBMCs",
+        "include_intronic": "inferred_no; not reported in the methods or supplement",
+        "smoking_status": "not_reported"
+      }
+    },
     "onek1k": {
       "input": "input_data/81d84489-bff9-4fb6-b0ee-78348126eada.h5ad",
       "test_input": "81d84489-bff9-4fb6-b0ee-78348126eada.h5ad",

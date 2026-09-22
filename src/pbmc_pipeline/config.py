@@ -57,6 +57,8 @@ def validate_configuration(pipeline: dict, studies: dict, schema: dict) -> None:
             raise ConfigurationError(f"{study_id}: preparation.adapter must be a string")
         if not isinstance(study["preparation"].get("dependencies", []), list):
             raise ConfigurationError(f"{study_id}: preparation.dependencies must be a list")
+        if not isinstance(study["preparation"].get("allow_cell_subset", False), bool):
+            raise ConfigurationError(f"{study_id}: preparation.allow_cell_subset must be a boolean")
 
 
 def config_digest(*documents: dict) -> str:

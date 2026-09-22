@@ -39,7 +39,10 @@ def prepare_study(
     adapter_name = study["preparation"]["adapter"]
     module = importlib.import_module(f"pbmc_pipeline.studies.{adapter_name}")
     prepared = module.prepare_cells(source_obs, root)
-    prepared = validate_prepared_cells(prepared, source_ids, schema)
+    allow_cell_subset = study["preparation"].get("allow_cell_subset", False)
+    prepared = validate_prepared_cells(
+        prepared, source_ids, schema, allow_cell_subset=allow_cell_subset
+    )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     prepared.to_csv(output_path, index_label="cell_id", compression="infer")
@@ -49,7 +52,9 @@ def prepare_study(
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "expression_input": str(expression_path),
         "output": str(output_path),
+        "source_n_cells": len(source_ids),
         "n_cells": len(prepared),
+        "excluded_n_cells": len(source_ids) - len(prepared),
         "columns": list(prepared.columns),
     }
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -57,14 +62,31 @@ def prepare_study(
     return report
 
 
-def read_prepared_cells(path: Path, expression_ids, schema: dict[str, Any]) -> pd.DataFrame:
+def read_prepared_cells(
+    path: Path,
+    expression_ids,
+    schema: dict[str, Any],
+    *,
+    allow_cell_subset: bool = False,
+) -> pd.DataFrame:
     """Read and recheck a materialized metadata table before attaching it to counts."""
     prepared = pd.read_csv(path, index_col="cell_id")
     prepared.index = pd.Index(prepared.index.astype(str), name="cell_id")
-    return validate_prepared_cells(prepared, pd.Index(expression_ids.astype(str), name="cell_id"), schema)
+    return validate_prepared_cells(
+        prepared,
+        pd.Index(expression_ids.astype(str), name="cell_id"),
+        schema,
+        allow_cell_subset=allow_cell_subset,
+    )
 
 
-def validate_prepared_cells(prepared, expression_ids, schema: dict[str, Any]) -> pd.DataFrame:
+def validate_prepared_cells(
+    prepared,
+    expression_ids,
+    schema: dict[str, Any],
+    *,
+    allow_cell_subset: bool = False,
+) -> pd.DataFrame:
     """Require exact cell coverage and normalize the canonical metadata contract."""
     if not isinstance(prepared, pd.DataFrame):
         raise PreparationError("Study adapter must return a pandas DataFrame")
@@ -74,14 +96,15 @@ def validate_prepared_cells(prepared, expression_ids, schema: dict[str, Any]) ->
         raise PreparationError("Prepared cell metadata contains duplicate cell_id values")
     if not expression_ids.is_unique:
         raise PreparationError("Expression input contains duplicate cell identifiers")
-    missing_ids = expression_ids.difference(result.index)
     extra_ids = result.index.difference(expression_ids)
-    if len(missing_ids) or len(extra_ids):
+    missing_ids = expression_ids.difference(result.index)
+    if len(extra_ids) or (len(missing_ids) and not allow_cell_subset):
         raise PreparationError(
             "Prepared cell metadata must cover exactly the expression cells "
             f"(missing={len(missing_ids)}, extra={len(extra_ids)})"
         )
-    result = result.loc[expression_ids].copy()
+    selected_ids = expression_ids[expression_ids.isin(result.index)]
+    result = result.loc[selected_ids].copy()
     required = set(schema["required"]) - PREDICTION_COLUMNS
     missing_columns = required - set(result.columns)
     if missing_columns:

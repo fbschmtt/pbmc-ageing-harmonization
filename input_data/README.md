@@ -16,6 +16,12 @@ conversion notebook. Supplementary inputs are grouped by study:
 - `metadata/terekhova23/mmc2.xlsx`
 - `metadata/terekhova23/cell_to_tube.csv.gz`
 - `metadata/wang25/41590_2024_2059_MOESM3_ESM.xlsx`
+- `metadata/nehar_belaid26/41467_2026_73729_MOESM3_ESM.xls`
+
+Nehar-Belaid26 uses Supplementary Data 1, sheet `1a`, as the authoritative
+metadata for the in-house scRNA-seq cohort. Its all-PBMC H5AD also includes
+reused public studies; the configured adapter retains only cells whose `Study`
+value is `Nehar-Belaid_et_al`.
 
 The Terekhova compact lookup is the canonical runtime input mapping each cell ID
 to its demultiplexed `Tube_id`. It was generated from the published
@@ -27,10 +33,11 @@ again, recreate the lookup with:
 python scripts/prepare_auxiliary_metadata.py
 ```
 
-`config/input_sources.json` is the tracked input manifest. It currently records
-one direct AIFI expression URL, checksums for local supplementary files, and
-manual acquisition locations for the remaining inputs. Populate verified direct
-URLs and expression checksums before treating the pipeline as release-ready.
+`config/input_sources.json` is the tracked input manifest. It records direct
+URLs for the AIFI expression object and the Nehar-Belaid26 H5AD plus
+Supplementary Data 1, checksums for local supplementary files, and manual
+acquisition locations for the remaining inputs. Populate verified direct URLs
+and expression checksums before treating the pipeline as release-ready.
 
 For convenience, `make download-inputs STUDIES=<study>` reads the tracked
 `config/input_sources.json` manifest and makes a best-effort download of direct

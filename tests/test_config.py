@@ -8,7 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_configuration_is_complete():
     pipeline, studies, schema = load_configuration(ROOT, Path("config/pipeline.json"))
-    assert set(studies["studies"]) == {"aida25", "aifi", "onek1k", "terekhova23", "wang25"}
+    assert set(studies["studies"]) == {
+        "aida25", "aifi", "nehar_belaid26", "onek1k", "terekhova23", "wang25"
+    }
     assert pipeline["schema_version"] == schema["schema_version"] == 1
 
 

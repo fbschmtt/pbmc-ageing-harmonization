@@ -68,10 +68,33 @@ def harmonize_study(
         adata = adata.raw.to_adata()
         adata.obs = original_obs.loc[adata.obs_names].copy()
         _log_step(study_id, "select_counts", started, source="raw")
-    elif study["counts_source"] != "X":
-        raise ValueError(f"Unsupported counts_source: {study['counts_source']}")
-    else:
+    elif study["counts_source"] == "X":
         LOGGER.info("study=%s step=select_counts source=X", study_id)
+    elif study["counts_source"].startswith("layer:"):
+        layer = study["counts_source"].removeprefix("layer:")
+        if not layer or layer not in adata.layers:
+            raise ValueError(f"{study_id}: configured count layer is absent: {layer!r}")
+        started = time.perf_counter()
+        adata.X = adata.layers[layer].copy()
+        _log_step(study_id, "select_counts", started, source=f"layer:{layer}")
+    else:
+        raise ValueError(f"Unsupported counts_source: {study['counts_source']}")
+
+    # The harmonized artifact is a count matrix, not a source-object archive.
+    # A source H5AD can retain normalized X/raw/layer matrices alongside the
+    # configured counts; remove every alternate expression representation once
+    # the selected counts are in X so none can be mistaken for analysis input.
+    discarded_layers = list(adata.layers)
+    had_raw = adata.raw is not None
+    adata.raw = None
+    for layer in discarded_layers:
+        del adata.layers[layer]
+    LOGGER.info(
+        "study=%s step=discard_alternate_expression raw=%s layers=%s",
+        study_id,
+        had_raw,
+        ",".join(discarded_layers) if discarded_layers else "none",
+    )
 
     started = time.perf_counter()
     if hasattr(adata.X, "sum_duplicates"):
@@ -79,6 +102,26 @@ def harmonize_study(
         adata.X.sort_indices()
     validate_counts(adata)
     _log_step(study_id, "validate_input", started)
+    source_input_cells = adata.n_obs
+    if prepared_obs_path is None:
+        raise ValueError("A prepared per-cell metadata artifact is required")
+    started = time.perf_counter()
+    prepared = read_prepared_cells(
+        prepared_obs_path,
+        adata.obs_names,
+        schema,
+        allow_cell_subset=study["preparation"].get("allow_cell_subset", False),
+    )
+    if len(prepared) < source_input_cells:
+        adata = adata[prepared.index].copy()
+        LOGGER.info(
+            "study=%s step=filter_input_cells retained=%s excluded=%s",
+            study_id,
+            adata.n_obs,
+            source_input_cells - adata.n_obs,
+        )
+    adata.obs = prepared
+    _log_step(study_id, "attach_prepared_metadata", started, cells=adata.n_obs, warnings=len(warnings))
     input_cells, input_genes = adata.shape
     started = time.perf_counter()
     adata, aggregated_features = _repair_features(adata, study.get("features", {}))
@@ -86,12 +129,6 @@ def harmonize_study(
         study_id, "repair_features", started, aggregated_duplicate_features=aggregated_features,
         cells=adata.n_obs, genes=adata.n_vars,
     )
-    if prepared_obs_path is None:
-        raise ValueError("A prepared per-cell metadata artifact is required")
-    started = time.perf_counter()
-    adata.obs = read_prepared_cells(prepared_obs_path, adata.obs_names, schema)
-    _log_step(study_id, "attach_prepared_metadata", started, warnings=len(warnings))
-
     annotation = study["annotation"]
     if annotation["method"] == "celltypist" and not validate_only:
         _annotate_celltypist(adata, annotation, pipeline, root, study_id)
@@ -113,7 +150,9 @@ def harmonize_study(
         "status": "validated" if validate_only else "complete",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "input": str(input_path),
+        "source_input_cells": int(source_input_cells),
         "input_cells": int(input_cells), "input_genes": int(input_genes),
+        "excluded_input_cells": int(source_input_cells - input_cells),
         "aggregated_duplicate_features": aggregated_features,
         **summary,
         "warnings": warnings,
