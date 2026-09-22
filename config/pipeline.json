@@ -2,6 +2,7 @@
   "schema_version": 1,
   "studies_config": "config/studies.json",
   "obs_schema": "config/harmonized_obs_schema.json",
+  "input_sources": "config/input_sources.json",
   "input_root": ".",
   "test_input_root": "test_data",
   "output_dir": "output/harmonized",

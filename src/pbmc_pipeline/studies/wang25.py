@@ -14,15 +14,26 @@ def prepare_cells(source, root):
     )
     joined = safe_left_join(cells, table, ["Sample ID"])
     return canonical(joined, "wang25", {
-        "study_celltype": {"source": "secondary_type"}, "sample": {"source": "Sample ID"},
-        "subject": {"source": "Sample ID"}, "sampling_timepoint": {"constant": "not_provided"},
-        "age": {"source": "Age (y)", "dtype": "float"}, "sex": {"source": "Gender", "lower": True},
+        "study_celltype": {"source": "secondary_type"},
+        "sample": {"source": "Sample ID"},
+        "subject": {"source": "Sample ID"},
+        "sampling_timepoint": {"constant": "not_provided"},
+        "age": {"source": "Age (y)", "dtype": "float"},
+        "sex": {"source": "Gender", "lower": True},
         "bmi": {"source": "BMI (kg/m2)", "dtype": "float"},
-        "cmv": {"source": "CMV IgM antibodies", "lower": True}, "ethnicity": {"constant": "asian"},
-        "ethnicity_fine": {"constant": "mainland_china"}, "technology": {"constant": "10X5'"},
-        "aligner": {"constant": "CRv3.0.2"}, "genome": {"constant": "GRCh38"},
-        "demultiplexing": {"constant": "none"}, "frozen": {"constant": "no"},
-        "include_intronic": {"constant": "no"}, "smoking_status": {"constant": "no"},
-        "study_site": {"constant": "wang25"}, "country": {"constant": "cn"},
+        "cmv": {"source": "CMV IgM antibodies", "lower": True},
+        "ethnicity": {"constant": "asian"},
+        "ethnicity_fine": {"constant": "mainland_china"},
+        "technology": {"constant": "10X5'"},
+        "aligner": {"constant": "CRv3.0.2"},
+        "genome": {"constant": "GRCh38"},
+        "demultiplexing": {"constant": "none"},
+        # inferred: confirm the fresh-cell/frozen-state interpretation against the study protocol.
+        "frozen": {"constant": "no"},
+        # inferred: source processing metadata is used because no per-cell field is present.
+        "include_intronic": {"constant": "no"},
+        "smoking_status": {"constant": "no"},
+        "study_site": {"constant": "wang25"},
+        "country": {"constant": "cn"},
         "batch_single_cell": {"constant": "not_provided"},
     })

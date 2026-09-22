@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from pbmc_pipeline.preparation import PreparationError, prepare_study, read_prepared_cells
-from pbmc_pipeline.studies import nehar_belaid26
+from pbmc_pipeline.studies import fachrul26, nehar_belaid26, perez22
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,6 +41,49 @@ def test_onek_adapter_materializes_exactly_one_canonical_row_per_cell(tmp_path):
     assert prepared["sample"].tolist() == ["d1", "d2"]
     assert prepared["batch_single_cell"].tolist() == ["onek1k_1", "onek1k_2"]
     assert prepared["study"].tolist() == ["onek1k", "onek1k"]
+
+
+def test_fachrul_adapter_uses_embedded_metadata():
+    source = pd.DataFrame(
+        {
+            "cell_type": ["CD14-positive monocyte"], "sample_id": ["sample_1"],
+            "donor_id": ["donor_1"], "development_stage": ["54-year-old stage"],
+            "sex": ["male"], "self_reported_ethnicity": ["Indonesian"],
+            "assay": ["10x 5' v2"], "alignment_software": ["Cell Ranger count v7.2.0"],
+            "reference_genome": ["GRCh38"], "sample_preservation_method": ["fresh"],
+            "intronic_reads_counted": ["yes"], "Village": ["Pedawa"],
+            "library_id": ["library_1"],
+        },
+        index=["cell_a"],
+    )
+
+    prepared = fachrul26.prepare_cells(source, ROOT)
+
+    assert prepared.loc["cell_a", "sample"] == "sample_1"
+    assert prepared.loc["cell_a", "age"] == 54.0
+    assert prepared.loc["cell_a", "technology"] == "10X5'v2"
+    assert prepared.loc["cell_a", "frozen"] == "no"
+    assert prepared.loc["cell_a", "batch_single_cell"] == "fachrul26_library_1"
+
+
+def test_perez_adapter_uses_embedded_metadata():
+    source = pd.DataFrame(
+        {
+            "cell_type": ["classical monocyte"], "sample_uuid": ["sample_1"],
+            "donor_id": ["donor_1"], "development_stage": ["33-year-old stage"],
+            "sex": ["female"], "self_reported_ethnicity": ["European American"],
+            "assay": ["10x 3' v2"], "library_uuid": ["library_1"],
+        },
+        index=["cell_a"],
+    )
+
+    prepared = perez22.prepare_cells(source, ROOT)
+
+    assert prepared.loc["cell_a", "sample"] == "sample_1"
+    assert prepared.loc["cell_a", "age"] == 33.0
+    assert prepared.loc["cell_a", "technology"] == "10X3'v2"
+    assert prepared.loc["cell_a", "genome"] == "GRCh37"
+    assert prepared.loc["cell_a", "batch_single_cell"] == "perez22_library_1"
 
 
 def test_prepared_metadata_rejects_missing_or_extra_cell_ids(tmp_path):

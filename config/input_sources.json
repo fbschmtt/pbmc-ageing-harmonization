@@ -17,11 +17,25 @@
       "note": "Locate the published AIDA25 source object and place it at the configured path."
     },
     {
+      "id": "fachrul26_expression",
+      "studies": ["fachrul26"],
+      "path": "input_data/fachrul26/6a322de5-4cc6-43f5-b35d-6f0c246fb297.h5ad",
+      "manual_url": "https://cellxgene.cziscience.com/",
+      "note": "Place the published Fachrul26 H5AD at the configured path; embedded obs metadata is used by the adapter."
+    },
+    {
       "id": "onek1k_expression",
       "studies": ["onek1k"],
       "path": "input_data/onek1k/81d84489-bff9-4fb6-b0ee-78348126eada.h5ad",
       "manual_url": "https://cellxgene.cziscience.com/",
       "note": "Locate the published OneK1K source object and place it at the configured path."
+    },
+    {
+      "id": "perez22_expression",
+      "studies": ["perez22"],
+      "path": "input_data/perez22/c55dc602-d168-4d15-acc1-5de4f2f5d551.h5ad",
+      "manual_url": "https://cellxgene.cziscience.com/",
+      "note": "Place the published Perez22 H5AD at the configured path; embedded obs metadata is used by the adapter."
     },
     {
       "id": "nehar_belaid26_expression",

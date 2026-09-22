@@ -1,7 +1,15 @@
+import copy
 import json
 from pathlib import Path
 
-from pbmc_pipeline.config import load_configuration
+import pytest
+
+from pbmc_pipeline.config import (
+    ConfigurationError,
+    load_configuration,
+    read_json,
+    validate_configuration,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -9,7 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_configuration_is_complete():
     pipeline, studies, schema = load_configuration(ROOT, Path("config/pipeline.json"))
     assert set(studies["studies"]) == {
-        "aida25", "aifi", "nehar_belaid26", "onek1k", "terekhova23", "wang25"
+        "aida25", "aifi", "fachrul26", "nehar_belaid26", "onek1k", "perez22",
+        "terekhova23", "wang25"
     }
     assert pipeline["schema_version"] == schema["schema_version"] == 1
 
@@ -28,3 +37,33 @@ def test_test_inputs_are_unique():
     assert document["studies"]["wang25"]["conversion"]["test_source"].startswith(
         f'{pipeline["test_input_root"]}/'
     )
+
+
+def test_new_cellxgene_studies_use_gene_symbol_columns():
+    _, document, _ = load_configuration(ROOT, Path("config/pipeline.json"))
+    for study_id in ("fachrul26", "perez22"):
+        assert document["studies"][study_id]["features"] == {
+            "source_column": "feature_name", "duplicate_policy": "sum"
+        }
+
+
+def test_configuration_rejects_invalid_feature_policy():
+    pipeline, studies, schema = load_configuration(ROOT, Path("config/pipeline.json"))
+    input_sources = read_json(ROOT / pipeline["input_sources"])
+    broken = copy.deepcopy(studies)
+    broken["studies"]["fachrul26"]["features"]["duplicate_policy"] = "keep"
+
+    with pytest.raises(ConfigurationError, match="duplicate_policy"):
+        validate_configuration(pipeline, broken, schema, input_sources)
+
+
+def test_configuration_rejects_unmanifested_expression_input():
+    pipeline, studies, schema = load_configuration(ROOT, Path("config/pipeline.json"))
+    input_sources = read_json(ROOT / pipeline["input_sources"])
+    broken = copy.deepcopy(input_sources)
+    broken["artifacts"] = [
+        artifact for artifact in broken["artifacts"] if "fachrul26" not in artifact["studies"]
+    ]
+
+    with pytest.raises(ConfigurationError, match="fachrul26"):
+        validate_configuration(pipeline, studies, schema, broken)

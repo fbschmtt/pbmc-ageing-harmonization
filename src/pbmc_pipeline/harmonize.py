@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import platform
+import re
 import time
 from datetime import datetime, timezone
 from importlib.metadata import version
@@ -124,10 +125,14 @@ def harmonize_study(
     _log_step(study_id, "attach_prepared_metadata", started, cells=adata.n_obs, warnings=len(warnings))
     input_cells, input_genes = adata.shape
     started = time.perf_counter()
-    adata, aggregated_features = _repair_features(adata, study.get("features", {}))
+    feature_spec = study.get("features", {})
+    feature_name_metrics = _feature_name_metrics(adata, feature_spec)
+    adata, aggregated_features = _repair_features(adata, feature_spec)
     _log_step(
         study_id, "repair_features", started, aggregated_duplicate_features=aggregated_features,
         cells=adata.n_obs, genes=adata.n_vars,
+        feature_symbols=feature_name_metrics["n_feature_symbols"],
+        feature_ids=feature_name_metrics["n_feature_ids"],
     )
     annotation = study["annotation"]
     if annotation["method"] == "celltypist" and not validate_only:
@@ -154,6 +159,7 @@ def harmonize_study(
         "input_cells": int(input_cells), "input_genes": int(input_genes),
         "excluded_input_cells": int(source_input_cells - input_cells),
         "aggregated_duplicate_features": aggregated_features,
+        "feature_name_metrics": feature_name_metrics,
         **summary,
         "warnings": warnings,
         "provenance": study.get("provenance", {}),
@@ -210,15 +216,42 @@ def _normalize_missing_metadata(adata, schema: dict) -> None:
     adata.obs = normalize_metadata_frame(adata.obs, schema)
 
 
+ENSEMBL_FEATURE_RE = re.compile(r"^ENS[A-Z]*\d+(?:\.\d+)?$")
+
+
+def _feature_names(adata, spec: dict) -> pd.Series:
+    """Return the configured feature labels before duplicate aggregation."""
+    names = (adata.var[spec["source_column"]].astype("string")
+             if spec.get("source_column") else pd.Series(adata.var_names, index=adata.var_names, dtype="string"))
+    if "split" in spec:
+        rule = spec["split"]
+        names = names.str.split(rule["separator"]).str[rule["index"]]
+    return names
+
+
+def _feature_name_metrics(adata, spec: dict) -> dict[str, int | str]:
+    """Summarize symbol-like and identifier-like labels supplied by the source."""
+    names = _feature_names(adata, spec)
+    nonempty = names.notna() & names.str.strip().ne("")
+    feature_ids = names.str.match(ENSEMBL_FEATURE_RE, na=False)
+    duplicated = names[nonempty].duplicated(keep=False)
+    duplicate_names = names[nonempty][duplicated].nunique()
+    return {
+        "source_column": spec.get("source_column", "var_names"),
+        "n_features": len(names),
+        "n_feature_symbols": int((nonempty & ~feature_ids).sum()),
+        "n_feature_ids": int((nonempty & feature_ids).sum()),
+        "n_missing_feature_names": int((~nonempty).sum()),
+        "n_duplicate_feature_entries": int(duplicated.sum()),
+        "n_duplicate_feature_names": int(duplicate_names),
+    }
+
+
 def _repair_features(adata, spec: dict):
     import pandas as pd
     from scipy import sparse
 
-    names = (adata.var[spec["source_column"]].astype(str)
-             if spec.get("source_column") else pd.Series(adata.var_names, index=adata.var_names))
-    if "split" in spec:
-        rule = spec["split"]
-        names = names.str.split(rule["separator"]).str[rule["index"]]
+    names = _feature_names(adata, spec).astype(str)
     duplicated = names.duplicated(keep=False).to_numpy()
     duplicate_count = int(duplicated.sum())
     policy = spec.get("duplicate_policy", "error")

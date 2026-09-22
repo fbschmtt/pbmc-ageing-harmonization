@@ -26,3 +26,13 @@
 - Preserve existing user changes in a dirty worktree.
 - Ask a clarifying question before making an assumption that would materially
   change scientific analysis, workflow behavior, or output semantics.
+
+## Study adapter evidence
+
+- Do not comment every canonical field mapping. Source-backed mappings are
+  self-evident from their source column or supplement.
+- Clearly mark inferred values or transformations with a short adjacent
+  `# inferred:` comment, especially assumptions such as genome version or
+  thawed/frozen status.
+- Keep the corresponding assumption in the study configuration provenance as
+  well; do not silently present an inferred value as reported metadata.

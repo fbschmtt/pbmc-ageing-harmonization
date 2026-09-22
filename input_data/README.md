@@ -10,11 +10,18 @@ and test inputs can coexist. Create or refresh them with `make test-data`.
 Wang25's test fixture is an RDS, so test runs exercise the same RDS conversion
 process as production.
 
-The current study directories are `aida25/`, `aifi/`, `nehar_belaid26/`,
-`onek1k/`, `terekhova23/`, and `wang25/`. Keep source filenames intact so they
+The current study directories are `aida25/`, `aifi/`, `fachrul26/`,
+`nehar_belaid26/`, `onek1k/`, `perez22/`, `terekhova23/`, and `wang25/`. Keep
+source filenames intact so they
 remain recognizable against their accessions and publications. Generated
 conversions belong in `cache/`, and smoke-test fixtures belong in `test_data/`;
 neither is an immutable study input.
+
+Fachrul26 and Perez22 carry the metadata needed by their adapters in the H5AD
+`.obs` tables, so they have no supplementary runtime dependencies. Their source
+`.var_names` are Ensembl IDs; the configuration uses each object's
+`.var["feature_name"]` column as the gene-symbol source and sums duplicate
+symbols during harmonization.
 
 Nehar-Belaid26 uses Supplementary Data 1, sheet `1a`, as the authoritative
 metadata for the in-house scRNA-seq cohort. Its all-PBMC H5AD also includes

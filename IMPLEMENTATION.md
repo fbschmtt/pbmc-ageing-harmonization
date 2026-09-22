@@ -32,6 +32,9 @@ optional: all harmonized cells → shared-gene embedding → AIFI-L2 ─┘
 
 - `config/studies.json`: input locations, feature repair, preparation-adapter
   identity, auxiliary input dependencies, and annotation settings.
+- `config/input_sources.json`: the manifest of expression and supplementary
+  inputs. Configuration loading verifies that every configured expression input
+  and adapter dependency appears in this manifest.
 - `src/pbmc_pipeline/studies/`: explicit per-study adapters. They own unusual
   source joins and reshaping, then write one identity-checked metadata row for
   every retained input cell. An adapter may retain a strict cohort subset only
@@ -43,6 +46,9 @@ optional: all harmonized cells → shared-gene embedding → AIFI-L2 ─┘
 merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
   the legacy notebook; study-qualified row IDs prevent cross-study collisions.
 - `src/pbmc_pipeline/harmonize.py`: creates the validated per-study H5AD.
+  Its run report records feature-label provenance metrics, including the counts
+  of symbol-like labels, Ensembl-like identifiers, missing labels, and duplicate
+  labels before repair.
 - `src/pbmc_pipeline/merge.py`: creates raw-count pseudobulks, outer-joins
   pseudobulk genes, and runs the optional single-cell merge.
 - `modules/*.nf`: conversion, harmonization, merge, QC, and manifest process

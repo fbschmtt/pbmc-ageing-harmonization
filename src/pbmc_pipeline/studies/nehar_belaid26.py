@@ -45,14 +45,6 @@ def prepare_cells(source, root):
         missing = joined.loc[joined["IDs"].isna(), "sample_id"].nunique()
         raise MetadataError(f"Nehar-Belaid Supplementary Data 1a misses {missing} retained samples")
 
-    # Supplementary Data 1a records V2 and V3 in ``Chemistry_10x``. Preserve
-    # that most-specific reported technology as 10X3'v2/10X3'v3; ``runs_10x``
-    # remains available as the per-cell sequencing batch.
-    #
-    # Cell Ranger 3.0.2 and hg19 are reported in the paper's processing
-    # methods.  The remaining technical values below are documented in config
-    # provenance as inferences: thawed PBMCs imply frozen input, while neither
-    # intronic reads nor sample demultiplexing are reported for this release.
     return canonical(joined, "nehar_belaid26", {
         "study_celltype": {"source": "LS_L3"},
         "sample": {"source": "sample_id"},
@@ -67,8 +59,11 @@ def prepare_cells(source, root):
         "technology": {"source": "technology_normalized"},
         "aligner": {"constant": "Cell Ranger 3.0.2"},
         "genome": {"constant": "hg19"},
+        # inferred: no demultiplexing method is reported for this release.
         "demultiplexing": {"constant": "none"},
+        # inferred: thawed PBMCs imply frozen input material.
         "frozen": {"constant": "yes"},
+        # inferred: intronic reads are not reported for this release.
         "include_intronic": {"constant": "no"},
         "smoking_status": {"constant": "not_provided"},
         "study_site": {"source": "study_site_normalized"},

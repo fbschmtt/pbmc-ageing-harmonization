@@ -94,6 +94,19 @@ which matrix contains unnormalized integer counts. The harmonized output always
 stores only those selected counts in `.X`; source `.raw` and every source layer
 are removed.
 
+When an H5AD uses Ensembl IDs as `.var_names` but carries gene symbols in a
+feature metadata column, configure `features.source_column` to that symbol
+column (usually `feature_name`). The harmonizer repairs `.var_names` from this
+column and sums duplicate symbols according to `duplicate_policy`; it does not
+use the Ensembl index for downstream gene joins. Fachrul26 and Perez22 follow
+this pattern. Harmonization reports record the source column, symbol-like
+feature count, identifier-like feature count, missing names, and duplicate-name
+counts so source annotation quality is visible rather than implicit.
+
+Configuration loading also checks adapter module existence, count-source and
+feature-repair policies, conversion declarations, and that every study input
+and preparation dependency is represented in `config/input_sources.json`.
+
 Set `technology` to the most specific reported assay information. For example,
 use `10X3'v3` rather than `10X3'` when the reagent-kit revision is available;
 use the assay-family value only when no more specific source information is
@@ -127,6 +140,8 @@ never defines a pseudobulk. Missing string metadata is written as
 | Terekhova23 | `Donor_id` | `Tube_id` | workbook visit | barcode-derived batch | Each tube maps to one donor and visit; a tube may span technical batches. |
 | Wang25 | `Sample ID` | `Sample ID` | not provided | not provided | No separate donor, timepoint, or technical-batch identifier has yet been recovered. |
 | Nehar-Belaid26 | Supplementary Data 1a `IDs` | `sample_id` | not provided | Supplementary Data 1a `runs_10x` | Retains only `Study == Nehar-Belaid_et_al`; reused public cohorts in the source H5AD are excluded before harmonization. |
+| Fachrul26 | `donor_id` | `sample_id` | not provided | `library_id` | Uses embedded H5AD metadata; `feature_name` supplies gene symbols. |
+| Perez22 | `donor_id` | `sample_uuid` | not provided | `library_uuid` | Uses embedded H5AD metadata; `feature_name` supplies gene symbols. |
 
 `tests/` contains only automated test code. Reproducible local intermediates
 are collected under `cache/` for RDS-to-H5AD conversions. Downsampled smoke-test

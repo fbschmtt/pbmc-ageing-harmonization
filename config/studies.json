@@ -19,6 +19,26 @@
       "annotation": {"method": "existing"},
       "provenance": {"celltypes": "native_AIFI_labels"}
     },
+    "fachrul26": {
+      "input": "input_data/fachrul26/6a322de5-4cc6-43f5-b35d-6f0c246fb297.h5ad",
+      "test_input": "6a322de5-4cc6-43f5-b35d-6f0c246fb297.h5ad",
+      "counts_source": "raw",
+      "features": {"source_column": "feature_name", "duplicate_policy": "sum"},
+      "preparation": {"adapter": "fachrul26", "dependencies": []},
+      "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
+      "provenance": {
+        "metadata": "embedded H5AD obs fields; no supplementary dependency",
+        "sample": "obs.sample_id",
+        "subject": "obs.donor_id",
+        "technology": "obs.assay",
+        "aligner": "obs.alignment_software",
+        "genome": "obs.reference_genome",
+        "include_intronic": "obs.intronic_reads_counted",
+        "frozen": "obs.sample_preservation_method=fresh mapped to no",
+        "country": "inferred from the Fachrul26 Indonesian cohort",
+        "feature_names": "var.feature_name is used instead of Ensembl var_names"
+      }
+    },
     "nehar_belaid26": {
       "input": "input_data/nehar_belaid26/GSE233321_all_PBMCs.h5ad",
       "test_input": "GSE233321_all_PBMCs.h5ad",
@@ -52,6 +72,22 @@
       "preparation": {"adapter": "onek1k", "dependencies": []},
       "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
       "provenance": {"sample": "needs_review", "include_intronic": "inferred", "ethnicity": "reported_in_legacy"}
+    },
+    "perez22": {
+      "input": "input_data/perez22/c55dc602-d168-4d15-acc1-5de4f2f5d551.h5ad",
+      "test_input": "c55dc602-d168-4d15-acc1-5de4f2f5d551.h5ad",
+      "counts_source": "raw",
+      "features": {"source_column": "feature_name", "duplicate_policy": "sum"},
+      "preparation": {"adapter": "perez22", "dependencies": []},
+      "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
+      "provenance": {
+        "metadata": "embedded H5AD obs fields; no supplementary dependency",
+        "sample": "obs.sample_uuid",
+        "subject": "obs.donor_id",
+        "technology": "obs.assay",
+        "genome": "inferred GRCh37 from obs.mapped_reference_annotation=GENCODE 19",
+        "feature_names": "var.feature_name is used instead of Ensembl var_names"
+      }
     },
     "terekhova23": {
       "input": "input_data/terekhova23/pbmc_gex_raw_with_var_obs.h5ad",

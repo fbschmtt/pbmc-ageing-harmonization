@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 
 from pbmc_pipeline.harmonize import (
+    _feature_name_metrics,
     _normalize_missing_metadata,
     _normalize_nullable_strings_for_h5ad,
     _repair_features,
@@ -69,6 +70,30 @@ def test_duplicate_gene_symbols_are_aggregated():
     assert duplicate_count == 2
     assert repaired.var_names.tolist() == ["A", "B"]
     assert repaired.X.toarray().tolist() == [[4, 2], [10, 5]]
+
+
+def test_feature_name_metrics_distinguish_symbols_ids_and_duplicates():
+    adata = ad.AnnData(
+        X=np.ones((1, 4)),
+        var=pd.DataFrame(
+            {"feature_name": ["CD3D", "ENSG00000167286", "CD3D", "MISSING"]},
+            index=["id1", "id2", "id3", "id4"],
+        ),
+    )
+
+    metrics = _feature_name_metrics(
+        adata, {"source_column": "feature_name", "duplicate_policy": "sum"}
+    )
+
+    assert metrics == {
+        "source_column": "feature_name",
+        "n_features": 4,
+        "n_feature_symbols": 3,
+        "n_feature_ids": 1,
+        "n_missing_feature_names": 0,
+        "n_duplicate_feature_entries": 2,
+        "n_duplicate_feature_names": 1,
+    }
 
 
 def test_missing_metadata_uses_not_provided_for_strings_and_nan_for_floats():
