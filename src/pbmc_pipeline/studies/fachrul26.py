@@ -24,6 +24,7 @@ def prepare_cells(source, root):
         "frozen": {"source": "sample_preservation_method", "map": {"fresh": "no"}, "default": "not_provided"},
         "include_intronic": {"source": "intronic_reads_counted", "lower": True},
         "smoking_status": {"constant": "not_provided"},
+        "disease_status": {"constant": "healthy"},
         "study_site": {"source": "Village", "lower": True},
         # inferred: source description identifies this as an Indonesian cohort.
         "country": {"constant": "indonesia"},

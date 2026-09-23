@@ -15,13 +15,13 @@ def gene_presence_indicators(var: pd.DataFrame) -> pd.DataFrame:
 
 
 def aifi_l2_concordance(obs: pd.DataFrame) -> pd.DataFrame:
-    """Cross-tab original per-study and newly merged AIFI-L2 labels."""
-    required = {"aifi_l2_study_majority", "aifi_l2_majority"}
+    """Cross-tab per-study AIFI-L2 labels against experimental merged labels."""
+    required = {"aifi_l2_majority", "experimental_aifi_l2_majority"}
     if not required.issubset(obs):
         return pd.DataFrame()
     return pd.crosstab(
-        obs["aifi_l2_study_majority"].astype(str),
         obs["aifi_l2_majority"].astype(str),
+        obs["experimental_aifi_l2_majority"].astype(str),
         normalize="index",
     )
 
@@ -44,3 +44,49 @@ def pseudobulk_celltype_fractions(obs: pd.DataFrame) -> pd.DataFrame:
         fill_value=0,
     )
     return composition.div(composition.sum(axis=1), axis=0)
+
+
+def sample_cell_type_fractions(adata, *, denominator: str, fraction_name: str) -> pd.DataFrame:
+    """Summarize one split type per sample against a declared cell-count denominator."""
+    required = {"study", "sample", "age", denominator}
+    missing = required - set(adata.obs)
+    if missing:
+        raise ValueError(f"Sample cell-type fractions require columns: {sorted(missing)}")
+    grouped = adata.obs.groupby(["study", "sample"], observed=True)
+    result = grouped.agg(
+        age=("age", "first"),
+        n_cells_type=("study", "size"),
+        denominator_cells=(denominator, "first"),
+        n_unique_ages=("age", "nunique"),
+        n_unique_denominators=(denominator, "nunique"),
+    ).reset_index()
+    if (result["n_unique_ages"] > 1).any() or (result["n_unique_denominators"] > 1).any():
+        raise ValueError("Age and sample cell count must be constant within each study × sample")
+    result[fraction_name] = result["n_cells_type"] / result["denominator_cells"]
+    if (result[fraction_name] > 1).any():
+        raise ValueError("Cell-type count exceeds its configured denominator")
+    return result.drop(columns=["n_unique_ages", "n_unique_denominators"])
+
+
+def sample_cluster_fractions(adata) -> pd.DataFrame:
+    """Return each local cluster's fraction of its cell type for every sample."""
+    required = {"study", "sample", "age", "cluster"}
+    missing = required - set(adata.obs)
+    if missing:
+        raise ValueError(f"Sample cluster fractions require columns: {sorted(missing)}")
+    sample_keys = ["study", "sample", "age"]
+    counts = (
+        adata.obs.groupby([*sample_keys, "cluster"], observed=True)
+        .size()
+        .rename("n_cells_cluster")
+        .reset_index()
+    )
+    totals = (
+        adata.obs.groupby(sample_keys, observed=True)
+        .size()
+        .rename("n_cells_type")
+        .reset_index()
+    )
+    result = counts.merge(totals, on=sample_keys, validate="many_to_one")
+    result["fraction_within_cell_type"] = result["n_cells_cluster"] / result["n_cells_type"]
+    return result

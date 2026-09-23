@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 
 STUDIES ?= all
-NF_PROFILE ?= docker,harmony_omp16_openblas1
+NF_PROFILE ?= docker
 NXF ?= nextflow
 WORK_DIR ?= work
 OUTDIR ?= output
@@ -13,13 +13,15 @@ TEST_CELLS ?= 200
 TEST_SEED ?= 42
 VALIDATE_OUTDIR ?= output/validation
 MERGE_SINGLE_CELL ?= false
+MERGED_INPUT ?= output/merged/single_cell_merged.h5ad
 VENV_PYTHON := .venv/bin/python
 VENV_DEPS := .venv/.dev-qc-installed
 
-CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),images,)
+CORE_CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),images,)
+PYTHON_CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),image-python,)
 MERGE_ARGS = $(if $(filter true 1 yes,$(MERGE_SINGLE_CELL)),--merge_single_cell,)
 
-.PHONY: help install lint workflow-lint test test-unit test-integration verify validate-study validate-test validate-full test-data download-inputs images image-python image-r run run-no-qc run-test pipeline pipeline-harmonize pipeline-test notebook-sync clean-work
+.PHONY: help install lint workflow-lint test test-unit test-integration test-cell-type-integration verify validate-study validate-test validate-full test-data download-inputs images image-python image-r run run-no-qc run-test run-cell-types run-cell-types-test clean-work
 
 help: ## Show available development commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target> [STUDIES=wang25]\n\n"} /^[a-zA-Z_-]+:.*## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -38,6 +40,7 @@ lint: $(VENV_DEPS) ## Run Ruff
 
 workflow-lint: ## Lint the Nextflow workflow (requires Nextflow >=25.04)
 	$(NXF) lint main.nf
+	$(NXF) lint cell_type_analysis.nf
 
 test-unit: $(VENV_DEPS) ## Run deterministic unit and output-contract tests
 	$(VENV_PYTHON) -m pytest -q
@@ -46,7 +49,9 @@ test: test-unit ## Backward-compatible alias for unit tests
 
 test-integration: run-test ## Run the deterministic Docker integration workflow
 
-verify: lint test-unit workflow-lint test-integration ## Run all checks and a fresh cached Docker test workflow
+test-cell-type-integration: run-cell-types-test ## Run the downstream cell-type Docker integration workflow
+
+verify: lint test-unit workflow-lint test-integration test-cell-type-integration ## Run all checks and both fresh Docker workflows
 
 validate-study:
 	@case "$(STUDIES)" in all|*,*) echo "validation requires exactly one STUDIES value" >&2; exit 2;; esac
@@ -76,26 +81,24 @@ image-python:
 image-r:
 	docker build -f docker/r-conversion.Dockerfile -t $(R_IMAGE) .
 
-run: $(CONTAINER_PREREQS) ## Resumable production workflow; opt in with MERGE_SINGLE_CELL=true
-	$(NXF) run main.nf -profile $(NF_PROFILE) -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) --python_image $(PYTHON_IMAGE) --r_image $(R_IMAGE) --pipeline_revision $(PIPELINE_REVISION) $(MERGE_ARGS) -resume
+run: $(CORE_CONTAINER_PREREQS) ## Resumable production workflow; opt in with MERGE_SINGLE_CELL=true
+	$(NXF) run main.nf -profile $(NF_PROFILE),core -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) --python_image $(PYTHON_IMAGE) --r_image $(R_IMAGE) --pipeline_revision $(PIPELINE_REVISION) $(MERGE_ARGS) -resume
 
-run-no-qc: $(CONTAINER_PREREQS) ## Resumable workflow without rendered QC reports
-	$(NXF) run main.nf -profile $(NF_PROFILE) -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) --python_image $(PYTHON_IMAGE) --r_image $(R_IMAGE) --pipeline_revision $(PIPELINE_REVISION) $(MERGE_ARGS) --skip_qc -resume
+run-no-qc: $(CORE_CONTAINER_PREREQS) ## Resumable workflow without rendered QC reports
+	$(NXF) run main.nf -profile $(NF_PROFILE),core -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) --python_image $(PYTHON_IMAGE) --r_image $(R_IMAGE) --pipeline_revision $(PIPELINE_REVISION) $(MERGE_ARGS) --skip_qc -resume
 
 run-test: OUTDIR = output/test
 run-test: MERGE_SINGLE_CELL = true
-run-test: $(CONTAINER_PREREQS) ## Fresh deterministic 200-cell integration workflow, including single-cell merge
-	$(NXF) run main.nf -profile $(NF_PROFILE),test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) --python_image $(PYTHON_IMAGE) --r_image $(R_IMAGE) --pipeline_revision $(PIPELINE_REVISION) $(MERGE_ARGS)
+run-test: $(CORE_CONTAINER_PREREQS) ## Fresh deterministic 200-cell integration workflow, including single-cell merge
+	$(NXF) run main.nf -profile $(NF_PROFILE),core,core_test,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) --python_image $(PYTHON_IMAGE) --r_image $(R_IMAGE) --pipeline_revision $(PIPELINE_REVISION) $(MERGE_ARGS)
 
-pipeline: run ## Backward-compatible alias for run
+run-cell-types: $(PYTHON_CONTAINER_PREREQS) ## Split a merged H5AD and render one residual-variation report per AIFI L2 type
+	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(MERGED_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume
 
-pipeline-harmonize: run-no-qc ## Backward-compatible alias for run-no-qc
-
-pipeline-test: run-test ## Backward-compatible alias for run-test
-
-notebook-sync: $(VENV_DEPS) ## Regenerate the merge QC notebook from its paired Python source
-	mkdir -p .cache/jupyter
-	JUPYTER_DATA_DIR="$(CURDIR)/.cache/jupyter" $(VENV_PYTHON) -m jupytext --to ipynb --output reports/merge_qc_report.ipynb reports/merge_qc_report.py
+run-cell-types-test: OUTDIR = output/cell-type-test
+run-cell-types-test: MERGED_INPUT = output/cell-type-test/merged/single_cell_merged.h5ad
+run-cell-types-test: run-test $(PYTHON_CONTAINER_PREREQS) ## Fresh Docker downstream test using the core test merge
+	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(MERGED_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
 
 clean-work: ## Ask Nextflow to remove obsolete cached work directories
 	$(NXF) clean -f

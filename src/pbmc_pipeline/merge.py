@@ -89,7 +89,9 @@ def pseudobulk_study(
     }
     _normalize_nullable_strings_for_h5ad(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output.write_h5ad(output_path, compression=pipeline["processing"]["output_compression"])
+    # Pseudobulks are small, dense downstream interchange inputs. Keep them
+    # uncompressed; all cell-level H5AD artifacts use the configured compression.
+    output.write_h5ad(output_path, compression=None)
     report = {
         "kind": "pseudobulk_study", "status": "complete",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(), "input": str(input_path),
@@ -123,7 +125,8 @@ def merge_pseudobulks(
     )
     _normalize_nullable_strings_for_h5ad(merged)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    merged.write_h5ad(output_path, compression=pipeline["processing"]["output_compression"])
+    # See ``pseudobulk_study``: merged pseudobulk is deliberately uncompressed.
+    merged.write_h5ad(output_path, compression=None)
     report = _merge_report("pseudobulk_merge", merged, paths, pipeline)
     _write_report(report_path, report)
     return report
@@ -140,7 +143,7 @@ def _shared_gene_names(parts: list) -> pd.Index:
 def merge_single_cells(
     input_paths: Iterable[Path], output_path: Path, report_path: Path, pipeline: dict, root: Path
 ) -> dict:
-    """Inner-join genes, embed all cells jointly, and obtain fresh AIFI L2 labels.
+    """Inner-join genes and compute experimental merged AIFI-L2 predictions.
 
     This intentionally loads every input in memory and is only invoked by the
     explicitly enabled Nextflow pathway.
@@ -161,7 +164,6 @@ def merge_single_cells(
     )
     if merged.n_vars == 0:
         raise ValueError("Studies have no shared genes for single-cell merge")
-    merged.obs["aifi_l2_study_majority"] = merged.obs["aifi_l2_majority"].astype(str)
     # The shipped configuration uses an inner join.  Keep provenance available
     # if a caller explicitly opts into an outer join, where fill_value=0 creates
     # synthetic rather than observational zeros.
@@ -169,6 +171,9 @@ def merge_single_cells(
         _annotate_gene_availability(merged, parts)
     _add_single_cell_qc_metrics(merged)
     integration = spec["integration"]
+    # Keep each study's own L2 annotation as the downstream ground truth. The
+    # merged prediction is diagnostic only and must never overwrite it.
+    merged.obs["aifi_l2_study_majority"] = merged.obs["aifi_l2_majority"].astype(str)
     # CellTypist detects ``obsp['connectivities']`` and uses it for its
     # over-clustering/majority-voting stage. The helper therefore installs the
     # Harmony-derived graph before CellTypist is invoked.
@@ -181,11 +186,11 @@ def merge_single_cells(
         embedding_batch_key=integration["batch_key"],
         embedding_genes=shared_genes,
         harmony_basis=integration["adjusted_basis"],
+        label_prefix="experimental_",
     )
-    # ``aifi_l2_majority`` above is the Harmony-graph prediction retained for
-    # backwards compatibility.  Repeat majority voting with a graph made from
-    # unintegrated PCs, then restore the Harmony graph/UMAP as the primary
-    # embedding stored in the merged artifact.
+    # The Harmony-graph prediction is experimental. Repeat the same diagnostic
+    # with an unintegrated-PC graph, then restore Harmony's graph/UMAP as the
+    # primary embedding stored in the merged artifact.
     raw_counts = merged.X.copy()
     sc.pp.normalize_total(merged, target_sum=pipeline["processing"]["target_sum"])
     sc.pp.log1p(merged)
@@ -199,6 +204,7 @@ def merge_single_cells(
         root,
         "merged_single_cell",
         label_suffix="_unintegrated",
+        label_prefix="experimental_",
     )
     merged.X = raw_counts
     _compute_neighbors_and_umap(

@@ -20,6 +20,7 @@
     "frozen": "string",
     "include_intronic": "string",
     "smoking_status": "string",
+    "disease_status": "string",
     "study_site": "string",
     "country": "string",
     "batch_single_cell": "string",
@@ -32,6 +33,7 @@
     "sex": ["female", "male", "not_provided"],
     "frozen": ["yes", "no", "not_provided"],
     "include_intronic": ["yes", "no", "not_provided"],
-    "smoking_status": ["yes", "no", "not_provided"]
+    "smoking_status": ["yes", "no", "not_provided"],
+    "disease_status": ["healthy", "systemic_lupus_erythematosus", "not_provided"]
   }
 }

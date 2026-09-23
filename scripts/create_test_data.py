@@ -18,6 +18,8 @@ def parse_args():
 def main() -> None:
     import scanpy as sc
 
+    from pbmc_pipeline.source import read_study_input
+
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
     pipeline, document, _ = load_configuration(root, Path("config/pipeline.json"))
@@ -35,7 +37,7 @@ def main() -> None:
         if target.exists() and not args.overwrite:
             print(f"SKIP {study_id}: {target} exists")
             continue
-        adata = sc.read_h5ad(source)
+        adata = read_study_input(root, source, study)
         if adata.n_obs > args.cells:
             sc.pp.sample(adata, n=args.cells, rng=args.seed, replace=False)
         adata.write_h5ad(target, compression="gzip")

@@ -1,11 +1,12 @@
 import json
+import types
 
 import anndata as ad
 import numpy as np
 import pandas as pd
 from scipy import sparse
 
-from pbmc_pipeline.harmonize import _compute_embedding
+from pbmc_pipeline.harmonize import _compute_embedding, _predict_celltypist
 from pbmc_pipeline.merge import (
     _add_single_cell_qc_metrics,
     _shared_gene_names,
@@ -125,3 +126,27 @@ def test_single_cell_qc_metrics_use_raw_counts_and_mt_prefix():
 
     assert adata.obs["UMIs_per_cell"].tolist() == [10, 0]
     assert adata.obs["percent_mito"].tolist() == [40.0, 0.0]
+
+
+def test_experimental_prediction_prefix_does_not_replace_per_study_l2(monkeypatch, tmp_path):
+    adata = ad.AnnData(
+        X=np.ones((2, 1)),
+        obs=pd.DataFrame({"aifi_l2_majority": ["per-study T", "per-study B"]}, index=["a", "b"]),
+    )
+    adata.uns["neighbors"] = {"params": {"use_rep": "X_pca_harmony"}}
+
+    fake_celltypist = types.SimpleNamespace(
+        models=types.SimpleNamespace(Model=types.SimpleNamespace(load=lambda path: path)),
+        annotate=lambda *args, **kwargs: types.SimpleNamespace(
+            predicted_labels=pd.DataFrame({"majority_voting": ["experimental T", "experimental B"]}, index=adata.obs_names)
+        ),
+    )
+    monkeypatch.setitem(__import__("sys").modules, "celltypist", fake_celltypist)
+
+    _predict_celltypist(
+        adata, {"levels": ["l2"]}, {"models": {"aifi_l2": "l2.pkl"}}, tmp_path,
+        "merged", label_prefix="experimental_",
+    )
+
+    assert adata.obs["aifi_l2_majority"].tolist() == ["per-study T", "per-study B"]
+    assert adata.obs["experimental_aifi_l2_majority"].tolist() == ["experimental T", "experimental B"]

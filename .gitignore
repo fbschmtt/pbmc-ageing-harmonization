@@ -23,6 +23,8 @@ venv/
 
 # Jupyter and editor state
 .ipynb_checkpoints/
+reports/merge_qc_report.ipynb
+reports/cell_type_report.ipynb
 legacy_notebooks/
 .vscode/
 .idea/

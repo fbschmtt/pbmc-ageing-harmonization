@@ -34,5 +34,51 @@
         "adjusted_basis": "X_pca_harmony"
       }
     }
+  },
+  "cell_type_analysis": {
+    "analysis_version": 1,
+    "split_by": "aifi_l2_majority",
+    "min_cells": 50,
+    "clustering": {
+      "method": "leiden",
+      "resolution": 0.5
+    },
+    "integration": {
+      "method": "harmony",
+      "batch_key": "study",
+      "adjusted_basis": "X_pca_harmony"
+    },
+    "l2_parent_l1": {
+      "ASDC": "DC",
+      "CD14 monocyte": "Monocyte",
+      "CD16 monocyte": "Monocyte",
+      "CD56bright NK cell": "NK cell",
+      "CD56dim NK cell": "NK cell",
+      "CD8aa": "T cell",
+      "DN T cell": "T cell",
+      "Effector B cell": "B cell",
+      "Erythrocyte": "Erythrocyte",
+      "ILC": "ILC",
+      "Intermediate monocyte": "Monocyte",
+      "MAIT": "T cell",
+      "Memory B cell": "B cell",
+      "Memory CD4 T cell": "T cell",
+      "Memory CD8 T cell": "T cell",
+      "Naive B cell": "B cell",
+      "Naive CD4 T cell": "T cell",
+      "Naive CD8 T cell": "T cell",
+      "Plasma cell": "B cell",
+      "Platelet": "Platelet",
+      "Progenitor cell": "Progenitor cell",
+      "Proliferating NK cell": "NK cell",
+      "Proliferating T cell": "T cell",
+      "Transitional B cell": "B cell",
+      "Treg": "T cell",
+      "cDC1": "DC",
+      "cDC2": "DC",
+      "gdT": "T cell",
+      "pDC": "DC"
+    },
+    "l2_parent_l1_provenance": "inferred manually from AIFI L2 label semantics and checked against the shipped AIFI L1/L2 reference-model label vocabularies; validate against the AIFI atlas paper and reference-model taxonomy before inferential use"
   }
 }

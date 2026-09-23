@@ -12,12 +12,13 @@ METADATA_PATH = "input_data/nehar_belaid26/41467_2026_73729_MOESM3_ESM.xls"
 
 
 def prepare_cells(source, root):
-    """Exclude reused public cohorts and join Supplementary Data 1a by sample ID."""
-    if STUDY_COLUMN not in source:
-        raise MetadataError(f"Nehar-Belaid source is missing required {STUDY_COLUMN!r} column")
-    cells = source.loc[source[STUDY_COLUMN].astype("string").eq(STUDY_VALUE)].copy()
-    if cells.empty:
-        raise MetadataError(f"Nehar-Belaid source contains no {STUDY_VALUE!r} cells")
+    """Join Supplementary Data 1a to the in-house source cells by sample ID."""
+    if STUDY_COLUMN in source:
+        cells = source.loc[source[STUDY_COLUMN].astype("string").eq(STUDY_VALUE)].copy()
+        if cells.empty:
+            raise MetadataError(f"Nehar-Belaid source contains no {STUDY_VALUE!r} cells")
+    else:
+        cells = source.copy()
 
     table = pd.read_excel(root / METADATA_PATH, sheet_name="1a", header=1)
     table = table.dropna(subset=["Names"]).copy()
@@ -66,6 +67,7 @@ def prepare_cells(source, root):
         # inferred: intronic reads are not reported for this release.
         "include_intronic": {"constant": "no"},
         "smoking_status": {"constant": "not_provided"},
+        "disease_status": {"constant": "healthy"},
         "study_site": {"source": "study_site_normalized"},
         "country": {"source": "country_normalized"},
         "batch_single_cell": {"source": "runs_10x", "prefix": "nehar_belaid26_"},

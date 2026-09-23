@@ -9,6 +9,8 @@ from typing import Any
 
 import pandas as pd
 
+from .source import read_study_input
+
 
 class PreparationError(ValueError):
     """Raised when a prepared cell-metadata artifact is not identity-safe."""
@@ -27,14 +29,9 @@ def prepare_study(
     report_path: Path,
 ) -> dict[str, Any]:
     """Run one named adapter and write its canonical one-row-per-cell table."""
-    import anndata as ad
-
-    source = ad.read_h5ad(expression_path, backed="r")
-    try:
-        source_obs = source.obs.copy()
-        source_ids = pd.Index(source.obs_names.astype(str), name="cell_id")
-    finally:
-        source.file.close()
+    source = read_study_input(root, expression_path, study)
+    source_obs = source.obs.copy()
+    source_ids = pd.Index(source.obs_names.astype(str), name="cell_id")
 
     adapter_name = study["preparation"]["adapter"]
     module = importlib.import_module(f"pbmc_pipeline.studies.{adapter_name}")

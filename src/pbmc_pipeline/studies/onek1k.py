@@ -27,6 +27,7 @@ def prepare_cells(source, root):
         # inferred: source processing metadata does not expose this per cell.
         "include_intronic": {"constant": "no"},
         "smoking_status": {"constant": "not_provided"},
+        "disease_status": {"constant": "healthy"},
         "study_site": {"constant": "onek1k"},
         "country": {"constant": "aus"},
         "batch_single_cell": {"source": "pool_number", "prefix": "onek1k_"},

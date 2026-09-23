@@ -72,7 +72,7 @@ def test_perez_adapter_uses_embedded_metadata():
             "cell_type": ["classical monocyte"], "sample_uuid": ["sample_1"],
             "donor_id": ["donor_1"], "development_stage": ["33-year-old stage"],
             "sex": ["female"], "self_reported_ethnicity": ["European American"],
-            "assay": ["10x 3' v2"], "library_uuid": ["library_1"],
+            "assay": ["10x 3' v2"], "library_uuid": ["library_1"], "disease": ["normal"],
         },
         index=["cell_a"],
     )
@@ -84,6 +84,25 @@ def test_perez_adapter_uses_embedded_metadata():
     assert prepared.loc["cell_a", "technology"] == "10X3'v2"
     assert prepared.loc["cell_a", "genome"] == "GRCh37"
     assert prepared.loc["cell_a", "batch_single_cell"] == "perez22_library_1"
+    assert prepared.loc["cell_a", "disease_status"] == "healthy"
+
+
+def test_perez_adapter_excludes_sle_cells_before_canonical_metadata():
+    source = pd.DataFrame(
+        {
+            "disease": ["normal", "systemic lupus erythematosus"],
+            "cell_type": ["B cell", "T cell"], "sample_uuid": ["healthy", "sle"],
+            "donor_id": ["healthy", "sle"], "development_stage": ["30-year-old stage"] * 2,
+            "sex": ["female"] * 2, "self_reported_ethnicity": ["European"] * 2,
+            "assay": ["10x 3' v2"] * 2, "library_uuid": ["one", "two"],
+        },
+        index=["healthy_cell", "sle_cell"],
+    )
+
+    prepared = perez22.prepare_cells(source, ROOT)
+
+    assert prepared.index.tolist() == ["healthy_cell"]
+    assert prepared["disease_status"].tolist() == ["healthy"]
 
 
 def test_prepared_metadata_rejects_missing_or_extra_cell_ids(tmp_path):

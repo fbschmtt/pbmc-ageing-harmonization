@@ -7,7 +7,7 @@ process HARMONIZE {
 
     input:
     tuple val(study_id), path(expression), path(prepared_cells)
-    path tracked_dependencies
+    path tracked_dependencies, stageAs: 'dependencies/*'
 
     output:
     tuple val(study_id), path("${study_id}.h5ad"), path("${study_id}.json"), emit: harmonized

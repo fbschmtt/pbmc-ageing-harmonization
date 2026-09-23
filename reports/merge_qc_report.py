@@ -106,9 +106,9 @@ else:
 
     display(Markdown("### AIFI L2 label concordance"))
     label_columns = [
-        ("Original study-level", "aifi_l2_study_majority"),
-        ("Harmony graph", "aifi_l2_majority"),
-        ("Unintegrated PCA graph", "aifi_l2_unintegrated_majority"),
+        ("Per-study L2 (downstream ground truth)", "aifi_l2_majority"),
+        ("Experimental Harmony graph", "experimental_aifi_l2_majority"),
+        ("Experimental unintegrated PCA graph", "experimental_aifi_l2_unintegrated_majority"),
     ]
     available_labels = [item for item in label_columns if item[1] in single_cell.obs]
     if len(available_labels) < 2:
@@ -144,10 +144,10 @@ else:
     plt.tight_layout()
     plt.show()
     umap_colors = ["study", "aifi_l2_majority"]
-    if "aifi_l2_study_majority" in single_cell.obs:
-        umap_colors.insert(1, "aifi_l2_study_majority")
-    if "aifi_l2_unintegrated_majority" in single_cell.obs:
-        umap_colors.append("aifi_l2_unintegrated_majority")
+    if "experimental_aifi_l2_majority" in single_cell.obs:
+        umap_colors.append("experimental_aifi_l2_majority")
+    if "experimental_aifi_l2_unintegrated_majority" in single_cell.obs:
+        umap_colors.append("experimental_aifi_l2_unintegrated_majority")
     for color in umap_colors:
         sc.pl.umap(
             single_cell,

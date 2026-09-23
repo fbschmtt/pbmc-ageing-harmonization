@@ -7,8 +7,8 @@ path below. Paths are relative to the repository root.
 Checksums are recorded where the file is currently available locally. The
 best-effort `make download-inputs` command reads `config/input_sources.json`;
 it verifies a checksum when one is recorded and reports manual-only sources.
-At present, the AIFI expression object and the Nehar-Belaid26 expression object
-plus its Supplementary Data 1 have direct URLs. The remaining acquisition
+At present, the AIFI expression object and the Nehar-Belaid26 raw archive, label H5AD,
+and Supplementary Data 1 have direct URLs. The remaining acquisition
 entries intentionally remain manual until their exact file URLs are verified.
 
 ## Expression data
@@ -18,7 +18,8 @@ entries intentionally remain manual until their exact file URLs are verified.
 | AIDA25 | `input_data/aida25/3a8a77a6-f069-479c-a2c1-252feafd0106.h5ad` | Raw-count H5AD | Not yet recorded |
 | AIFI | `input_data/aifi/human_immune_health_atlas_full.h5ad` | Immune Health Atlas H5AD | Not yet recorded |
 | Fachrul26 | `input_data/fachrul26/6a322de5-4cc6-43f5-b35d-6f0c246fb297.h5ad` | Raw-count H5AD with embedded observation metadata | Not yet recorded |
-| Nehar-Belaid26 | `input_data/nehar_belaid26/GSE233321_all_PBMCs.h5ad` | [Direct GEO all-PBMC H5AD](https://ftp.ncbi.nlm.nih.gov/geo/series/GSE233nnn/GSE233321/suppl/GSE233321_all_PBMCs.h5ad); adapter keeps only the in-house cohort | Not yet recorded |
+| Nehar-Belaid26 | `input_data/nehar_belaid26/GSE233321_RAW.tar` | [Direct GEO RAW archive](https://ftp.ncbi.nlm.nih.gov/geo/series/GSE233nnn/GSE233321/suppl/GSE233321_RAW.tar); 10x members are read directly from tar | Not yet recorded |
+| Nehar-Belaid26 | `input_data/nehar_belaid26/GSE233321_all_PBMCs.h5ad` | Published label H5AD; no cell overlap with the supplied RAW archive, so labels are not transferred | Not yet recorded |
 | OneK1K | `input_data/onek1k/81d84489-bff9-4fb6-b0ee-78348126eada.h5ad` | Raw-count H5AD | Not yet recorded |
 | Perez22 | `input_data/perez22/c55dc602-d168-4d15-acc1-5de4f2f5d551.h5ad` | Raw-count H5AD with embedded observation metadata | Not yet recorded |
 | Terekhova23 | `input_data/terekhova23/pbmc_gex_raw_with_var_obs.h5ad` | Raw-count H5AD | Not yet recorded |

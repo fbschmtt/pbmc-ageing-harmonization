@@ -3,7 +3,9 @@
   "artifacts": [
     {
       "id": "aifi_expression",
-      "studies": ["aifi"],
+      "studies": [
+        "aifi"
+      ],
       "path": "input_data/aifi/human_immune_health_atlas_full.h5ad",
       "url": "https://allenimmunology.org/public/publication/download/84792154-cdfb-42d0-8e42-39e210e980b4/filesets/568ad40c-516a-4646-9426-bdcd7029c1f5/human_immune_health_atlas_full.h5ad",
       "source_page": "https://apps.allenimmunology.org/aifi/resources/imm-health-atlas/downloads/scrna/",
@@ -11,71 +13,100 @@
     },
     {
       "id": "aida_expression",
-      "studies": ["aida25"],
+      "studies": [
+        "aida25"
+      ],
       "path": "input_data/aida25/3a8a77a6-f069-479c-a2c1-252feafd0106.h5ad",
       "manual_url": "https://cellxgene.cziscience.com/",
       "note": "Locate the published AIDA25 source object and place it at the configured path."
     },
     {
       "id": "fachrul26_expression",
-      "studies": ["fachrul26"],
+      "studies": [
+        "fachrul26"
+      ],
       "path": "input_data/fachrul26/6a322de5-4cc6-43f5-b35d-6f0c246fb297.h5ad",
       "manual_url": "https://cellxgene.cziscience.com/",
       "note": "Place the published Fachrul26 H5AD at the configured path; embedded obs metadata is used by the adapter."
     },
     {
       "id": "onek1k_expression",
-      "studies": ["onek1k"],
+      "studies": [
+        "onek1k"
+      ],
       "path": "input_data/onek1k/81d84489-bff9-4fb6-b0ee-78348126eada.h5ad",
       "manual_url": "https://cellxgene.cziscience.com/",
       "note": "Locate the published OneK1K source object and place it at the configured path."
     },
     {
       "id": "perez22_expression",
-      "studies": ["perez22"],
+      "studies": [
+        "perez22"
+      ],
       "path": "input_data/perez22/c55dc602-d168-4d15-acc1-5de4f2f5d551.h5ad",
       "manual_url": "https://cellxgene.cziscience.com/",
       "note": "Place the published Perez22 H5AD at the configured path; embedded obs metadata is used by the adapter."
     },
     {
-      "id": "nehar_belaid26_expression",
-      "studies": ["nehar_belaid26"],
-      "path": "input_data/nehar_belaid26/GSE233321_all_PBMCs.h5ad",
-      "url": "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE233nnn/GSE233321/suppl/GSE233321_all_PBMCs.h5ad",
-      "source_page": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE233321",
-      "note": "Direct GEO processed-data download. The adapter deliberately retains only Study == Nehar-Belaid_et_al."
+      "id": "nehar_belaid26_raw_expression",
+      "studies": [
+        "nehar_belaid26"
+      ],
+      "path": "input_data/nehar_belaid26/GSE233321_RAW.tar",
+      "url": "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE233nnn/GSE233321/suppl/GSE233321_RAW.tar",
+      "note": "GEO raw 10x archive. The adapter reads its compressed Matrix Market members directly, without extraction."
     },
     {
       "id": "terekhova_expression",
-      "studies": ["terekhova23"],
+      "studies": [
+        "terekhova23"
+      ],
       "path": "input_data/terekhova23/pbmc_gex_raw_with_var_obs.h5ad",
       "manual_url": "https://www.synapse.org/",
       "note": "The source archive and its access terms must be obtained from the study repository."
     },
     {
       "id": "wang_expression",
-      "studies": ["wang25"],
+      "studies": [
+        "wang25"
+      ],
       "path": "input_data/wang25/scRNA-seqProcessedLabelledObject.rds",
       "manual_url": "https://www.synapse.org/Synapse:syn61609846",
       "note": "Synapse source; authentication or terms acceptance may be required."
     },
     {
       "id": "aida_metadata",
-      "studies": ["aida25"],
+      "studies": [
+        "aida25"
+      ],
       "path": "input_data/aida25/mmc1.xlsx",
       "manual_url": "https://www.nature.com/",
       "sha256": "7610edd1105181e7fecb9e61e25e2668d57433524cc801838ed9c76f92bb4eef"
     },
     {
       "id": "terekhova_metadata",
-      "studies": ["terekhova23"],
+      "studies": [
+        "terekhova23"
+      ],
       "path": "input_data/terekhova23/mmc2.xlsx",
       "manual_url": "https://www.cell.com/immunity/home",
       "sha256": "af8da63efbaf6800da79f4660412ea3100aac88b18748b01679593e29b4444a2"
     },
     {
+      "id": "nehar_belaid26_labels",
+      "studies": [
+        "nehar_belaid26"
+      ],
+      "path": "input_data/nehar_belaid26/GSE233321_all_PBMCs.h5ad",
+      "url": "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE233nnn/GSE233321/suppl/GSE233321_all_PBMCs.h5ad",
+      "source_page": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE233321",
+      "note": "Published downsampled H5AD inspected for labels. Its cells do not overlap the supplied RAW archive, so labels are not transferred."
+    },
+    {
       "id": "nehar_belaid26_metadata",
-      "studies": ["nehar_belaid26"],
+      "studies": [
+        "nehar_belaid26"
+      ],
       "path": "input_data/nehar_belaid26/41467_2026_73729_MOESM3_ESM.xls",
       "url": "https://media.springernature.com/original/springer-static/esm/art%3A10.1038%2Fs41467-026-73729-2/MediaObjects/41467_2026_73729_MOESM3_ESM.xls",
       "source_page": "https://www.nature.com/articles/s41467-026-73729-2",
@@ -84,7 +115,9 @@
     },
     {
       "id": "terekhova_cell_lookup",
-      "studies": ["terekhova23"],
+      "studies": [
+        "terekhova23"
+      ],
       "path": "input_data/terekhova23/cell_to_tube.csv.gz",
       "manual_url": "input_data/README.md",
       "sha256": "bf0dede2434136b6f5515210c6c48fb2a7105c60e836ad007b7407856705df5a",
@@ -92,7 +125,9 @@
     },
     {
       "id": "wang_metadata",
-      "studies": ["wang25"],
+      "studies": [
+        "wang25"
+      ],
       "path": "input_data/wang25/41590_2024_2059_MOESM3_ESM.xlsx",
       "manual_url": "https://www.nature.com/",
       "sha256": "a46e3aa3f877890fa6100e42a6ffc641ec481e7f122b00b5a68fa89689b9fd2f"

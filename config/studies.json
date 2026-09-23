@@ -5,27 +5,70 @@
       "input": "input_data/aida25/3a8a77a6-f069-479c-a2c1-252feafd0106.h5ad",
       "test_input": "3a8a77a6-f069-479c-a2c1-252feafd0106.h5ad",
       "counts_source": "raw",
-      "features": {"source_column": "feature_name", "duplicate_policy": "sum"},
-      "preparation": {"adapter": "aida25", "dependencies": ["input_data/aida25/mmc1.xlsx"]},
-      "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
-      "provenance": {"technology": "needs_review", "frozen": "reported_in_legacy", "ethnicity": "confirmed_broad_mapping"}
+      "features": {
+        "source_column": "feature_name",
+        "duplicate_policy": "sum"
+      },
+      "preparation": {
+        "adapter": "aida25",
+        "dependencies": [
+          "input_data/aida25/mmc1.xlsx"
+        ]
+      },
+      "annotation": {
+        "method": "celltypist",
+        "levels": [
+          "l1",
+          "l2",
+          "l3"
+        ]
+      },
+      "provenance": {
+        "technology": "needs_review",
+        "frozen": "reported_in_legacy",
+        "ethnicity": "confirmed_broad_mapping",
+        "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use"
+      }
     },
     "aifi": {
       "input": "input_data/aifi/human_immune_health_atlas_full.h5ad",
       "test_input": "human_immune_health_atlas_full.h5ad",
       "counts_source": "raw",
-      "features": {"duplicate_policy": "error"},
-      "preparation": {"adapter": "aifi", "dependencies": []},
-      "annotation": {"method": "existing"},
-      "provenance": {"celltypes": "native_AIFI_labels"}
+      "features": {
+        "duplicate_policy": "error"
+      },
+      "preparation": {
+        "adapter": "aifi",
+        "dependencies": []
+      },
+      "annotation": {
+        "method": "existing"
+      },
+      "provenance": {
+        "celltypes": "native_AIFI_labels",
+        "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use"
+      }
     },
     "fachrul26": {
       "input": "input_data/fachrul26/6a322de5-4cc6-43f5-b35d-6f0c246fb297.h5ad",
       "test_input": "6a322de5-4cc6-43f5-b35d-6f0c246fb297.h5ad",
       "counts_source": "raw",
-      "features": {"source_column": "feature_name", "duplicate_policy": "sum"},
-      "preparation": {"adapter": "fachrul26", "dependencies": []},
-      "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
+      "features": {
+        "source_column": "feature_name",
+        "duplicate_policy": "sum"
+      },
+      "preparation": {
+        "adapter": "fachrul26",
+        "dependencies": []
+      },
+      "annotation": {
+        "method": "celltypist",
+        "levels": [
+          "l1",
+          "l2",
+          "l3"
+        ]
+      },
       "provenance": {
         "metadata": "embedded H5AD obs fields; no supplementary dependency",
         "sample": "obs.sample_id",
@@ -36,24 +79,38 @@
         "include_intronic": "obs.intronic_reads_counted",
         "frozen": "obs.sample_preservation_method=fresh mapped to no",
         "country": "inferred from the Fachrul26 Indonesian cohort",
+        "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use",
         "feature_names": "var.feature_name is used instead of Ensembl var_names"
       }
     },
     "nehar_belaid26": {
-      "input": "input_data/nehar_belaid26/GSE233321_all_PBMCs.h5ad",
-      "test_input": "GSE233321_all_PBMCs.h5ad",
-      "counts_source": "layer:counts",
-      "features": {"source_column": "gene_symbol", "duplicate_policy": "error"},
+      "input": "input_data/nehar_belaid26/GSE233321_RAW.tar",
+      "test_input": "GSE233321_RAW.test.h5ad",
+      "counts_source": "X",
+      "features": {
+        "source_column": "gene_symbol",
+        "duplicate_policy": "sum"
+      },
       "preparation": {
         "adapter": "nehar_belaid26",
-        "dependencies": ["input_data/nehar_belaid26/41467_2026_73729_MOESM3_ESM.xls"],
+        "dependencies": [
+          "input_data/nehar_belaid26/41467_2026_73729_MOESM3_ESM.xls",
+          "input_data/nehar_belaid26/GSE233321_all_PBMCs.h5ad"
+        ],
         "allow_cell_subset": true
       },
-      "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
+      "annotation": {
+        "method": "celltypist",
+        "levels": [
+          "l1",
+          "l2",
+          "l3"
+        ]
+      },
       "provenance": {
         "article": "Nehar-Belaid et al., Nature Communications 2026, DOI: 10.1038/s41467-026-73729-2",
         "accession": "GSE233321",
-        "selection": "Study == Nehar-Belaid_et_al; all reused public cohorts excluded",
+        "selection": "GEO raw tar contains only the in-house JB19043/HO17 and JB19044/HO18 libraries",
         "sample_metadata": "Supplementary Data 1a",
         "technology": "Supplementary Data 1a Chemistry_10x; adapter preserves 10X3'v2/10X3'v3 per cell and retains runs_10x as batch_single_cell",
         "aligner": "Cell Ranger 3.0.2",
@@ -61,27 +118,88 @@
         "demultiplexing": "inferred_none; no demultiplexing method reported for this release",
         "frozen": "inferred_from_thawed_PBMCs",
         "include_intronic": "inferred_no; not reported in the methods or supplement",
-        "smoking_status": "not_reported"
-      }
+        "smoking_status": "not_reported",
+        "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use",
+        "input": "GEO GSE233321 RAW tar; two downsampled 10x libraries read in memory from the archive",
+        "celltypes": "Published H5AD LS labels are joined only on unambiguous barcode identity; this H5AD has no overlap with the supplied RAW archive, so study_celltype is not_provided and CellTypist supplies harmonized labels",
+        "feature_names": "10x feature gene symbols; 48 duplicated symbols are summed during harmonization"
+      },
+      "raw_samples": [
+        {
+          "archive_prefix": "GSM7423200_JB19043",
+          "sample_id": "HO17",
+          "subject_id": "JB19043"
+        },
+        {
+          "archive_prefix": "GSM7423201_JB19044",
+          "sample_id": "HO18",
+          "subject_id": "JB19044"
+        }
+      ],
+      "label_h5ad": "input_data/nehar_belaid26/GSE233321_all_PBMCs.h5ad",
+      "label_columns": [
+        "LS_L1",
+        "LS_L2",
+        "LS_L3",
+        "LS_L4"
+      ]
     },
     "onek1k": {
       "input": "input_data/onek1k/81d84489-bff9-4fb6-b0ee-78348126eada.h5ad",
       "test_input": "81d84489-bff9-4fb6-b0ee-78348126eada.h5ad",
       "counts_source": "X",
-      "features": {"source_column": "feature_name", "split": {"separator": "_", "index": 0}, "duplicate_policy": "sum"},
-      "preparation": {"adapter": "onek1k", "dependencies": []},
-      "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
-      "provenance": {"sample": "needs_review", "include_intronic": "inferred", "ethnicity": "reported_in_legacy"}
+      "features": {
+        "source_column": "feature_name",
+        "split": {
+          "separator": "_",
+          "index": 0
+        },
+        "duplicate_policy": "sum"
+      },
+      "preparation": {
+        "adapter": "onek1k",
+        "dependencies": []
+      },
+      "annotation": {
+        "method": "celltypist",
+        "levels": [
+          "l1",
+          "l2",
+          "l3"
+        ]
+      },
+      "provenance": {
+        "sample": "needs_review",
+        "include_intronic": "inferred",
+        "ethnicity": "reported_in_legacy",
+        "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use"
+      }
     },
     "perez22": {
       "input": "input_data/perez22/c55dc602-d168-4d15-acc1-5de4f2f5d551.h5ad",
       "test_input": "c55dc602-d168-4d15-acc1-5de4f2f5d551.h5ad",
       "counts_source": "raw",
-      "features": {"source_column": "feature_name", "duplicate_policy": "sum"},
-      "preparation": {"adapter": "perez22", "dependencies": []},
-      "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
+      "features": {
+        "source_column": "feature_name",
+        "duplicate_policy": "sum"
+      },
+      "preparation": {
+        "adapter": "perez22",
+        "dependencies": [],
+        "allow_cell_subset": true
+      },
+      "annotation": {
+        "method": "celltypist",
+        "levels": [
+          "l1",
+          "l2",
+          "l3"
+        ]
+      },
       "provenance": {
         "metadata": "embedded H5AD obs fields; no supplementary dependency",
+        "selection": "embedded obs.disease normalized as normal\u2192healthy and systemic lupus erythematosus\u2192systemic_lupus_erythematosus; retain healthy cells only",
+        "disease_status": "obs.disease; source-backed mapping and healthy-only selection in adapter",
         "sample": "obs.sample_uuid",
         "subject": "obs.donor_id",
         "technology": "obs.assay",
@@ -93,10 +211,30 @@
       "input": "input_data/terekhova23/pbmc_gex_raw_with_var_obs.h5ad",
       "test_input": "pbmc_gex_raw_with_var_obs.h5ad",
       "counts_source": "X",
-      "features": {"duplicate_policy": "error"},
-      "preparation": {"adapter": "terekhova23", "dependencies": ["input_data/terekhova23/cell_to_tube.csv.gz", "input_data/terekhova23/mmc2.xlsx"]},
-      "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
-      "provenance": {"frozen": "needs_review", "include_intronic": "inferred_from_cellranger", "smoking_status": "paper_exclusion_criterion"}
+      "features": {
+        "duplicate_policy": "error"
+      },
+      "preparation": {
+        "adapter": "terekhova23",
+        "dependencies": [
+          "input_data/terekhova23/cell_to_tube.csv.gz",
+          "input_data/terekhova23/mmc2.xlsx"
+        ]
+      },
+      "annotation": {
+        "method": "celltypist",
+        "levels": [
+          "l1",
+          "l2",
+          "l3"
+        ]
+      },
+      "provenance": {
+        "frozen": "needs_review",
+        "include_intronic": "inferred_from_cellranger",
+        "smoking_status": "paper_exclusion_criterion",
+        "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use"
+      }
     },
     "wang25": {
       "input": "cache/converted/scRNA-seqProcessedLabelledObject.h5ad",
@@ -109,10 +247,32 @@
         "assay": "RNA"
       },
       "counts_source": "X",
-      "features": {"duplicate_policy": "error"},
-      "preparation": {"adapter": "wang25", "dependencies": ["input_data/wang25/41590_2024_2059_MOESM3_ESM.xlsx"]},
-      "annotation": {"method": "celltypist", "levels": ["l1", "l2", "l3"]},
-      "provenance": {"input": "converted_RDS_plus_published_supplementary_workbook", "sample_metadata": "join_recovered_from_legacy_wang25_2_create_anndata_notebook", "ethnicity": "confirmed", "cmv": "qualitative_CMV_IgM_serostatus_all_negative", "frozen": "needs_review", "include_intronic": "inferred"}
+      "features": {
+        "duplicate_policy": "error"
+      },
+      "preparation": {
+        "adapter": "wang25",
+        "dependencies": [
+          "input_data/wang25/41590_2024_2059_MOESM3_ESM.xlsx"
+        ]
+      },
+      "annotation": {
+        "method": "celltypist",
+        "levels": [
+          "l1",
+          "l2",
+          "l3"
+        ]
+      },
+      "provenance": {
+        "input": "converted_RDS_plus_published_supplementary_workbook",
+        "sample_metadata": "join_recovered_from_legacy_wang25_2_create_anndata_notebook",
+        "ethnicity": "confirmed",
+        "cmv": "qualitative_CMV_IgM_serostatus_all_negative",
+        "frozen": "needs_review",
+        "include_intronic": "inferred",
+        "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use"
+      }
     }
   }
 }

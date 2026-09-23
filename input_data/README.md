@@ -24,9 +24,7 @@ Fachrul26 and Perez22 carry the metadata needed by their adapters in the H5AD
 symbols during harmonization.
 
 Nehar-Belaid26 uses Supplementary Data 1, sheet `1a`, as the authoritative
-metadata for the in-house scRNA-seq cohort. Its all-PBMC H5AD also includes
-reused public studies; the configured adapter retains only cells whose `Study`
-value is `Nehar-Belaid_et_al`.
+metadata for the in-house scRNA-seq cohort. The configured input is the GEO RAW tar, whose compressed 10x Matrix Market members are read directly without extraction. The supplied two-library archive maps to HO17/JB19043 and HO18/JB19044. The H5AD is retained only as a label reference: it has no overlapping cell barcodes, so its labels are not transferred.
 
 The Terekhova compact lookup is the canonical runtime input mapping each cell ID
 to its demultiplexed `Tube_id`. It was generated from the published
@@ -39,7 +37,7 @@ python scripts/prepare_auxiliary_metadata.py
 ```
 
 `config/input_sources.json` is the tracked input manifest. It records direct
-URLs for the AIFI expression object and the Nehar-Belaid26 H5AD plus
+URLs for the AIFI expression object and the Nehar-Belaid26 RAW archive, label H5AD, plus
 Supplementary Data 1, checksums for local supplementary files, and manual
 acquisition locations for the remaining inputs. Populate verified direct URLs
 and expression checksums before treating the pipeline as release-ready.

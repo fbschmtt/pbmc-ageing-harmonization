@@ -12,6 +12,7 @@ dependencies = [
   "anndata>=0.10,<0.13",
   "celltypist>=1.6,<2",
   "harmonypy==0.0.10",
+  "leidenalg>=0.10,<1",
   "openpyxl>=3.1,<4",
   "xlrd>=2.0,<3",
   "pandas>=2.0,<3",
@@ -29,6 +30,9 @@ pbmc-prepare = "pbmc_pipeline.prepare_cli:main"
 pbmc-qc = "pbmc_pipeline.qc:main"
 pbmc-merge = "pbmc_pipeline.merge_cli:main"
 pbmc-merge-qc = "pbmc_pipeline.merge_qc:main"
+pbmc-cell-type = "pbmc_pipeline.cell_type:main"
+pbmc-cell-type-report = "pbmc_pipeline.cell_type_report:main"
+pbmc-cell-type-manifest = "pbmc_pipeline.cell_type_manifest:main"
 pbmc-manifest = "pbmc_pipeline.manifest:main"
 
 [tool.setuptools.packages.find]

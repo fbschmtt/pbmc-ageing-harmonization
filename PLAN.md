@@ -69,7 +69,7 @@ merge is available.
   outer-joined pseudobulk merge with gene-availability flags, a combined merge
   report, and a gene-presence UpSet plot.
 - [x] Add an opt-in whole-dataset single-cell merge with a
-  shared-gene embedding and fresh AIFI L2 predictions.
+  shared-gene embedding and experimental merged AIFI-L2 diagnostics.
 - [ ] Run and review merge artifacts on the full frozen studies.
 - [x] Add the initial Python harmonization Docker image definition.
 - [x] Add an executable QC notebook and self-contained HTML report generation.

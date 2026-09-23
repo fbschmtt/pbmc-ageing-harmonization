@@ -59,6 +59,37 @@ def validate_configuration(
         raise ConfigurationError(
             "merge.single_cell.integration.adjusted_basis must be 'X_pca_harmony'"
         )
+    cell_type_analysis = pipeline.get("cell_type_analysis", {})
+    if cell_type_analysis:
+        if not isinstance(cell_type_analysis.get("analysis_version"), int) or cell_type_analysis["analysis_version"] < 1:
+            raise ConfigurationError("cell_type_analysis.analysis_version must be a positive integer")
+        if cell_type_analysis.get("split_by") != "aifi_l2_majority":
+            raise ConfigurationError("cell_type_analysis.split_by must be 'aifi_l2_majority'")
+        if not isinstance(cell_type_analysis.get("min_cells"), int) or cell_type_analysis["min_cells"] < 3:
+            raise ConfigurationError("cell_type_analysis.min_cells must be an integer of at least 3")
+        clustering = cell_type_analysis.get("clustering", {})
+        if clustering.get("method") != "leiden":
+            raise ConfigurationError("cell_type_analysis.clustering.method must be 'leiden'")
+        if not isinstance(clustering.get("resolution"), (int, float)) or clustering["resolution"] <= 0:
+            raise ConfigurationError("cell_type_analysis.clustering.resolution must be positive")
+        integration = cell_type_analysis.get("integration", {})
+        if integration.get("method") != "harmony":
+            raise ConfigurationError("cell_type_analysis.integration.method must be 'harmony'")
+        if integration.get("batch_key") != "study":
+            raise ConfigurationError("cell_type_analysis.integration.batch_key must be 'study'")
+        if integration.get("adjusted_basis") != "X_pca_harmony":
+            raise ConfigurationError(
+                "cell_type_analysis.integration.adjusted_basis must be 'X_pca_harmony'"
+            )
+        parent_map = cell_type_analysis.get("l2_parent_l1")
+        if not isinstance(parent_map, dict) or not parent_map or not all(
+            isinstance(l2, str) and l2 and isinstance(l1, str) and l1
+            for l2, l1 in parent_map.items()
+        ):
+            raise ConfigurationError("cell_type_analysis.l2_parent_l1 must map non-empty L2 labels to L1 labels")
+        provenance = cell_type_analysis.get("l2_parent_l1_provenance")
+        if not isinstance(provenance, str) or not provenance:
+            raise ConfigurationError("cell_type_analysis.l2_parent_l1_provenance must be non-empty")
 
     for study_id, study in studies["studies"].items():
         missing_keys = {"input", "test_input", "counts_source", "preparation", "annotation"} - study.keys()

@@ -5,7 +5,7 @@ process PREPARE_CELLS {
 
     input:
     tuple val(study_id), path(expression)
-    path tracked_dependencies
+    path tracked_dependencies, stageAs: 'dependencies/*'
 
     output:
     tuple val(study_id), path(expression), path("${study_id}.cells.csv.gz"), emit: prepared

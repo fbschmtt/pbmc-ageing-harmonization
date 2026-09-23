@@ -40,6 +40,7 @@ def prepare_cells(source, root):
         # inferred: source processing metadata is used because no per-cell field is present.
         "include_intronic": {"constant": "yes"},
         "smoking_status": {"constant": "no"},
+        "disease_status": {"constant": "healthy"},
         "study_site": {"constant": "terekhova23"},
         "country": {"constant": "usa"},
         "batch_single_cell": {"source_index": True, "split": {"separator": "_", "index": 0}, "prefix": "terekhova23_"},

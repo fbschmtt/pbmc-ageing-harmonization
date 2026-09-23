@@ -33,6 +33,7 @@ def prepare_cells(source, root):
         "frozen": {"constant": "yes"},
         "include_intronic": {"source": "intronic_reads_counted"},
         "smoking_status": {"source": "Smoking Status", "map": {"0": "no", "1": "yes"}, "default": "not_provided"},
+        "disease_status": {"constant": "healthy"},
         "study_site": {"concat": [{"constant": "aida"}, "Country"], "separator": "_"},
         "country": {"source": "Country", "lower": True},
         "batch_single_cell": {"source": "batch_single_cell", "prefix": "aida_"},

@@ -58,6 +58,14 @@ input_data/ expression objects + metadata
                 │
                 ├── optional: output/merged/single_cell_merged.h5ad
                 └──> output/qc/merged/{executed.ipynb,report.html}
+
+optional downstream cell-type workflow
+  single_cell_merged.h5ad ──> split once by per-study AIFI-L2
+                                └──> output/cell_type_analysis/<type>/
+                                      ├── analysis.h5ad
+                                      ├── report.html
+                                      └── executed.ipynb + tables
+                              output/cell_type_analysis/cell_type_manifest.json
 ```
 
 All immutable local inputs belong under `input_data/`. Generated conversions,
@@ -65,6 +73,14 @@ reports, and harmonized outputs are kept outside it and ignored by Git.
 
 Per-cell preparation artifacts are generated under `<outdir>/prepared/`; they
 are reproducible from the expression object plus the declared study dependencies.
+
+### Annotation semantics
+
+`aifi_l2_majority` is the retained per-study AIFI-L2 annotation and the sole
+canonical label for pseudobulk grouping, cell-type splitting, and composition
+denominators. The optional whole-dataset merge produces only diagnostic
+`experimental_aifi_l2_*` labels; those must not replace per-study L2 in any
+downstream analysis.
 
 ## Add a study
 
@@ -139,9 +155,9 @@ never defines a pseudobulk. Missing string metadata is written as
 | OneK1K | `donor_id` | `donor_id` | not provided | `pool_number` | No separate sampling-timepoint identifier is available. |
 | Terekhova23 | `Donor_id` | `Tube_id` | workbook visit | barcode-derived batch | Each tube maps to one donor and visit; a tube may span technical batches. |
 | Wang25 | `Sample ID` | `Sample ID` | not provided | not provided | No separate donor, timepoint, or technical-batch identifier has yet been recovered. |
-| Nehar-Belaid26 | Supplementary Data 1a `IDs` | `sample_id` | not provided | Supplementary Data 1a `runs_10x` | Retains only `Study == Nehar-Belaid_et_al`; reused public cohorts in the source H5AD are excluded before harmonization. |
+| Nehar-Belaid26 | Supplementary Data 1a `IDs` | `sample_id` | not provided | Supplementary Data 1a `runs_10x` | Reads the supplied GEO raw 10x tar directly (without extraction); Supplementary Data 1a supplies donor metadata. The label H5AD has no overlap with these raw cells. |
 | Fachrul26 | `donor_id` | `sample_id` | not provided | `library_id` | Uses embedded H5AD metadata; `feature_name` supplies gene symbols. |
-| Perez22 | `donor_id` | `sample_uuid` | not provided | `library_uuid` | Uses embedded H5AD metadata; `feature_name` supplies gene symbols. |
+| Perez22 | `donor_id` | `sample_uuid` | not provided | `library_uuid` | Uses embedded H5AD metadata; `feature_name` supplies gene symbols. `obs.disease` is normalized and only `normal`/healthy cells are retained; embedded SLE cells are excluded before harmonization. |
 
 `tests/` contains only automated test code. Reproducible local intermediates
 are collected under `cache/` for RDS-to-H5AD conversions. Downsampled smoke-test
@@ -177,7 +193,7 @@ It never runs automatically with analysis commands, does not authenticate or
 scrape portals, and records outcomes in ignored
 `input_data/download_manifest.json`. Sources requiring terms acceptance or a
 manual portal download are reported with instructions rather than treated as a
-pipeline failure. The Nehar-Belaid26 expression H5AD and Supplementary Data 1
+pipeline failure. The Nehar-Belaid26 raw 10x archive, label H5AD, and Supplementary Data 1
 are also direct, verified downloads, so a fresh input can be acquired with:
 
 ```bash
@@ -232,10 +248,12 @@ The merge workflow renders one combined document at `output/qc/merged/`. It
 starts with pseudobulk composition and a gene-presence UpSet plot; if the
 single-cell branch is enabled it appends its embedding, depth checks, UMAPs of
 log(UMIs per cell) and mitochondrial percentage (capped at 15%), and the matrix
-comparing newly merged AIFI L2 calls to each cell's original study-level call.
-The merged artifact retains the Harmony-graph calls in `aifi_l2_majority` and
-adds the unintegrated-PCA-graph calls in `aifi_l2_unintegrated_majority`; the
-QC report shows their UMAPs and all pairwise label-concordance heatmaps.
+comparing experimental merged AIFI L2 calls to each cell's per-study label.
+The merged artifact retains per-study labels in `aifi_l2_majority` for all
+downstream grouping and splitting. Diagnostic re-annotations are stored in
+`experimental_aifi_l2_majority` (Harmony graph) and
+`experimental_aifi_l2_unintegrated_majority` (unintegrated PCA graph); the QC
+report shows their UMAPs and label-concordance heatmaps.
 `output/run_manifest.json` records selected studies, image references,
 configuration checksum, and checksums of the merged deliverables.
 
@@ -267,6 +285,81 @@ Enable that separate path on a runner sized for the selected inputs:
 make run STUDIES=all MERGE_SINGLE_CELL=true
 ```
 
+The merge and cell-type report templates are maintained as Jupytext Python
+sources (`reports/merge_qc_report.py` and `reports/cell_type_report.py`). Their
+report runners materialize a temporary notebook immediately before execution;
+the generated template notebooks are intentionally not tracked. The published
+`executed.ipynb` is instead the executed report artifact. The separate
+`reports/qc_report.ipynb` study-QC template remains hand-maintained.
+
+## Per-cell-type residual-variation reports
+
+The optional downstream workflow loads a completed merged single-cell H5AD once
+and splits it by the retained per-study `aifi_l2_majority` call. Experimental
+merged labels are never used for this split. Each per-type notebook
+loads its primitive raw-count, gzip-compressed H5AD, first plots the cells at
+their former global UMAP coordinates, then creates a type-specific
+PCA/UMAP/Leiden embedding, marker tables, PC--age correlation tables, and its
+executed HTML report. It also plots the retained per-study `aifi_l3_majority`
+labels; no merged L3 prediction is created. Global neighbours are deliberately
+not copied into the split artifacts.
+
+Each report also plots the type's sample-level fraction across age, coloured by
+study. It shows two descriptive denominators, both recorded before splitting:
+
+- all retained PBMCs in the same `study × sample` (`n_cells_in_sample`);
+- all retained cells in the configured AIFI-L1 parent compartment in that
+  `study × sample` (`n_cells_in_sample_l1_parent`).
+
+For the latter, every retained cell is first mapped from its retained per-study AIFI-L2
+label to the configured theoretical L1 parent, then counted by `study × sample
+× derived parent`. The workflow intentionally does not use `aifi_l1_majority`:
+that is an independent classifier result and may disagree with the refreshed
+merged L2 annotation.
+
+The L2→L1 parent mapping is manually curated in `cell_type_analysis.l2_parent_l1`
+in `config/pipeline.json`. Its provenance records that it is inferred from AIFI
+label semantics, checked against the shipped model vocabularies, and must be
+validated against the AIFI atlas/reference taxonomy before inferential use.
+Both plots are descriptive composition views, not age-effect tests. The split
+code retains a comment for future per-sample compartment counts, allowing more
+hierarchy views without extra source files.
+
+```bash
+make run-cell-types
+```
+
+This is a downstream workflow: it requires an existing merged single-cell H5AD
+at `output/merged/single_cell_merged.h5ad` and does not run the merge automatically.
+Override that location with `MERGED_INPUT=/path/to/single_cell_merged.h5ad`.
+`make run-cell-types-test` first
+creates the small core test merge and then runs the downstream workflow into
+`output/cell-type-test/`.
+
+Each published type directory under `output/cell_type_analysis/` contains its
+derived `analysis.h5ad`, HTML report, executed notebook, and report tables. The
+primitive split objects are cached internally by Nextflow rather than published.
+`cell_type_manifest.json` records the exact merged input, configuration,
+reference-model checksums, analysis specification, and the status/checksums of
+every expected type report. Its creation fails if a report directory is missing
+its required deliverables, so a successful workflow cannot silently publish a
+partial report set.
+PC--age correlations in these reports are explicitly descriptive at the cell
+level; use sample/subject-level pseudobulks or mixed models for inference.
+The local neighbour graph, UMAP, and Leiden clustering use Harmony correction
+by study; native (uncorrected) PCs remain the basis of the current PC--age
+diagnostic. This separation is deliberate but should be revisited before any
+inferential downstream use, since integration can also alter age-associated
+structure. V(D)J genes matching `processing.exclude_vdj_regex` are excluded
+from the local HVG/PCA input; the report records the count excluded.
+
+Local embeddings are exploratory. The current eligibility threshold is 50 total
+cells and does not require balanced study representation; small or highly
+imbalanced types can yield visually structured UMAPs even after Harmony. In
+particular, the configured 50-neighbour graph is relatively dense for rare
+types. Inspect study-coloured UMAPs and per-study cluster composition before
+interpreting local clusters as biological states.
+
 Nextflow's `work/` directory is the cache for
 converted and other intermediate artifacts; only
 final deliverables are copied to `output/`.
@@ -278,12 +371,17 @@ make images
 make test-data
 make run-test STUDIES=wang25
 make run STUDIES=all
+make run-cell-types
+make run-cell-types-test
 ```
 
 `make run`, `make run-test`, and `make run-no-qc` build the two content-tagged
 local images automatically whenever `NF_PROFILE` contains `docker`; use `make
 images` to build them without launching a workflow. `IMAGE_TAG` defaults to
 the current image build context and may be set explicitly for a release build.
+They also select the matching Nextflow resource profile (`core` or
+`cell_type_analysis`), keeping process selectors scoped to the workflow that
+defines them. For direct Nextflow invocation, include the corresponding profile.
 
 For a production run whose repository and task filesystem are separate, keep
 the repository path readable by Docker and choose an external work/output

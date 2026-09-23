@@ -25,6 +25,7 @@ def prepare_cells(source, root):
         "frozen": {"constant": "yes"},
         "include_intronic": {"constant": "not_provided"},
         "smoking_status": {"constant": "not_provided"},
+        "disease_status": {"constant": "healthy"},
         "study_site": {"constant": "aifi"},
         "country": {"constant": "usa"},
         "batch_single_cell": {"source": "well_id"},

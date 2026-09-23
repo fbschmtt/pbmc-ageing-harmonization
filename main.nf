@@ -24,7 +24,7 @@ workflow {
     def dependencies = [
         root.resolve('config/pipeline.json'), root.resolve(pipeline.studies_config as String),
         root.resolve(pipeline.obs_schema as String), root.resolve('reports/qc_report.ipynb'),
-        root.resolve('reports/merge_qc_report.ipynb'), root.resolve(pipeline.models.aifi_l2 as String)
+        root.resolve('reports/merge_qc_report.py'), root.resolve(pipeline.models.aifi_l2 as String)
     ]
     requested.each { study_id ->
         def study = document.studies[study_id]
@@ -70,7 +70,7 @@ workflow {
     if (!params.skip_qc) {
         def study_qc_template = channel.value(file(root.resolve('reports/qc_report.ipynb'), checkIfExists: true))
         RENDER_STUDY_QC(HARMONIZE.out.harmonized, study_qc_template)
-        def merge_qc_template = channel.value(file(root.resolve('reports/merge_qc_report.ipynb'), checkIfExists: true))
+        def merge_qc_template = channel.value(file(root.resolve('reports/merge_qc_report.py'), checkIfExists: true))
         RENDER_MERGE_QC(
             merged_outputs.map { _name, expression, _report -> expression }.collect(),
             merged_outputs.map { _name, _expression, report -> report }.collect(),

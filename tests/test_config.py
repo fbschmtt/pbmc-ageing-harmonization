@@ -23,6 +23,16 @@ def test_configuration_is_complete():
     assert pipeline["schema_version"] == schema["schema_version"] == 1
 
 
+def test_cell_type_parent_mapping_matches_the_shipped_aifi_l2_model(tmp_path, monkeypatch):
+    monkeypatch.setenv("CELLTYPIST_FOLDER", str(tmp_path / "celltypist"))
+    from celltypist import models
+
+    pipeline, _, _ = load_configuration(ROOT, Path("config/pipeline.json"))
+    model = models.Model.load(str(ROOT / pipeline["models"]["aifi_l2"]))
+
+    assert set(pipeline["cell_type_analysis"]["l2_parent_l1"]) == set(model.cell_types)
+
+
 def test_all_json_files_are_valid():
     for path in (ROOT / "config").glob("*.json"):
         with path.open(encoding="utf-8") as handle:
@@ -45,6 +55,14 @@ def test_new_cellxgene_studies_use_gene_symbol_columns():
         assert document["studies"][study_id]["features"] == {
             "source_column": "feature_name", "duplicate_policy": "sum"
         }
+
+
+def test_perez_healthy_only_selection_is_explicitly_permitted_and_recorded():
+    _, document, _ = load_configuration(ROOT, Path("config/pipeline.json"))
+    perez = document["studies"]["perez22"]
+
+    assert perez["preparation"]["allow_cell_subset"] is True
+    assert "healthy cells only" in perez["provenance"]["selection"]
 
 
 def test_configuration_rejects_invalid_feature_policy():

@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from .logging_utils import configure_logging
@@ -35,7 +36,7 @@ def generate_merge_qc_report(
 
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    template = (template_path or root / "reports" / "merge_qc_report.ipynb").resolve()
+    template = (template_path or root / "reports" / "merge_qc_report.py").resolve()
     env = os.environ.copy()
     pseudo_input, pseudo_report = by_kind["pseudobulk_merge"]
     env.update({
@@ -47,11 +48,17 @@ def generate_merge_qc_report(
         single_input, single_report = by_kind["single_cell_merge"]
         env.update({"QC_SINGLE_CELL_H5AD": str(single_input), "QC_SINGLE_CELL_REPORT": str(single_report)})
     executed, html = output_dir / "executed.ipynb", output_dir / "report.html"
-    subprocess.run([
-        sys.executable, "-m", "jupyter", "nbconvert", "--execute", "--to", "notebook",
-        "--ExecutePreprocessor.timeout=-1", f"--output={executed.name}",
-        f"--output-dir={output_dir}", str(template),
-    ], cwd=root, env=env, check=True)
+    with tempfile.TemporaryDirectory(prefix="pbmc-merge-qc-notebook-") as temporary_dir:
+        materialized_template = Path(temporary_dir) / f"{template.stem}.ipynb"
+        subprocess.run([
+            sys.executable, "-m", "jupytext", "--to", "notebook",
+            "--output", str(materialized_template), str(template),
+        ], cwd=root, env=env, check=True)
+        subprocess.run([
+            sys.executable, "-m", "jupyter", "nbconvert", "--execute", "--to", "notebook",
+            "--ExecutePreprocessor.timeout=-1", f"--output={executed.name}",
+            f"--output-dir={output_dir}", str(materialized_template),
+        ], cwd=root, env=env, check=True)
     subprocess.run([
         sys.executable, "-m", "jupyter", "nbconvert", "--to", "html",
         f"--output={html.name}", f"--output-dir={output_dir}", str(executed),

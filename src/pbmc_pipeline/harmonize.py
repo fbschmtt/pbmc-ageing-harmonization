@@ -14,6 +14,7 @@ import pandas as pd
 
 from .config import config_digest
 from .preparation import normalize_metadata_frame, read_prepared_cells
+from .source import read_study_input
 from .validation import validate_counts, validate_output
 
 LOGGER = logging.getLogger(__name__)
@@ -45,8 +46,6 @@ def harmonize_study(
     output_path: Path | None = None,
     report_path: Path | None = None,
 ) -> dict:
-    import scanpy as sc
-
     total_started = time.perf_counter()
     if input_path is None:
         input_path = (root / pipeline["test_input_root"] / study["test_input"] if test
@@ -59,7 +58,7 @@ def harmonize_study(
     warnings: list[str] = []
     LOGGER.info("study=%s step=start input=%s validate_only=%s", study_id, input_path, validate_only)
     started = time.perf_counter()
-    adata = sc.read_h5ad(input_path)
+    adata = read_study_input(root, input_path, study)
     _log_step(study_id, "read_input", started, cells=adata.n_obs, genes=adata.n_vars)
     if study["counts_source"] == "raw":
         started = time.perf_counter()
@@ -283,6 +282,7 @@ def _annotate_celltypist(
     embedding_batch_key: str | None = None,
     embedding_genes: pd.Index | None = None,
     harmony_basis: str = "X_pca_harmony",
+    label_prefix: str = "",
 ) -> dict[str, object]:
     import scanpy as sc
 
@@ -299,7 +299,7 @@ def _annotate_celltypist(
         embedding_genes=embedding_genes,
         harmony_basis=harmony_basis,
     )
-    _predict_celltypist(adata, annotation, pipeline, root, study_id)
+    _predict_celltypist(adata, annotation, pipeline, root, study_id, label_prefix=label_prefix)
     adata.X = raw_counts
     return embedding
 
@@ -312,6 +312,7 @@ def _predict_celltypist(
     study_id: str,
     *,
     label_suffix: str = "",
+    label_prefix: str = "",
 ) -> None:
     """Run CellTypist majority voting using the graph currently on ``adata``."""
     import celltypist
@@ -325,7 +326,7 @@ def _predict_celltypist(
         labels = prediction.predicted_labels["majority_voting"]
         if not labels.index.equals(adata.obs_names):
             raise ValueError(f"CellTypist {level} prediction index differs from input cells")
-        adata.obs[f"aifi_{level}{label_suffix}_majority"] = labels
+        adata.obs[f"{label_prefix}aifi_{level}{label_suffix}_majority"] = labels
         _log_step(
             study_id, "annotate_celltypist", started, level=level,
             model=model_path.name, graph=adata.uns["neighbors"]["params"].get("use_rep"),
