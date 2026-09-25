@@ -100,7 +100,7 @@
       "path": "input_data/nehar_belaid26/GSE233321_all_PBMCs.h5ad",
       "url": "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE233nnn/GSE233321/suppl/GSE233321_all_PBMCs.h5ad",
       "source_page": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE233321",
-      "note": "Published downsampled H5AD inspected for labels. Its cells do not overlap the supplied RAW archive, so labels are not transferred."
+      "note": "Published label H5AD. Labels transfer only for exact sample-plus-barcode matches."
     },
     {
       "id": "nehar_belaid26_metadata",

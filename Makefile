@@ -67,8 +67,8 @@ validate-full: validate-study image-python ## Validate one full input in the Pyt
 	docker run --rm -v "$(CURDIR):/work:ro" -v "$(abspath $(VALIDATE_OUTDIR)):/result" -w /work -e PYTHONFAULTHANDLER=1 $(PYTHON_IMAGE) pbmc-harmonize --project-root /work --config config/pipeline.json --study $(STUDIES) --prepared-obs /result/$(STUDIES).cells.csv.gz --validate-only --report-output /result/$(STUDIES).json
 
 test-data: images ## Create isolated 200-cell H5AD and RDS smoke-test fixtures
-	docker run --rm -v "$(CURDIR):/work" -w /work -e PYTHONPATH=/work/src $(PYTHON_IMAGE) python scripts/create_test_data.py --cells $(TEST_CELLS) --seed $(TEST_SEED) --overwrite
-	docker run --rm -v "$(CURDIR):/work" -w /work $(R_IMAGE) Rscript scripts/create_test_rds.R --project-root /work --cells $(TEST_CELLS) --seed $(TEST_SEED)
+	docker run --rm -v "$(CURDIR):/work" -w /work -e PYTHONPATH=/work/src $(PYTHON_IMAGE) python scripts/create_test_data.py --cells $(TEST_CELLS) --seed $(TEST_SEED) --studies "$(STUDIES)" --overwrite
+	docker run --rm -v "$(CURDIR):/work" -w /work $(R_IMAGE) Rscript scripts/create_test_rds.R --project-root /work --cells $(TEST_CELLS) --seed $(TEST_SEED) --studies "$(STUDIES)"
 
 download-inputs: $(VENV_DEPS) ## Best-effort public input download; never runs implicitly
 	$(VENV_PYTHON) scripts/download_inputs.py --project-root "$(CURDIR)" --studies "$(STUDIES)"
@@ -95,8 +95,8 @@ run-test: $(CORE_CONTAINER_PREREQS) ## Fresh deterministic 200-cell integration 
 run-cell-types: $(PYTHON_CONTAINER_PREREQS) ## Split a merged H5AD and render one residual-variation report per AIFI L2 type
 	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(MERGED_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume
 
-run-cell-types-test: OUTDIR = output/cell-type-test
-run-cell-types-test: MERGED_INPUT = output/cell-type-test/merged/single_cell_merged.h5ad
+run-cell-types-test: OUTDIR = output/test
+run-cell-types-test: MERGED_INPUT = output/test/merged/single_cell_merged.h5ad
 run-cell-types-test: run-test $(PYTHON_CONTAINER_PREREQS) ## Fresh Docker downstream test using the core test merge
 	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(MERGED_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
 

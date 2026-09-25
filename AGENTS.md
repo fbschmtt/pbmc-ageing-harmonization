@@ -20,6 +20,11 @@
   runs the all-study Docker test workflow without `-resume`.
 - Use `make run` only for resumable production runs. Do not add `-resume`
   to `make verify` or `make run-test`.
+- After a large feature or architectural change, run the smallest end-to-end
+  Make target that exercises the affected container, Make, and Nextflow wiring.
+  Consider the full verification suite (`make verify`) for broad cross-cutting
+  or release-level changes, balancing its runtime and resource cost; report any
+  relevant verification that was not run.
 
 ## Working style
 

@@ -155,7 +155,7 @@ never defines a pseudobulk. Missing string metadata is written as
 | OneK1K | `donor_id` | `donor_id` | not provided | `pool_number` | No separate sampling-timepoint identifier is available. |
 | Terekhova23 | `Donor_id` | `Tube_id` | workbook visit | barcode-derived batch | Each tube maps to one donor and visit; a tube may span technical batches. |
 | Wang25 | `Sample ID` | `Sample ID` | not provided | not provided | No separate donor, timepoint, or technical-batch identifier has yet been recovered. |
-| Nehar-Belaid26 | Supplementary Data 1a `IDs` | `sample_id` | not provided | Supplementary Data 1a `runs_10x` | Reads the supplied GEO raw 10x tar directly (without extraction); Supplementary Data 1a supplies donor metadata. The label H5AD has no overlap with these raw cells. |
+| Nehar-Belaid26 | Supplementary Data 1a `IDs` | Supplementary Data 1a `Names` | not provided | Supplementary Data 1a `runs_10x` | Reads the supplied GEO raw 10x tar directly (without extraction); `JB` subject IDs parsed from member names join to Supplementary Data 1a `IDs`, which supplies sample IDs and donor metadata. Published labels transfer only on a unique sample ID plus normalized barcode-sequence match. |
 | Fachrul26 | `donor_id` | `sample_id` | not provided | `library_id` | Uses embedded H5AD metadata; `feature_name` supplies gene symbols. |
 | Perez22 | `donor_id` | `sample_uuid` | not provided | `library_uuid` | Uses embedded H5AD metadata; `feature_name` supplies gene symbols. `obs.disease` is normalized and only `normal`/healthy cells are retained; embedded SLE cells are excluded before harmonization. |
 
@@ -333,8 +333,9 @@ This is a downstream workflow: it requires an existing merged single-cell H5AD
 at `output/merged/single_cell_merged.h5ad` and does not run the merge automatically.
 Override that location with `MERGED_INPUT=/path/to/single_cell_merged.h5ad`.
 `make run-cell-types-test` first
-creates the small core test merge and then runs the downstream workflow into
-`output/cell-type-test/`.
+creates the small core test merge and then runs the downstream workflow under
+`output/test/`. All test targets publish only beneath `output/test/`; production
+outputs remain under `output/` unless `OUTDIR` is explicitly overridden.
 
 Each published type directory under `output/cell_type_analysis/` contains its
 derived `analysis.h5ad`, HTML report, executed notebook, and report tables. The

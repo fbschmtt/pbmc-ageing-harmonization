@@ -85,7 +85,7 @@
     },
     "nehar_belaid26": {
       "input": "input_data/nehar_belaid26/GSE233321_RAW.tar",
-      "test_input": "GSE233321_RAW.test.h5ad",
+      "test_input": "GSE233321_from_tar.h5ad",
       "counts_source": "X",
       "features": {
         "source_column": "gene_symbol",
@@ -110,7 +110,7 @@
       "provenance": {
         "article": "Nehar-Belaid et al., Nature Communications 2026, DOI: 10.1038/s41467-026-73729-2",
         "accession": "GSE233321",
-        "selection": "GEO raw tar contains only the in-house JB19043/HO17 and JB19044/HO18 libraries",
+        "selection": "All complete 10x Matrix Market triplets in the GEO RAW tar are retained; subject IDs are derived from archive member names and joined to Supplementary Data 1a IDs.",
         "sample_metadata": "Supplementary Data 1a",
         "technology": "Supplementary Data 1a Chemistry_10x; adapter preserves 10X3'v2/10X3'v3 per cell and retains runs_10x as batch_single_cell",
         "aligner": "Cell Ranger 3.0.2",
@@ -120,29 +120,10 @@
         "include_intronic": "inferred_no; not reported in the methods or supplement",
         "smoking_status": "not_reported",
         "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use",
-        "input": "GEO GSE233321 RAW tar; two downsampled 10x libraries read in memory from the archive",
-        "celltypes": "Published H5AD LS labels are joined only on unambiguous barcode identity; this H5AD has no overlap with the supplied RAW archive, so study_celltype is not_provided and CellTypist supplies harmonized labels",
+        "input": "GEO GSE233321 RAW tar; all complete 10x libraries are read in memory from the archive",
+        "celltypes": "Published H5AD LS labels are joined only on unique sample_id plus normalized barcode-sequence identity (the H5AD has reassigned numeric barcode suffixes); unmatched cells are not_provided and CellTypist supplies harmonized labels. All retained H5AD sample IDs occur in Supplementary Data 1a, while seven supplementary samples have no retained label-H5AD cells.",
         "feature_names": "10x feature gene symbols; 48 duplicated symbols are summed during harmonization"
-      },
-      "raw_samples": [
-        {
-          "archive_prefix": "GSM7423200_JB19043",
-          "sample_id": "HO17",
-          "subject_id": "JB19043"
-        },
-        {
-          "archive_prefix": "GSM7423201_JB19044",
-          "sample_id": "HO18",
-          "subject_id": "JB19044"
-        }
-      ],
-      "label_h5ad": "input_data/nehar_belaid26/GSE233321_all_PBMCs.h5ad",
-      "label_columns": [
-        "LS_L1",
-        "LS_L2",
-        "LS_L3",
-        "LS_L4"
-      ]
+      }
     },
     "onek1k": {
       "input": "input_data/onek1k/81d84489-bff9-4fb6-b0ee-78348126eada.h5ad",

@@ -24,7 +24,7 @@ Fachrul26 and Perez22 carry the metadata needed by their adapters in the H5AD
 symbols during harmonization.
 
 Nehar-Belaid26 uses Supplementary Data 1, sheet `1a`, as the authoritative
-metadata for the in-house scRNA-seq cohort. The configured input is the GEO RAW tar, whose compressed 10x Matrix Market members are read directly without extraction. The supplied two-library archive maps to HO17/JB19043 and HO18/JB19044. The H5AD is retained only as a label reference: it has no overlapping cell barcodes, so its labels are not transferred.
+metadata for the in-house scRNA-seq cohort. The configured input is the GEO RAW tar, whose compressed 10x Matrix Market members are read directly without extraction. All complete GEX 10x triplets are discovered from archive member names; their `JB` subject IDs join to Supplementary Data 1a `IDs`, and its `Names` values become `sample_id`. In the published label H5AD, `obs["sample_id"]` is the sample identity; its cell index is not used for that purpose. Labels transfer only when `sample_id` and the A/C/G/T barcode sequence uniquely agree. This intentionally ignores the numeric 10x suffix because the published H5AD reassigned it during concatenation. Among the retained H5AD Nehar-Belaid cells, all 88 sample IDs occur in the supplement; the supplement has seven additional samples (`HC17`, `HI3`, `HI26`, `HI27`, `HO13`, `HO21`, `HY19`) with no retained label-H5AD cells, so their labels remain `not_provided`.
 
 The Terekhova compact lookup is the canonical runtime input mapping each cell ID
 to its demultiplexed `Tube_id`. It was generated from the published

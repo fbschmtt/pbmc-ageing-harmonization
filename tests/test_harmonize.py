@@ -5,7 +5,7 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 
-from pbmc_pipeline.harmonize import harmonize_study
+from pbmc_pipeline.harmonize import _repair_features, harmonize_study
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -63,3 +63,21 @@ def test_harmonized_output_keeps_only_selected_counts_in_x(tmp_path):
     assert np.array_equal(result.X, counts)
     assert result.raw is None
     assert list(result.layers) == []
+
+
+def test_feature_repair_clears_stale_gene_id_index_name_before_write(tmp_path):
+    source = ad.AnnData(
+        X=np.array([[1, 2]], dtype=np.int32),
+        var=pd.DataFrame(
+            {"gene_id": ["ENSG1", "ENSG2"], "gene_symbol": ["A", "B"]},
+            index=pd.Index(["ENSG1", "ENSG2"], name="gene_id"),
+        ),
+    )
+
+    repaired, _ = _repair_features(
+        source, {"source_column": "gene_symbol", "duplicate_policy": "error"}
+    )
+
+    assert repaired.var_names.tolist() == ["A", "B"]
+    assert repaired.var_names.name is None
+    repaired.write_h5ad(tmp_path / "repaired.h5ad")

@@ -11,6 +11,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Create deterministic cell-downsampled test H5ADs")
     parser.add_argument("--cells", type=int, default=200)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--studies", default="all", help="Comma-separated study IDs or all")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -23,9 +24,17 @@ def main() -> None:
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
     pipeline, document, _ = load_configuration(root, Path("config/pipeline.json"))
+    requested = set(document["studies"]) if args.studies == "all" else {
+        value.strip() for value in args.studies.split(",") if value.strip()
+    }
+    unknown = requested - set(document["studies"])
+    if unknown:
+        raise ValueError(f"Unknown studies: {', '.join(sorted(unknown))}")
     destination = root / pipeline["test_input_root"]
     destination.mkdir(parents=True, exist_ok=True)
     for study_id, study in document["studies"].items():
+        if study_id not in requested:
+            continue
         if study.get("conversion"):
             print(f"SKIP {study_id}: provide its downsampled RDS test fixture separately")
             continue

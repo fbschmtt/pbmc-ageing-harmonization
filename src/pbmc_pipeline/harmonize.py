@@ -269,6 +269,10 @@ def _repair_features(adata, spec: dict):
     elif duplicate_count:
         raise ValueError(f"Found {duplicate_count} ambiguous feature names")
     adata.var_names = names.to_numpy()
+    # Feature names now differ from the source gene-ID index; retaining its
+    # ``gene_id`` name conflicts with the preserved ``var["gene_id"]`` column
+    # when AnnData serializes the object.
+    adata.var_names.name = None
     return adata, duplicate_count
 
 
