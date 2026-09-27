@@ -70,7 +70,17 @@ merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
 - `modules/cell_type_analysis.nf`: the split, analysis, and report-rendering processes.
 - `reports/cell_type_report.py`: Jupytext source for the per-type notebook. It
   plots the inherited global UMAP and renders visualizations from the completed
-  type-specific analysis artifact.
+  type-specific analysis artifact, plus optional DE summaries and plots when
+  the matching cell-type slug is present in the DE manifest.
+- `differential_expression.nf` and `modules/differential_expression.nf`: the
+  independent pseudobulk DE entry workflow and its single fitting process.
+- `src/pbmc_pipeline/differential_expression.py`: configured sample filtering,
+  per-study and merged PyDESeq2 fits, CSV output, and the result manifest.
+- `src/pbmc_pipeline/synthetic_de.py`: deterministic on-demand positive-fit
+  pseudobulk fixture generation; the generated H5AD is ignored output, not a
+  checked-in fixture.
+- `scripts/check_synthetic_de.py`: assertions used by `make verify` for model
+  completion, planted age-marker detection, and report output.
 - `src/pbmc_pipeline/reporting.py`: testable report data transformations.
 - `reports/merge_qc_report.py`: Jupytext source for the generated merge
   notebook. Report runners materialize these Python sources in a temporary
@@ -94,6 +104,8 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/cell_type_analysis/<aifi-l2-type>/analysis.h5ad` (optional derived embeddings and clusters)
 - `<outdir>/cell_type_analysis/<aifi-l2-type>/report.html` (optional downstream report)
 - `<outdir>/cell_type_analysis/cell_type_manifest.json` (optional downstream provenance and completeness contract)
+- `<outdir>/differential_expression/<cell-type-slug>/...csv` (per-study and merged age results)
+- `<outdir>/differential_expression/differential_expression.json` (DE status and cell-type result index)
 - `<outdir>/run_manifest.json`
 
 ### Harmonized expression contract
@@ -125,7 +137,7 @@ The saved graph and UMAP remain Harmony-based.
 
 ### Cell-type analysis contract
 
-`make run-cell-types` consumes the existing
+`make run-cell-type-analysis` consumes the existing
 `<outdir>/merged/single_cell_merged.h5ad`; it does not trigger the core merge.
 The internal split task retains raw counts, canonical metadata, and only the inherited
 global UMAP. It computes `n_cells_in_sample` and
@@ -157,6 +169,14 @@ that every report emitted by the split fan-out has its H5AD, HTML, executed
 notebook, and recognized completion status. `analysis_version` pins the
 configuration-defined downstream analysis contract.
 
+Cell-type splitting plus per-type analysis, analysis of an existing split, and
+report rendering are named Nextflow subworkflows. The DE workflow remains an
+independent producer; its `differential_expression.json` manifest indexes
+results by cell-type slug. A single report-render process receives either the
+matching result directory or a no-DE flag and publishes only beneath
+`cell_type_analysis/`. DE results publish only beneath
+`differential_expression/`.
+
 The configured `l2_parent_l1` mapping is an inferred taxonomy with recorded
 provenance, rather than the independent `aifi_l1_majority` predictions. It is
 applied only to retained per-study L2 labels; the experimental merged L2 calls
@@ -175,8 +195,11 @@ make workflow-lint
 make run-test STUDIES=wang25
 make run STUDIES=all OUTDIR=/path/to/output WORK_DIR=/path/to/work
 make run STUDIES=all MERGE_SINGLE_CELL=true
-make run-cell-types
-make run-cell-types-test
+make run-all
+make run-cell-type-analysis
+make run-cell-type-analysis-test
+make run-de-synthetic-test
+make verify TEST_STUDIES=wang25
 make split-cell-types-test
 make run-cell-type-test CELL_TYPE=cd14-monocyte
 make render-cell-type-test CELL_TYPE=cd14-monocyte
@@ -195,8 +218,13 @@ validates local Markdown links and documented Make targets without adding a
 documentation-tool dependency.
 `make verify` runs linting, unit tests, Nextflow lint, cached image builds, and
 non-resumed core and downstream Docker test workflows across all configured
-studies by default. Reserve it for cross-cutting or release-level validation;
-pass `STUDIES=<list>` for a narrower verification.
+studies by default. Its ordered integration sequence generates synthetic
+pseudobulk data for positive DE fits, checks the completed models and planted
+age markers, renders all cell-type reports from the fresh core test merge, and
+checks that the matching reports contain the warning, marker results, and
+rendered DE plots. Reserve it for cross-cutting or release-level validation;
+pass `STUDIES=<list>` for a narrower verification. The synthetic fixture has
+only two cell types, so other reports exercise the ordinary no-DE path.
 `make run` is the resumable production entry point; `make run-no-qc` omits only
 report rendering.
 `MERGE_SINGLE_CELL=true` enables the optional single-cell branch.

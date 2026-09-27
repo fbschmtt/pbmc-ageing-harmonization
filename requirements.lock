@@ -24,6 +24,7 @@ fast-array-utils==1.5
 fastjsonschema==2.22.2
 fonttools==4.65.0
 formulaic==1.2.2
+formulaic-contrasts==1.0.0
 google-crc32c==1.8.0
 h5py==3.16.0
 harmonypy==2.0.2
@@ -78,6 +79,7 @@ psutil==7.2.2
 ptyprocess==0.7.0
 pure_eval==0.2.4
 Pygments==2.21.0
+pydeseq2==0.5.4
 pynndescent==0.6.0
 pyparsing==3.3.2
 python-dateutil==2.9.0.post0

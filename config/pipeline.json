@@ -81,5 +81,17 @@
       "pDC": "DC"
     },
     "l2_parent_l1_provenance": "inferred manually from AIFI L2 label semantics and checked against the shipped AIFI L1/L2 reference-model label vocabularies; validate against the AIFI atlas paper and reference-model taxonomy before inferential use"
+  },
+  "differential_expression": {
+    "method": "pydeseq2",
+    "split_by": "aifi_l2_majority",
+    "per_study_design": "~ age + sex",
+    "merged_design": "~ study + age + sex",
+    "age_term": "age",
+    "alpha": 0.05,
+    "sample_inclusion": {
+      "minimum_age_years_inclusive": 20,
+      "minimum_cells_per_pseudobulk_inclusive": 10
+    }
   }
 }

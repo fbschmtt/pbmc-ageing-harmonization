@@ -35,10 +35,14 @@
   workflow or all reports. If no type is specified, use `cd14-monocyte`: it is
   well represented in the bundled multi-study fixture. If the split is absent
   but the test merge exists, run `make split-cell-types-test`; if the merge is
-  absent, use `make run-cell-types-test`. Reserve the full all-type test workflow
-  for changes that affect splitting, shared analysis, or publication.
-- `make verify` runs the fresh core test once, then renders all cell-type reports
-  from that merge. Do not reintroduce a core-workflow prerequisite on
+  absent, use `make run-cell-type-analysis-test`. Reserve the full all-type
+  test workflow for changes that affect splitting, shared analysis, or publication.
+- Use `make run-de-synthetic-test` for positive DE model coverage with production
+  inclusion filters. Then use `make run-cell-type-analysis-test-existing` to
+  check that synthetic DE artifacts reach the ordinary cell-type reports.
+- `make verify` runs the fresh core test once, generates and fits the synthetic
+  DE fixture, then renders all cell-type reports from that merge with matching
+  synthetic DE results. Do not reintroduce a core-workflow prerequisite on
   `test-cell-type-integration`.
 - When adding a required CLI argument or published output, find every invocation
   with `rg` (Make, Nextflow, tests, and docs) and run the smallest public Make

@@ -120,6 +120,49 @@ def validate_configuration(
         if not isinstance(provenance, str) or not provenance:
             raise ConfigurationError("cell_type_analysis.l2_parent_l1_provenance must be non-empty")
 
+    differential_expression = pipeline.get("differential_expression")
+    if differential_expression:
+        if differential_expression.get("method") != "pydeseq2":
+            raise ConfigurationError("differential_expression.method must be 'pydeseq2'")
+        if differential_expression.get("split_by") != "aifi_l2_majority":
+            raise ConfigurationError(
+                "differential_expression.split_by must be 'aifi_l2_majority'"
+            )
+        if differential_expression.get("per_study_design") != "~ age + sex":
+            raise ConfigurationError(
+                "differential_expression.per_study_design must be '~ age + sex'"
+            )
+        if differential_expression.get("merged_design") != "~ study + age + sex":
+            raise ConfigurationError(
+                "differential_expression.merged_design must be '~ study + age + sex'"
+            )
+        if differential_expression.get("age_term") != "age":
+            raise ConfigurationError("differential_expression.age_term must be 'age'")
+        alpha = differential_expression.get("alpha")
+        if not isinstance(alpha, (int, float)) or not 0 < alpha < 1:
+            raise ConfigurationError("differential_expression.alpha must be between 0 and 1")
+        inclusion = differential_expression.get("sample_inclusion", {})
+        minimum_age = inclusion.get("minimum_age_years_inclusive")
+        if (
+            not isinstance(minimum_age, (int, float))
+            or isinstance(minimum_age, bool)
+            or minimum_age < 0
+        ):
+            raise ConfigurationError(
+                "differential_expression.sample_inclusion.minimum_age_years_inclusive "
+                "must be a non-negative number"
+            )
+        minimum_cells = inclusion.get("minimum_cells_per_pseudobulk_inclusive")
+        if (
+            not isinstance(minimum_cells, int)
+            or isinstance(minimum_cells, bool)
+            or minimum_cells < 1
+        ):
+            raise ConfigurationError(
+                "differential_expression.sample_inclusion.minimum_cells_per_pseudobulk_inclusive "
+                "must be a positive integer"
+            )
+
     for study_id, study in studies["studies"].items():
         missing_keys = {"input", "test_input", "counts_source", "preparation", "annotation"} - study.keys()
         if missing_keys:

@@ -35,6 +35,12 @@ supplementary metadata, CellTypist models, expected paths, and checksums.
 - Per-cell-type analysis and report rendering are separate workflow stages.
   The focused CD14-monocyte test has produced the derived analysis H5AD, report
   tables, executed notebook, and self-contained HTML report.
+- A dedicated PyDESeq2 workflow is wired to fit age effects per study and in a
+  merged study-adjusted model from the pseudobulk merge.
+- Cell-type reports optionally include matching DE summaries and plots. The
+  broad `make verify` workflow generates a deterministic positive DE fixture,
+  checks its fits and planted age markers, and validates the normal report
+  output path.
 - Python image dependencies are pinned in `requirements.lock`; preparation also
   publishes retained source-`obs` metadata sidecars for adapter auditing.
 
@@ -77,6 +83,12 @@ optional downstream cell-type workflow
                                                         ├── report.html
                                                         └── executed.ipynb + tables
                               output/cell_type_analysis/cell_type_manifest.json
+
+optional pseudobulk differential-expression workflow
+  pseudobulk_merged.h5ad ──> split by per-study AIFI-L2 labels in Python
+                                ├──> per-study ~ age + sex fits
+                                └──> merged ~ study + age + sex fit
+                                      └──> gene-level CSVs + indexed JSON manifest
 ```
 
 All immutable local inputs belong under `input_data/`. Generated conversions,
@@ -304,7 +316,7 @@ when needed. `--skip_qc` stops after the H5AD merge artifacts are created (it
 skips only notebook/HTML QC). By default the workflow does not create a
 whole-dataset single-cell merge, because all studies must fit in RAM at once.
 
-For faster development, `make run-test` and `make run-cell-types-test` default
+For faster development, `make run-test` and `make run-cell-type-analysis-test` default
 to every configured study except `nehar_belaid26`, whose much larger fixture
 dominates test runtime. This is Make-level test selection only: it does not
 change the configured studies or production runs. Pass `STUDIES=all` (or an
@@ -404,16 +416,21 @@ samples. These are descriptive trends, not age-effect tests; large studies can
 dominate the weighted mean, and other weighting schemes may be explored later.
 
 ```bash
-make run-cell-types
+make run-cell-type-analysis
 ```
 
-This is a downstream workflow: it requires an existing merged single-cell H5AD
-at `output/merged/single_cell_merged.h5ad` and does not run the merge automatically.
-Override that location with `MERGED_INPUT=/path/to/single_cell_merged.h5ad`.
-`make run-cell-types-test` first
-creates the small core test merge and then runs the downstream workflow under
-`output/test/`. All test targets publish only beneath `output/test/`; production
-outputs remain under `output/` unless `OUTDIR` is explicitly overridden.
+This downstream workflow requires an existing merged single-cell H5AD at
+`<outdir>/merged/single_cell_merged.h5ad`. Override that location with
+`MERGED_INPUT=/path/to/single_cell_merged.h5ad`. The old
+`make run-cell-types` name remains as a compatibility alias.
+
+For a complete production run, `make run-all` executes the core workflow with
+single-cell merging enabled, then runs differential expression and cell-type
+analysis/reporting in order. The workflow is resumable. It uses the configured
+`STUDIES`, `OUTDIR`, and `WORK_DIR` values. `make run-cell-type-analysis-test`
+first creates the small core test merge and then runs the downstream workflow
+under `output/test/`; `make run-cell-types-test` remains as a compatibility
+alias. All test targets publish only beneath `output/test/`.
 
 The raw-count splits are published under `<outdir>/cell_type_splits/` so one
 report can be rerun without re-splitting the merged H5AD:
@@ -429,7 +446,7 @@ The targeted test command deliberately does not build a core test merge or all
 reports; it requires the corresponding split to already exist. It runs the
 analysis and rendering stages for that one type. Create only the reusable splits
 from an existing merge with `make split-cell-types-test`, or run the full
-`make run-cell-types-test` when a fresh merge is needed. A targeted rerun
+`make run-cell-type-analysis-test` when a fresh merge is needed. A targeted rerun
 refreshes that type directory but not `cell_type_manifest.json`; rerun the
 all-type workflow before treating the published report set as a new
 manifest-backed release. `cd14-monocyte` is the default targeted test type
@@ -483,8 +500,10 @@ make images
 make test-data
 make run-test STUDIES=wang25
 make run STUDIES=all
-make run-cell-types
-make run-cell-types-test
+make run-all
+make run-cell-type-analysis
+make run-cell-type-analysis-test
+make run-cell-type-analysis-test-existing
 make split-cell-types-test
 make run-cell-type-test CELL_TYPE=cd14-monocyte
 make render-cell-type-test CELL_TYPE=cd14-monocyte
@@ -536,6 +555,102 @@ to resolve a different environment.
 The content-derived image tag participates in Nextflow task identity, so a
 changed build context automatically receives separate resumable cache entries.
 
+## Pseudobulk differential expression
+
+The separate `differential_expression.nf` workflow consumes the merged
+sample-level pseudobulk H5AD. Its Python task splits the file by the retained
+per-study `aifi_l2_majority` label in memory, then runs PyDESeq2 for each type:
+one `~ age + sex` fit per study and one shared age-slope `~ study + age + sex`
+fit across studies. The age effect is reported as log2 fold change per year.
+The per-study fit uses genes available in that study; each merged fit uses the
+intersection of genes available across the studies contributing samples, so
+study-absent genes' synthetic outer-join zeros are excluded.
+
+Samples must be age 20 or older and have at least 10 cells in that
+sample × cell-type pseudobulk. Samples with missing/unknown sex metadata or
+zero counts over the fit's gene universe are also omitted. All sample
+exclusions and model fits that cannot estimate the configured covariates are
+recorded in the JSON manifest. CSV results and the manifest are published
+beneath `<outdir>/differential_expression/`.
+
+The DE manifest is the handoff contract for reports. Its
+`results_by_cell_type` index lists the per-study and merged result paths (or an
+empty result set) for each cell-type slug. The cell-type workflow reads this
+manifest and passes only the matching cell-type results to a single report
+renderer. The renderer writes all single-cell artifacts beneath
+`<outdir>/cell_type_analysis/`; it never publishes report files into the DE
+directory. Named Nextflow subworkflows group splitting plus analysis, analysis
+of an existing split, and report rendering while retaining the separate
+single-cell and pseudobulk entry points.
+
+The Nextflow `test` profile used by `make run-de-test` and
+`make run-de-test-existing` enables a test-only mode that bypasses only the
+minimum-cell cutoff. It keeps the adult-age, metadata, and model-estimability
+checks, so the small fixture can exercise PyDESeq2 without changing the
+production inclusion rules. Every test-mode run is labeled `test_only`; its
+root and per-celltype metadata, result CSVs, and rendered reports carry a clear
+warning that the results are for software validation and must not be treated
+as biological evidence. Use `make run-de` for the configured analysis rules.
+
+The small end-to-end core fixture is intentionally allowed to produce no DE
+fits: bypassing the cell cutoff does not create additional independent samples
+or fix a rank-deficient age/sex design. `make run-de-synthetic-test` creates a
+small deterministic pseudobulk H5AD directly (the fixture is generated, not
+checked in, and does not pass through single-cell pseudobulking). It contains
+three synthetic studies, eight independent samples per study and cell type,
+and at least 15 cells per pseudobulk. Its negative-binomial counts include
+known synthetic age and sex signals and study-specific gene-availability flags.
+This exercises the normal age and cell-count filters and produces positive
+per-study and merged fits without copying the large real pseudobulk file. Every
+result is labeled synthetic and test-only. Do not upsample the existing test
+samples to simulate replication: more cells within a sample do not add
+independent samples.
+
+To render the standard test reports with the synthetic DE results, run:
+
+```bash
+make run-cell-type-analysis-test
+make run-de-synthetic-test
+make run-cell-type-analysis-test-existing
+```
+
+For the complete ordered test, use `make verify`; it generates the synthetic
+fixture, checks the DE outputs, then renders the ordinary reports and checks
+that the synthetic DE panels appear. Pass `STUDIES=<list>` to narrow the core
+test inputs when needed.
+
+The generated input stays under `output/test/synthetic_de/`. DE outputs use the
+standard `output/test/differential_expression/` directory, and the ordinary
+cell-type report target renders them under
+`output/test/cell_type_analysis/`.
+
+Cell-type report generation checks for matching DE result files under that
+directory. When available, it appends per-study significant-gene recurrence
+within the genes tested in every per-study fit, total significant-gene counts,
+and a merged-model volcano plot at the bottom of the report. Each plot is
+omitted if its corresponding result files are absent.
+
+Run the workflow after creating the pseudobulk merge:
+
+```bash
+make run-de
+```
+
+By default this reads `output/merged/pseudobulk_merged.h5ad`. Override the
+input or output roots with `PSEUDOBULK_INPUT=/path/to/pseudobulk_merged.h5ad`
+or `OUTDIR=/path/to/output`. Override where cell-type report generation looks
+for DE results with `DE_RESULTS_DIR=/path/to/differential_expression`.
+`make run-de-test` creates and analyzes the test
+pseudobulk merge, while `make run-de-test-existing` requires that merge to
+already exist. Both use the explicitly labeled test mode described above.
+Use `make run-de-synthetic-test` to exercise successful PyDESeq2 fits with the
+production sample-inclusion filters enabled.
+
+This first pass models age and sex, plus study in the merged model. BMI and CMV
+are retained metadata fields but are not model covariates yet. Later work will
+probably add all available covariates, including BMI and CMV, to per-study
+plots.
+
 ## Make shortcuts
 
 The `Makefile` is intentionally a thin convenience layer rather than a second
@@ -551,14 +666,18 @@ make validate-full STUDIES=terekhova23
 make run-test STUDIES=wang25
 make run-no-qc STUDIES=wang25
 make run-test STUDIES=all MERGE_SINGLE_CELL=true
+make run-de
 ```
 
-Use `make verify` when a full, fresh Docker validation is warranted; it is not
-the routine command for an isolated edit.
+`make verify` includes the synthetic positive-DE check: it generates a small
+pseudobulk fixture, checks all expected fits and planted age markers, then
+renders the normal cell-type reports with matching DE results and checks their
+warnings, marker results, and plot output. Use it when a full, fresh Docker
+validation is warranted; it is not the routine command for an isolated edit.
 
 For a non-Docker Nextflow run, activate `.venv` so the installed
-`pbmc-harmonize`, `pbmc-qc`, `pbmc-merge`, `pbmc-merge-qc`, and `pbmc-manifest`
-commands are on `PATH`. The
+`pbmc-harmonize`, `pbmc-qc`, `pbmc-merge`, `pbmc-merge-qc`,
+`pbmc-differential-expression`, and `pbmc-manifest` commands are on `PATH`. The
 Docker profile does not require the Python environment on the host.
 
 See `input_data/README.md` for the expected input layout and `PLAN.md` for the

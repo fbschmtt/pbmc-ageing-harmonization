@@ -99,14 +99,20 @@ merge is available.
   artifacts are explicit workflow outputs.
 - [x] Pin the complete Python Docker runtime in `requirements.lock` and make it
   part of the Python image's content-derived tag.
+- [x] Add the separate pseudobulk PyDESeq2 workflow with per-study and merged
+  age models, configured sample filters, and a manifest indexed by cell type.
+- [x] Allow standard cell-type reports to include matching DE results through
+  that manifest, keeping DE files and single-cell reports in separate folders.
+- [x] Generate a deterministic positive-fit DE fixture on demand and include
+  fit, planted-marker, and report-artifact assertions in `make verify`.
 
 ## Local development state
 
 - The scientific dependencies are installed in the ignored `.venv`.
 - All configured studies pass the complete test-data workflow.
-- Ruff passes, 46 Python tests pass, and both `nextflow lint main.nf` and
-  `nextflow lint cell_type_analysis.nf` report no errors (verified with
-  Nextflow 26.04.6; minimum declared version is 25.04).
+- Ruff passes, 49 Python tests pass, and `nextflow lint` reports no errors for
+  the core, cell-type, and differential-expression workflows (Nextflow 26.04.6;
+  minimum declared version is 25.04).
 - Revision-tagged Python and R images build successfully.
 - Harmony integration uses the pinned `harmonypy==2.0.2` C++ backend through a
   direct adapter that validates the cells-by-PC output orientation and records
@@ -128,6 +134,8 @@ merge is available.
   application progress logs are captured in each Nextflow task's `.command.err`.
 - Test fixtures live under ignored `test_data/`; conversion intermediates live
   in Nextflow's ignored `work/` directory. `tests/` contains test code only.
+- A narrowed `make verify TEST_STUDIES=wang25` passed, including the generated
+  DE fixture, planted age-marker checks, and standard report artifact checks.
 
 ## Expected commands
 
@@ -137,6 +145,8 @@ make lint test-unit
 make workflow-lint
 make docs-check
 make run-test STUDIES=wang25
+make run-de-synthetic-test
+make verify TEST_STUDIES=wang25
 make run STUDIES=all MERGE_SINGLE_CELL=true
 ```
 
@@ -153,6 +163,44 @@ make run STUDIES=all MERGE_SINGLE_CELL=true
   CMV IgM field is retained as a qualitative serostatus and is negative for all
   61 workbook records.
 - Decide whether final study files should retain UMAP/PCA artifacts or only labels.
+
+## Primary analysis: age-associated pseudobulk DE
+
+The first implementation uses **PyDESeq2** on sample × cell-type raw-count
+pseudobulks. It runs one model per study (`~ age + sex`) and one shared-slope
+merged model (`~ study + age + sex`) for each AIFI L2 type. The age coefficient
+is a linear effect per year, tested with a Wald test. Python splits the merged
+pseudobulk H5AD by cell type in memory. Per-study fits use genes available in
+that study; the merged fit uses the intersection of genes available in all
+studies contributing samples to that fit, avoiding synthetic outer-join zeros.
+
+The DE workflow remains independent of per-celltype analysis; celltype reports
+consume matching DE result directories through the root manifest's explicit
+cell-type result index. The single-cell and pseudobulk workflows stay separate;
+named Nextflow subworkflows group split/analyse/render stages, and one report
+renderer accepts an optional matching DE result. Their output products remain
+separate under `cell_type_analysis/` and `differential_expression/`.
+
+The test profile bypasses only the minimum-cell cutoff so the small real-data
+fixture can exercise filtering and graceful skip behavior while retaining the
+adult and model-estimability safeguards. A separate deterministic synthetic
+pseudobulk fixture provides the positive-fit path: it generates independent
+sample rows with adequate age/sex variation and at least 15 cells per
+pseudobulk, then applies the ordinary production filters. Synthetic results
+carry a test-only warning throughout the CSVs, manifest, and reports. Do not
+upsample real test samples to imitate replication; more sampled cells in one
+sample do not increase the number of independent observations. Neither kind of
+test-mode result is biological evidence.
+
+The first pass includes samples aged at least 20 years with at least 10 cells
+in that sample × cell-type pseudobulk. It also requires complete sex metadata;
+all sample exclusions are recorded. Per-cell-type reports optionally show the
+per-study recurrence of FDR-significant genes and the merged volcano plot when
+those DE results are present. BMI and CMV are not model covariates yet. Later
+analysis will probably add all available covariates, including BMI and CMV,
+to per-study plots. Keep nonlinear age and an age-20 sensitivity analysis as
+future decisions. R DESeq2, edgeR quasi-likelihood, and limma-voom comparisons
+are outside this first implementation.
 
 ## Planned exploratory analysis: residual structure after pseudobulk DE
 

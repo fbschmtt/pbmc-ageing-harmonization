@@ -7,7 +7,7 @@ name = "pbmc-ageing-pipeline"
 version = "0.1.0"
 description = "Configuration-driven harmonization of PBMC ageing scRNA-seq studies"
 readme = {text = "Configuration-driven harmonization of PBMC ageing scRNA-seq studies.", content-type = "text/markdown"}
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
   "anndata>=0.10,<0.13",
   "celltypist>=1.6,<2",
@@ -15,6 +15,7 @@ dependencies = [
   "jsonschema>=4.23,<5",
   "leidenalg>=0.10,<1",
   "openpyxl>=3.1,<4",
+  "pydeseq2==0.5.4",
   "xlrd>=2.0,<3",
   "pandas>=2.0,<3",
   "scanpy>=1.10,<2",
@@ -34,6 +35,7 @@ pbmc-merge-qc = "pbmc_pipeline.merge_qc:main"
 pbmc-cell-type = "pbmc_pipeline.cell_type:main"
 pbmc-cell-type-report = "pbmc_pipeline.cell_type_report:main"
 pbmc-cell-type-manifest = "pbmc_pipeline.cell_type_manifest:main"
+pbmc-differential-expression = "pbmc_pipeline.differential_expression:main"
 pbmc-manifest = "pbmc_pipeline.manifest:main"
 
 [tool.setuptools.packages.find]

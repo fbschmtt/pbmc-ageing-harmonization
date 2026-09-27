@@ -20,8 +20,8 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 import seaborn as sns
-from statsmodels.nonparametric.smoothers_lowess import lowess
 from IPython.display import Markdown, display
+from statsmodels.nonparametric.smoothers_lowess import lowess
 
 sns.set_theme(style="whitegrid")
 from pbmc_pipeline.config import read_json
@@ -34,8 +34,19 @@ pipeline = read_json(Path(os.environ["CELL_TYPE_CONFIG"]))
 sc.settings.verbosity = 0
 report = read_json(output_dir / "report.json")
 adata = sc.read_h5ad(analysis_path)
+de_dir = os.environ.get("CELL_TYPE_DIFFERENTIAL_EXPRESSION_DIR")
+de_run_metadata = {}
+if de_dir:
+    de_metadata_path = Path(de_dir) / "run_metadata.json"
+    if de_metadata_path.is_file():
+        de_run_metadata = read_json(de_metadata_path)
 display(Markdown(f"## {primitive.obs['aifi_l2_majority'].iloc[0]}\n\n{primitive.n_obs:,} cells × {primitive.n_vars:,} genes"))
 display(pd.Series(report, name="value").to_frame())
+if de_run_metadata.get("analysis_mode") == "test_only":
+    display(Markdown(
+        "> **TEST OUTPUT — NOT FOR BIOLOGICAL INTERPRETATION.** "
+        + de_run_metadata["interpretation_warning"]
+    ))
 
 
 def plot_umap(adata, *, color, title=None, label_clusters=False):
@@ -585,13 +596,166 @@ if report["status"] == "complete":
     plt.tight_layout()
     plt.show()
 
-# %% [markdown]
-# ## TODO: pseudobulk age-associated genes on the local UMAP
-#
-# Consider loading the strongest age-associated genes from a matched,
-# sample-level pseudobulk differential-expression analysis and plotting their
-# expression on this type's local UMAP, alongside a compact table of its top
-# hits. This would help connect robust sample-level evidence back to local cell
-# states. We should first decide whether this belongs in this report or is out
-# of scope: it introduces a cross-workflow dependency and UMAP colouring can
-# easily be over-interpreted as validation of a pseudobulk association.
+# %%
+if de_dir:
+    de_dir = Path(de_dir)
+    per_study_files = sorted((de_dir / "per_study").glob("*.csv"))
+    merged_file = de_dir / "merged.csv"
+    merged_results = pd.read_csv(merged_file) if merged_file.is_file() else None
+    per_study_results = []
+    for result_path in per_study_files:
+        result = pd.read_csv(result_path)
+        per_study_results.append(result)
+    has_per_study = bool(per_study_results)
+    has_merged = merged_results is not None
+    if has_per_study or has_merged or de_run_metadata:
+        display(Markdown("## Pseudobulk differential expression"))
+        if de_run_metadata.get("analysis_mode") == "test_only":
+            display(Markdown(
+                "> **TEST OUTPUT — NOT FOR BIOLOGICAL INTERPRETATION.** "
+                + de_run_metadata["interpretation_warning"]
+            ))
+        if not has_per_study and not has_merged:
+            display(Markdown(
+                "_No estimable PyDESeq2 result files were produced for this cell type._"
+            ))
+    if has_per_study or has_merged:
+        de_alpha = pipeline["differential_expression"]["alpha"]
+        per_study_all = pd.concat(per_study_results, ignore_index=True) if has_per_study else pd.DataFrame()
+        if has_per_study:
+            gene_universes = [set(result["gene"].astype(str)) for result in per_study_results]
+            common_per_study_genes = set.intersection(*gene_universes)
+            per_study_significant = per_study_all.loc[
+                pd.to_numeric(per_study_all["padj"], errors="coerce") < de_alpha
+            ].copy()
+            per_study_hits = per_study_significant.loc[
+                per_study_significant["gene"].astype(str).isin(common_per_study_genes)
+            ].copy()
+            recurrence = (
+                per_study_hits.groupby("gene", as_index=False)
+                .agg(
+                    studies_associated=("study", "nunique"),
+                    studies=("study", lambda values: ", ".join(sorted(set(values)))),
+                    maximum_absolute_log2_fold_change=(
+                        "log2FoldChange", lambda values: pd.to_numeric(values, errors="coerce").abs().max()
+                    ),
+                )
+                .sort_values(
+                    ["studies_associated", "maximum_absolute_log2_fold_change", "gene"],
+                    ascending=[False, False, True],
+                )
+            )
+        else:
+            recurrence = pd.DataFrame()
+
+        summary_rows = []
+        if has_per_study:
+            significant_by_study = (
+                per_study_significant.groupby("study")["gene"].nunique().sort_index()
+            )
+            summary_rows.extend(
+                {"model": f"Per study: {study}", "FDR-significant age-associated genes": int(count)}
+                for study, count in significant_by_study.items()
+            )
+            summary_rows.append(
+                {
+                    "model": "Per-study union",
+                    "FDR-significant age-associated genes": int(
+                        per_study_significant["gene"].nunique()
+                    ),
+                }
+            )
+            summary_rows.append(
+                {
+                    "model": "Per-study common-universe union",
+                    "FDR-significant age-associated genes": int(per_study_hits["gene"].nunique()),
+                }
+            )
+        if has_merged:
+            merged_padj = pd.to_numeric(merged_results["padj"], errors="coerce")
+            summary_rows.append(
+                {
+                    "model": "Merged shared-slope fit",
+                    "FDR-significant age-associated genes": int((merged_padj < de_alpha).sum()),
+                }
+            )
+        display(Markdown(
+            f"PyDESeq2 age effects; FDR threshold **{de_alpha:g}**. "
+            "Gene counts use adjusted p-values in each fitted model. Study recurrence "
+            "is restricted to genes tested in every available per-study result."
+        ))
+        display(pd.DataFrame(summary_rows))
+
+        if has_per_study:
+            figure, axes = plt.subplots(1, 2, figsize=(13, 5))
+            if recurrence.empty:
+                empty_message = (
+                    "No genes were tested in every per-study model"
+                    if not common_per_study_genes
+                    else "No common-universe genes pass the FDR threshold"
+                )
+                axes[0].text(0.5, 0.5, empty_message,
+                             transform=axes[0].transAxes, ha="center", va="center")
+                axes[1].text(0.5, 0.5, empty_message,
+                             transform=axes[1].transAxes, ha="center", va="center")
+            else:
+                top_genes = recurrence.head(20).sort_values("studies_associated")
+                sns.barplot(
+                    data=top_genes, x="studies_associated", y="gene", color="#4c72b0",
+                    ax=axes[0],
+                )
+                axes[0].set_xlabel("Studies with FDR-significant age association")
+                axes[0].set_ylabel("")
+                axes[0].set_title("Genes recurring across studies (top 20)")
+                recurrence_counts = recurrence["studies_associated"].value_counts().sort_index()
+                sns.barplot(
+                    x=recurrence_counts.index.astype(str), y=recurrence_counts.values,
+                    color="#55a868", ax=axes[1],
+                )
+                axes[1].set_xlabel("Number of studies")
+                axes[1].set_ylabel("Unique associated genes")
+                axes[1].set_title(
+                    f"Common-universe union: {recurrence['gene'].nunique():,} genes"
+                )
+            figure.tight_layout()
+            plt.show()
+            if not recurrence.empty:
+                display(recurrence.head(20))
+
+        if has_merged:
+            volcano = merged_results.copy()
+            volcano["padj"] = pd.to_numeric(volcano["padj"], errors="coerce")
+            volcano["log2FoldChange"] = pd.to_numeric(
+                volcano["log2FoldChange"], errors="coerce"
+            )
+            volcano = volcano.dropna(subset=["padj", "log2FoldChange"]).copy()
+            if volcano.empty:
+                display(Markdown("_The merged model has no finite adjusted p-values to plot._"))
+            else:
+                volcano["minus_log10_padj"] = -np.log10(
+                    volcano["padj"].clip(lower=np.finfo(float).tiny)
+                )
+                volcano["association"] = np.where(
+                    volcano["padj"] < de_alpha, "FDR significant", "Not significant"
+                )
+                figure, axis = plt.subplots(figsize=(8, 6))
+                sns.scatterplot(
+                    data=volcano, x="log2FoldChange", y="minus_log10_padj",
+                    hue="association", hue_order=["Not significant", "FDR significant"],
+                    palette={"Not significant": "#b8b8b8", "FDR significant": "#c44e52"},
+                    s=16, alpha=0.7, linewidth=0, ax=axis,
+                )
+                axis.axhline(-np.log10(de_alpha), color="#555555", linestyle="--", linewidth=1)
+                axis.axvline(0, color="#555555", linewidth=0.8)
+                axis.set_xlabel("Age effect (log2 fold change per year)")
+                axis.set_ylabel("−log10(adjusted p-value)")
+                axis.set_title("Merged shared-slope age association")
+                labels = volcano.loc[volcano["padj"] < de_alpha].nsmallest(12, "padj")
+                for _, row in labels.iterrows():
+                    axis.annotate(
+                        str(row["gene"]),
+                        (row["log2FoldChange"], row["minus_log10_padj"]),
+                        xytext=(3, 3), textcoords="offset points", fontsize=7,
+                    )
+                figure.tight_layout()
+                plt.show()
