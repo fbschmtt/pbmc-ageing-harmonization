@@ -115,9 +115,12 @@ merge is available.
 - Cell-type reports now use signed marker contrasts, direct UMAP cluster labels,
   a compact study-coverage representation, PC1/2 and PC3/4 score plots coloured
   by study and shaped by technology, up to ten PCA loading panels, and a
-  cumulative variance-explained plot. Local PCA age correlations are limited to
-  the first ten PCs. A focused CD14-monocyte run completed both the separate
-  analysis and report-rendering tasks.
+  cumulative variance-explained plot. Sample-fraction views include within-study
+  linear trends with and without samples under age 20, plus separate combined
+  linear and LOWESS plots with unshaded per-study fits and sample-share-weighted
+  means. Local PCA age correlations are limited to the first ten PCs. A focused
+  CD14-monocyte run completed both the separate analysis and report-rendering
+  tasks.
 - A fresh `docker,test` Wang25 Nextflow run published its H5AD, JSON run report,
   executed QC notebook, and HTML report under an ignored temporary output
   directory.

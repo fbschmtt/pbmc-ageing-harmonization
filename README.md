@@ -389,9 +389,19 @@ Fraction plots exclude samples with fewer than 10 cells in the relevant
 denominator (`cell_type_analysis.min_fraction_denominator_cells`): retained
 PBMCs for the first view, the derived L1 parent for the second, and the split
 cell type for local-cluster fractions. This guard prevents unstable fractions
-from tiny sample compartments. Study-specific linear trends are shown as small
-multiples; pooled quadratic and LOWESS curves are additional, explicitly
-study-unadjusted descriptive views.
+from tiny sample compartments. The study facets show separate within-study
+linear fits using all samples and using samples aged at least 20 years; points
+are colored by study, with solid black and dashed gray fit lines. Their fit
+legend appears once.
+
+The combined fraction views are split into linear and LOWESS figures. Each
+shows unshaded per-study curves and a sample-share-weighted mean curve. A
+study's displayed share is its eligible sample count divided by the total
+eligible samples across studies. At each age, the mean is renormalized across
+studies whose observed age range includes that age. The LOWESS figure averages
+the individual study LOWESS curves rather than fitting one curve to all pooled
+samples. These are descriptive trends, not age-effect tests; large studies can
+dominate the weighted mean, and other weighting schemes may be explored later.
 
 ```bash
 make run-cell-types
