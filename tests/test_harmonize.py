@@ -5,7 +5,11 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 
-from pbmc_pipeline.harmonize import _repair_features, harmonize_study
+from pbmc_pipeline.harmonize import (
+    _harmony_integrate,
+    _repair_features,
+    harmonize_study,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -81,3 +85,22 @@ def test_feature_repair_clears_stale_gene_id_index_name_before_write(tmp_path):
     assert repaired.var_names.tolist() == ["A", "B"]
     assert repaired.var_names.name is None
     repaired.write_h5ad(tmp_path / "repaired.h5ad")
+
+
+def test_harmony2_adapter_keeps_the_scanpy_cells_by_pcs_orientation():
+    adata = ad.AnnData(
+        X=np.ones((40, 2)),
+        obs=pd.DataFrame({"study": ["one"] * 20 + ["two"] * 20}),
+    )
+    adata.obsm["X_pca"] = np.random.default_rng(42).normal(size=(40, 5)).astype(np.float32)
+
+    details = _harmony_integrate(
+        adata,
+        "study",
+        basis="X_pca",
+        adjusted_basis="X_pca_harmony",
+        random_state=42,
+    )
+
+    assert adata.obsm["X_pca_harmony"].shape == adata.obsm["X_pca"].shape
+    assert details["implementation"] == "harmonypy"

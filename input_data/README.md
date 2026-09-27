@@ -2,8 +2,11 @@
 
 This directory is the single entry point for immutable pipeline inputs. Data
 files are ignored by Git; expected relative paths are declared in
-`config/studies.json`. Each study owns a directory containing its expression
-object and every study-specific supplementary file.
+`config/studies.json` and recorded in `config/input_sources.json`. Their tracked
+Schemas and cross-reference checks require every configured expression input
+and preparation dependency to have a manifest entry. Each study owns a
+directory containing its expression object and every study-specific
+supplementary file.
 
 Downsampled smoke-test fixtures are kept separately under `test_data/`, so full
 and test inputs can coexist. Create or refresh them with `make test-data`.

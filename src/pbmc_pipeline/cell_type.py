@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,7 +13,7 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 from .config import read_json
-from .harmonize import _normalize_nullable_strings_for_h5ad
+from .harmonize import _harmony_integrate, _normalize_nullable_strings_for_h5ad
 
 
 def _slug(value: str) -> str:
@@ -129,7 +130,13 @@ def analyse_cell_type(input_path: Path, output_dir: Path, pipeline: dict) -> dic
     # Native PCA is retained for the exploratory PC--age correlations below.
     # A future analysis may reasonably prefer the Harmony-adjusted PCs there,
     # but that choice should be made deliberately rather than implicitly.
-    sc.pp.scale(working, max_value=10)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="zero-centering a sparse array/matrix densifies it.",
+            category=UserWarning,
+        )
+        sc.pp.scale(working, max_value=10)
     n_comps = min(pipeline["processing"]["neighbors"]["n_pcs"], working.n_obs - 1, working.n_vars - 1)
     if n_comps < 2:
         raise ValueError(f"{input_path}: too few cells or genes for PCA")
@@ -139,19 +146,16 @@ def analyse_cell_type(input_path: Path, output_dir: Path, pipeline: dict) -> dic
     neighbor_rep = "X_pca"
     integration_report = {"method": "harmony", "batch_key": batch_key, "adjusted_basis": integration["adjusted_basis"]}
     if working.obs[batch_key].nunique() > 1:
-        import scanpy.external as sce
-
         # Integrate studies for the local neighbour graph, UMAP, and Leiden
         # clustering. This should be revisited as the downstream analysis
         # matures: correction can also remove biological age-associated signal.
-        sce.pp.harmony_integrate(
+        integration_report.update(_harmony_integrate(
             working,
             batch_key,
             basis="X_pca",
             adjusted_basis=integration["adjusted_basis"],
             random_state=pipeline["processing"]["random_seed"],
-            verbose=False,
-        )
+        ))
         neighbor_rep = integration["adjusted_basis"]
     else:
         integration_report["status"] = "skipped_single_study"
@@ -163,7 +167,15 @@ def analyse_cell_type(input_path: Path, output_dir: Path, pipeline: dict) -> dic
         random_state=pipeline["processing"]["random_seed"],
     )
     sc.tl.umap(working, random_state=pipeline["processing"]["random_seed"])
-    sc.tl.leiden(working, key_added="cluster", resolution=spec["clustering"]["resolution"], random_state=pipeline["processing"]["random_seed"])
+    sc.tl.leiden(
+        working,
+        key_added="cluster",
+        resolution=spec["clustering"]["resolution"],
+        random_state=pipeline["processing"]["random_seed"],
+        flavor="igraph",
+        n_iterations=2,
+        directed=False,
+    )
     # Wilcoxon log fold-changes require non-negative log-normalized data.
     # ``working`` is scaled for PCA, so rank markers on the matching unscaled
     # normalized values to avoid undefined log-fold changes.
@@ -173,6 +185,14 @@ def analyse_cell_type(input_path: Path, output_dir: Path, pipeline: dict) -> dic
     markers = _marker_table(sc.get.rank_genes_groups_df(marker_input, group=None), marker_input.obs["cluster"])
     markers.to_csv(output_dir / "markers.tsv", sep="\t", index=False)
     adata.obsm["X_pca"] = working.obsm["X_pca"]
+    adata.uns["pca"] = working.uns["pca"].copy()
+    # Retain loadings in the full-gene coordinate system so reports can use
+    # Scanpy's pca_loadings plot. Excluded genes have zero loading because they
+    # were intentionally outside the local PCA input.
+    pca_loadings = np.zeros((adata.n_vars, n_comps), dtype=working.varm["PCs"].dtype)
+    pca_loadings[selected] = working.varm["PCs"]
+    adata.varm["PCs"] = pca_loadings
+    adata.var["used_for_local_pca"] = selected
     if neighbor_rep != "X_pca":
         adata.obsm[integration["adjusted_basis"]] = working.obsm[integration["adjusted_basis"]]
     adata.obsm["X_umap"] = working.obsm["X_umap"]
@@ -206,7 +226,7 @@ def _pc_age_correlations(adata) -> pd.DataFrame:
     age = pd.to_numeric(adata.obs.get("age"), errors="coerce")
     valid = age.notna().to_numpy()
     rows = []
-    for index in range(adata.obsm["X_pca"].shape[1]):
+    for index in range(min(10, adata.obsm["X_pca"].shape[1])):
         if valid.sum() < 3:
             correlation, pvalue = np.nan, np.nan
         else:
@@ -216,16 +236,23 @@ def _pc_age_correlations(adata) -> pd.DataFrame:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Split a merged PBMC H5AD into primitive cell-type artifacts")
+    parser = argparse.ArgumentParser(description="Split or analyse per-cell-type PBMC H5AD artifacts")
     subparsers = parser.add_subparsers(dest="command", required=True)
     split = subparsers.add_parser("split")
     split.add_argument("--input", type=Path, required=True)
     split.add_argument("--output-dir", type=Path, required=True)
     split.add_argument("--manifest", type=Path, required=True)
     split.add_argument("--config", type=Path, required=True)
+    analyse = subparsers.add_parser("analyse")
+    analyse.add_argument("--input", type=Path, required=True)
+    analyse.add_argument("--output-dir", type=Path, required=True)
+    analyse.add_argument("--config", type=Path, required=True)
     args = parser.parse_args()
     pipeline = read_json(args.config)
-    split_cell_types(args.input, args.output_dir, args.manifest, pipeline)
+    if args.command == "split":
+        split_cell_types(args.input, args.output_dir, args.manifest, pipeline)
+    else:
+        analyse_cell_type(args.input, args.output_dir, pipeline)
 
 
 if __name__ == "__main__":

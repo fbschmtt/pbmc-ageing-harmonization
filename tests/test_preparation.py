@@ -28,11 +28,12 @@ def test_onek_adapter_materializes_exactly_one_canonical_row_per_cell(tmp_path):
     expression = tmp_path / "source.h5ad"
     source.write_h5ad(expression)
     output = tmp_path / "onek.cells.csv.gz"
+    source_obs_output = tmp_path / "onek.source_obs.csv.gz"
     report = tmp_path / "onek.prepare.json"
 
     summary = prepare_study(
         ROOT, "onek1k", {"preparation": {"adapter": "onek1k"}}, _schema(),
-        expression, output, report,
+        expression, output, report, source_obs_output_path=source_obs_output,
     )
     prepared = read_prepared_cells(output, source.obs_names, _schema())
 
@@ -41,6 +42,10 @@ def test_onek_adapter_materializes_exactly_one_canonical_row_per_cell(tmp_path):
     assert prepared["sample"].tolist() == ["d1", "d2"]
     assert prepared["batch_single_cell"].tolist() == ["onek1k_1", "onek1k_2"]
     assert prepared["study"].tolist() == ["onek1k", "onek1k"]
+    source_obs = pd.read_csv(source_obs_output, index_col="cell_id")
+    assert source_obs.index.tolist() == ["cell_a", "cell_b"]
+    assert source_obs["cell_type"].tolist() == ["T cell", "B cell"]
+    assert summary["source_obs_output"] == str(source_obs_output)
 
 
 def test_fachrul_adapter_uses_embedded_metadata():

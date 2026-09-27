@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from jsonschema import Draft202012Validator
+
 
 class ConfigurationError(ValueError):
     """Raised when pipeline configuration is incomplete or inconsistent."""
@@ -24,8 +26,28 @@ def load_configuration(root: Path, pipeline_path: Path) -> tuple[dict, dict, dic
     if not isinstance(input_sources_path, str) or not input_sources_path:
         raise ConfigurationError("pipeline.input_sources must be a non-empty path")
     input_sources = read_json(root / input_sources_path)
+    validate_document(
+        studies,
+        read_json(root / "config/studies.schema.json"),
+        document_name=str(pipeline["studies_config"]),
+    )
+    validate_document(
+        input_sources,
+        read_json(root / "config/input_sources.schema.json"),
+        document_name=str(input_sources_path),
+    )
     validate_configuration(pipeline, studies, schema, input_sources)
     return pipeline, studies, schema
+
+
+def validate_document(document: dict, schema: dict, *, document_name: str) -> None:
+    """Raise one actionable error when a configuration document violates its schema."""
+    errors = sorted(Draft202012Validator(schema).iter_errors(document), key=lambda error: list(error.path))
+    if not errors:
+        return
+    error = errors[0]
+    location = ".".join(str(part) for part in error.absolute_path) or "<root>"
+    raise ConfigurationError(f"{document_name}:{location}: {error.message}")
 
 
 def validate_configuration(
@@ -67,6 +89,13 @@ def validate_configuration(
             raise ConfigurationError("cell_type_analysis.split_by must be 'aifi_l2_majority'")
         if not isinstance(cell_type_analysis.get("min_cells"), int) or cell_type_analysis["min_cells"] < 3:
             raise ConfigurationError("cell_type_analysis.min_cells must be an integer of at least 3")
+        if (
+            not isinstance(cell_type_analysis.get("min_fraction_denominator_cells"), int)
+            or cell_type_analysis["min_fraction_denominator_cells"] < 1
+        ):
+            raise ConfigurationError(
+                "cell_type_analysis.min_fraction_denominator_cells must be a positive integer"
+            )
         clustering = cell_type_analysis.get("clustering", {})
         if clustering.get("method") != "leiden":
             raise ConfigurationError("cell_type_analysis.clustering.method must be 'leiden'")

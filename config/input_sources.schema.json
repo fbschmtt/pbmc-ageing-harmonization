@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PBMC ageing input-source registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "artifacts"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "studies", "path"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "studies": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}
+          },
+          "path": {"type": "string", "minLength": 1},
+          "url": {"type": "string", "format": "uri"},
+          "manual_url": {"type": "string", "minLength": 1},
+          "source_page": {"type": "string", "format": "uri"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "note": {"type": "string", "minLength": 1}
+        },
+        "anyOf": [{"required": ["url"]}, {"required": ["manual_url"]}]
+      }
+    }
+  }
+}

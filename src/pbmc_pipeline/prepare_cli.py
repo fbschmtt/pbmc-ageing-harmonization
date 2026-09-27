@@ -16,6 +16,10 @@ def main() -> None:
     parser.add_argument("--input", type=Path, help="Expression H5AD to index")
     parser.add_argument("--test", action="store_true", help="Use the configured test H5AD")
     parser.add_argument("--output", type=Path, required=True, help="Prepared .csv.gz table")
+    parser.add_argument(
+        "--source-obs-output", type=Path, required=True,
+        help="Retained source obs sidecar (.csv.gz) for adapter auditability",
+    )
     parser.add_argument("--report-output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -32,5 +36,6 @@ def main() -> None:
     report = prepare_study(
         root, args.study, document["studies"][args.study], schema,
         input_path, args.output, args.report_output,
+        source_obs_output_path=args.source_obs_output,
     )
     print(json.dumps({"study": args.study, "cells": report["n_cells"], "status": "prepared"}))

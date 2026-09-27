@@ -28,16 +28,19 @@ outer-gene merged pseudobulk ─┐
 optional: all harmonized cells → shared-gene embedding → AIFI-L2 ─┘
 
 separate downstream workflow:
-merged single-cell H5AD → one split task → one notebook/report task per AIFI-L2 type
+merged single-cell H5AD → one split task → one analysis task per AIFI-L2 type
+                                      → one notebook/HTML render task per analysed type
 ```
 
 ## Components
 
 - `config/studies.json`: input locations, feature repair, preparation-adapter
-  identity, auxiliary input dependencies, and annotation settings.
+  identity, auxiliary input dependencies, and annotation settings. Its
+  structure is enforced by `config/studies.schema.json` before workflow work
+  is scheduled.
 - `config/input_sources.json`: the manifest of expression and supplementary
-  inputs. Configuration loading verifies that every configured expression input
-  and adapter dependency appears in this manifest.
+  inputs. Its schema and the semantic configuration checks verify that every
+  configured expression input and adapter dependency appears in this manifest.
 - `src/pbmc_pipeline/studies/`: explicit per-study adapters. They own unusual
   source joins and reshaping, then write one identity-checked metadata row for
   every retained input cell. An adapter may retain a strict cohort subset only
@@ -47,6 +50,9 @@ merged single-cell H5AD → one split task → one notebook/report task per AIFI
   prepared-cell artifact. The canonical schema includes `disease_status`;
   current non-Perez cohorts are declared healthy, while Perez22 normalizes its
   embedded disease field and excludes SLE cells before this artifact is written.
+  It also writes a retained-source-`obs` CSV sidecar keyed by `cell_id`, keeping
+  source metadata available for adapter audit without expanding the harmonized
+  H5AD contract.
 - `config/pipeline.json`: common processing parameters, model locations, and
 merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
   the legacy notebook; study-qualified row IDs prevent cross-study collisions.
@@ -60,10 +66,11 @@ merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
   modules; `main.nf` is limited to study selection and DAG composition.
 - `cell_type_analysis.nf`: a separate downstream entry workflow. It receives an
   existing merged single-cell H5AD, loads it once to split by retained per-study AIFI-L2,
-  then fans out one executed report notebook per type.
-- `modules/cell_type_analysis.nf`: the split and per-type report processes.
+  then fans out separate per-type analysis and lightweight report-rendering tasks.
+- `modules/cell_type_analysis.nf`: the split, analysis, and report-rendering processes.
 - `reports/cell_type_report.py`: Jupytext source for the per-type notebook. It
-  plots the inherited global UMAP once, then creates the type-specific analysis.
+  plots the inherited global UMAP and renders visualizations from the completed
+  type-specific analysis artifact.
 - `src/pbmc_pipeline/reporting.py`: testable report data transformations.
 - `reports/merge_qc_report.py`: Jupytext source for the generated merge
   notebook. Report runners materialize these Python sources in a temporary
@@ -77,6 +84,7 @@ For `--outdir <outdir>`, the normal outputs are:
 
 - `<outdir>/harmonized/<study>.h5ad`
 - `<outdir>/prepared/<study>.cells.csv.gz`
+- `<outdir>/prepared/<study>.source_obs.csv.gz` (retained source metadata audit sidecar)
 - `<outdir>/prepared/<study>.prepare.json`
 - `<outdir>/pseudobulk/<study>.pseudobulk.h5ad`
 - `<outdir>/merged/pseudobulk_merged.h5ad`
@@ -122,14 +130,21 @@ The saved graph and UMAP remain Harmony-based.
 The internal split task retains raw counts, canonical metadata, and only the inherited
 global UMAP. It computes `n_cells_in_sample` and
 `n_cells_in_sample_l1_parent` before splitting, so the reports need no auxiliary
-inputs for their sample-level composition plots. The report notebook computes the
-type-specific PCA/neighbours/UMAP/clusters in its first non-rendering cell. It
-excludes configured V(D)J genes from local feature selection, uses study-Harmony
-PCs for the local graph/UMAP/clusters, retains native PCs for the descriptive
-PC--age table, and plots the inherited per-study L3 labels without creating a
-merged L3 prediction. Its published directory contains the resulting H5AD,
-report, executed notebook, and tables; the primitive split object remains only
-in Nextflow's cache.
+inputs for their sample-level composition plots. The analysis task, rather than
+the report notebook, computes the type-specific PCA/neighbours/UMAP/clusters.
+It excludes configured V(D)J genes from local feature selection, uses
+study-Harmony PCs for the local graph/UMAP/clusters, retains native PCs for the
+descriptive PC diagnostics, and plots the inherited per-study L3 labels without
+creating a merged L3 prediction. The renderer consumes the primitive split and
+the completed analysis artifact, producing the executed notebook and HTML
+without recomputing the analysis. Both the primitive split and the derived
+analysis H5AD are published alongside the report tables.
+
+The report visualizes native local PC1-versus-PC2 and PC3-versus-PC4 scores
+with the standard study palette as colour and `technology` as marker shape.
+These are descriptive, uncorrected-PC diagnostics; the Harmony-corrected PC
+representation remains reserved for the local neighbour graph, UMAP, and
+Leiden clustering.
 
 The 50-cell local-analysis threshold does not guarantee enough cells per study
 for reliable Harmony correction. The fixed 50-neighbour graph is also dense for
@@ -155,15 +170,33 @@ Use Make targets rather than raw Nextflow or Docker commands:
 ```bash
 make help
 make images
-make run-test STUDIES=all
-make verify
+make lint test-unit
+make workflow-lint
+make run-test STUDIES=wang25
 make run STUDIES=all OUTDIR=/path/to/output WORK_DIR=/path/to/work
 make run STUDIES=all MERGE_SINGLE_CELL=true
 make run-cell-types
 make run-cell-types-test
+make split-cell-types-test
+make run-cell-type-test CELL_TYPE=cd14-monocyte
+make render-cell-type-test CELL_TYPE=cd14-monocyte
+make docs-check
 ```
 
+Use the smallest check that covers the edit: `make lint test-unit` for
+Python-only work, `make workflow-lint` for workflow/configuration edits, and a
+focused `make run-test STUDIES=<study>` when core execution wiring needs
+testing. For a single cell-type report, reuse an existing split with
+`make run-cell-type-test CELL_TYPE=<slug>` rather than rebuilding the core
+workflow. When only the report template changes, use
+`make render-cell-type-test CELL_TYPE=<slug>` to consume the published split
+and analysis artifact without recomputing local analysis. `make docs-check`
+validates local Markdown links and documented Make targets without adding a
+documentation-tool dependency.
 `make verify` runs linting, unit tests, Nextflow lint, cached image builds, and
-non-resumed core and downstream all-study Docker test workflows. `make run` is the resumable
-production entry point; `make run-no-qc` omits only report rendering.
+non-resumed core and downstream Docker test workflows across all configured
+studies by default. Reserve it for cross-cutting or release-level validation;
+pass `STUDIES=<list>` for a narrower verification.
+`make run` is the resumable production entry point; `make run-no-qc` omits only
+report rendering.
 `MERGE_SINGLE_CELL=true` enables the optional single-cell branch.

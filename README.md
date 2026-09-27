@@ -5,9 +5,11 @@ one harmonized H5AD per study, per-study sample × AIFI-L2 pseudobulks, and a
 cross-study pseudobulk matrix. An explicitly enabled pathway also
 creates a jointly embedded, freshly AIFI-L2-annotated single-cell merge.
 
-Study-specific inputs and adapter dependencies live in `config/studies.json`.
-Explicit adapters under `src/pbmc_pipeline/studies/` own source-specific joins
-and reshaping. The output metadata contract lives in
+Study-specific inputs and adapter dependencies live in `config/studies.json`;
+the tracked `config/studies.schema.json` and
+`config/input_sources.schema.json` enforce their document structures before a
+workflow starts. Explicit adapters under `src/pbmc_pipeline/studies/` own
+source-specific joins and reshaping. The output metadata contract lives in
 `config/harmonized_obs_schema.json`. See `PLAN.md` for scope, progress, and
 unresolved scientific questions. See `IMPLEMENTATION.md` for the high-level
 architecture.
@@ -30,6 +32,11 @@ supplementary metadata, CellTypist models, expected paths, and checksums.
 - Pseudobulk aggregation and merge are part of the production Nextflow graph;
   merge QC reports include study/sample contribution, AIFI-L2 overlap, depth,
   gene coverage, and (when applicable) merged UMAP checks.
+- Per-cell-type analysis and report rendering are separate workflow stages.
+  The focused CD14-monocyte test has produced the derived analysis H5AD, report
+  tables, executed notebook, and self-contained HTML report.
+- Python image dependencies are pinned in `requirements.lock`; preparation also
+  publishes retained source-`obs` metadata sidecars for adapter auditing.
 
 ## Data flow
 
@@ -39,9 +46,10 @@ input_data/ expression objects + metadata
                 ├── Seurat RDS ──> converted H5AD
                 │
                 ▼
- prepare one canonical metadata row per cell
+ prepare canonical metadata plus a retained source-obs audit sidecar
                 │
-                └──> output/prepared/<study>.cells.csv.gz
+                ├──> output/prepared/<study>.cells.csv.gz
+                └──> output/prepared/<study>.source_obs.csv.gz
                 ▼
       harmonize one configured study
                 │
@@ -61,10 +69,13 @@ input_data/ expression objects + metadata
 
 optional downstream cell-type workflow
   single_cell_merged.h5ad ──> split once by per-study AIFI-L2
-                                └──> output/cell_type_analysis/<type>/
-                                      ├── analysis.h5ad
-                                      ├── report.html
-                                      └── executed.ipynb + tables
+                                ├──> output/cell_type_splits/<type>.h5ad
+                                └──> analyse each type
+                                      └──> analysis.h5ad + tables
+                                            └──> render notebook/HTML
+                                                  └──> output/cell_type_analysis/<type>/
+                                                        ├── report.html
+                                                        └── executed.ipynb + tables
                               output/cell_type_analysis/cell_type_manifest.json
 ```
 
@@ -73,6 +84,10 @@ reports, and harmonized outputs are kept outside it and ignored by Git.
 
 Per-cell preparation artifacts are generated under `<outdir>/prepared/`; they
 are reproducible from the expression object plus the declared study dependencies.
+Each study also publishes `<study>.source_obs.csv.gz`, the retained source
+observation metadata keyed by `cell_id`. This sidecar is an audit trail for
+adapter mappings; the harmonized H5AD continues to expose only the canonical
+metadata schema.
 
 ### Annotation semantics
 
@@ -90,7 +105,8 @@ Start with [templates/study_adapter.py](templates/study_adapter.py) and
 cell and sample metadata, then add the configuration object under `studies` in
 `config/studies.json`. Add every expression object and supplementary metadata
 file to `config/input_sources.json` and `INPUT_FILES.md`; paths must be relative
-to the repository root. Declare supplementary files in
+to the repository root. Both registry documents must satisfy their tracked JSON
+Schemas as well as the pipeline's cross-reference checks. Declare supplementary files in
 `preparation.dependencies` so Nextflow stages them and configuration changes are
 tracked in task identity.
 
@@ -165,10 +181,18 @@ fixtures are generated under the ignored `test_data/` directory.
 
 ## Local Python setup
 
+`requirements.lock` pins the Python 3.12 runtime and report environment used
+by the Docker image. `requirements.dev.lock` extends that exact base with the
+test and lint tools used in the local `.venv`. Docker installs the runtime lock
+before the project package, so source-only image rebuilds reuse the dependency
+layer. Update the locks only as a deliberate dependency change and review their
+complete diffs alongside `pyproject.toml`. Use `make install` for the local
+development environment.
+
 ```bash
 python -m venv .venv
 . .venv/bin/activate
-python -m pip install -e '.[dev,qc]'
+make install
 ```
 
 ## Run harmonization
@@ -183,8 +207,10 @@ python scripts/create_test_data.py --cells 200
 
 Each study is prepared before harmonization. `pbmc-prepare` materializes a
 gzip-compressed CSV with exactly one canonical metadata row for every expression
-cell; `pbmc-harmonize --prepared-obs <study>.cells.csv.gz` then attaches that
-artifact to raw counts. This is the debugging boundary used by Nextflow.
+cell and a retained-source-`obs` sidecar with the same `cell_id` index.
+`pbmc-harmonize --prepared-obs <study>.cells.csv.gz` then attaches only the
+canonical artifact to raw counts. This is the debugging boundary used by
+Nextflow; the sidecar exists solely to audit source-to-canonical mappings.
 
 ## Download public inputs
 
@@ -277,6 +303,40 @@ from the production inputs once with `make test-data`; this never modifies
 when needed. `--skip_qc` stops after the H5AD merge artifacts are created (it
 skips only notebook/HTML QC). By default the workflow does not create a
 whole-dataset single-cell merge, because all studies must fit in RAM at once.
+
+For faster development, `make run-test` and `make run-cell-types-test` default
+to every configured study except `nehar_belaid26`, whose much larger fixture
+dominates test runtime. This is Make-level test selection only: it does not
+change the configured studies or production runs. Pass `STUDIES=all` (or an
+explicit comma-separated list) to override it. `make verify` deliberately
+restores all configured studies by default because it is now an occasional
+broad check; pass an explicit `STUDIES` list if a narrower verification is
+needed.
+
+Choose the smallest check that covers a change during development. Python-only
+changes normally need `make lint test-unit`; Nextflow or configuration changes
+need `make workflow-lint` plus a focused `make run-test STUDIES=<study>` when
+the wiring needs execution. For one cell-type report, reuse its split with
+`make run-cell-type-test CELL_TYPE=cd14-monocyte`; when only the report
+template changed, reuse its published analysis with
+`make render-cell-type-test CELL_TYPE=cd14-monocyte`. Run `make verify` for
+broad cross-cutting or release-level validation, rather than after every
+focused change. Run `make docs-check` after changing tracked Markdown files or
+Make target names.
+
+Harmony integration uses the pinned Harmony2 C++ backend. It uses the backend's
+native thread policy; the legacy OpenMP/OpenBLAS thread overrides that crashed
+on large production runs have been removed.
+
+Cell-type reports show signed marker log-fold changes (higher and lower genes),
+direct cluster labels on the local UMAP, compact study metadata coverage, and
+up to ten local PCA loading panels. They include native local PC1-versus-PC2
+and PC3-versus-PC4 scatterplots, with the standard study palette as colour and
+the reported `technology` field as marker shape. They also include cumulative
+variance explained and descriptive age correlations for the first ten PCs.
+PCA loading figures use explicit subplot spacing because Scanpy's composite
+figure is not compatible with Matplotlib `tight_layout()`.
+
 The deterministic `make run-test` workflow enables that branch by default;
 production runs remain opt-in.
 Enable that separate path on a runner sized for the selected inputs:
@@ -296,11 +356,11 @@ the generated template notebooks are intentionally not tracked. The published
 
 The optional downstream workflow loads a completed merged single-cell H5AD once
 and splits it by the retained per-study `aifi_l2_majority` call. Experimental
-merged labels are never used for this split. Each per-type notebook
-loads its primitive raw-count, gzip-compressed H5AD, first plots the cells at
-their former global UMAP coordinates, then creates a type-specific
-PCA/UMAP/Leiden embedding, marker tables, PC--age correlation tables, and its
-executed HTML report. It also plots the retained per-study `aifi_l3_majority`
+merged labels are never used for this split. For each type, `ANALYSE_CELL_TYPE`
+creates the type-specific PCA/UMAP/Leiden embedding, marker tables, PC--age
+correlation table, and `analysis.h5ad`. `RENDER_CELL_TYPE_REPORT` then loads
+that analysis artifact plus the primitive raw-count H5AD to create the executed
+notebook and HTML. It also plots the retained per-study `aifi_l3_majority`
 labels; no merged L3 prediction is created. Global neighbours are deliberately
 not copied into the split artifacts.
 
@@ -325,6 +385,14 @@ Both plots are descriptive composition views, not age-effect tests. The split
 code retains a comment for future per-sample compartment counts, allowing more
 hierarchy views without extra source files.
 
+Fraction plots exclude samples with fewer than 10 cells in the relevant
+denominator (`cell_type_analysis.min_fraction_denominator_cells`): retained
+PBMCs for the first view, the derived L1 parent for the second, and the split
+cell type for local-cluster fractions. This guard prevents unstable fractions
+from tiny sample compartments. Study-specific linear trends are shown as small
+multiples; pooled quadratic and LOWESS curves are additional, explicitly
+study-unadjusted descriptive views.
+
 ```bash
 make run-cell-types
 ```
@@ -337,10 +405,42 @@ creates the small core test merge and then runs the downstream workflow under
 `output/test/`. All test targets publish only beneath `output/test/`; production
 outputs remain under `output/` unless `OUTDIR` is explicitly overridden.
 
+The raw-count splits are published under `<outdir>/cell_type_splits/` so one
+report can be rerun without re-splitting the merged H5AD:
+
+```bash
+make run-cell-type CELL_TYPE=cd14-monocyte
+make run-cell-type-test CELL_TYPE=cd14-monocyte
+make render-cell-type CELL_TYPE=cd14-monocyte
+make render-cell-type-test CELL_TYPE=cd14-monocyte
+```
+
+The targeted test command deliberately does not build a core test merge or all
+reports; it requires the corresponding split to already exist. It runs the
+analysis and rendering stages for that one type. Create only the reusable splits
+from an existing merge with `make split-cell-types-test`, or run the full
+`make run-cell-types-test` when a fresh merge is needed. A targeted rerun
+refreshes that type directory but not `cell_type_manifest.json`; rerun the
+all-type workflow before treating the published report set as a new
+manifest-backed release. `cd14-monocyte` is the default targeted test type
+because it is well represented in the bundled multi-study fixture.
+
+For a template-only report edit, `make render-cell-type[-test]` instead
+requires the published split plus `analysis.h5ad` in that type's analysis
+directory. It schedules only rendering and overwrites the executed notebook and
+HTML without rerunning local PCA, Harmony, UMAP, clustering, or marker ranking.
+
+Use `make check-cell-type-test-prerequisites CELL_TYPE=<slug>` before a
+targeted test rerun when unsure whether its input exists. It prints the minimal
+next command: create splits from the existing test merge, or create a fresh core
+test merge and reports when that merge is absent. The production equivalent is
+`make check-cell-type-prerequisites CELL_TYPE=<slug>`.
+
 Each published type directory under `output/cell_type_analysis/` contains its
-derived `analysis.h5ad`, HTML report, executed notebook, and report tables. The
-primitive split objects are cached internally by Nextflow rather than published.
-`cell_type_manifest.json` records the exact merged input, configuration,
+derived `analysis.h5ad`, HTML report, executed notebook, and report tables.
+Reusable primitive raw-count splits are published separately under
+`output/cell_type_splits/`; they are inputs for targeted report reruns, not
+standalone final analyses. `cell_type_manifest.json` records the exact merged input, configuration,
 reference-model checksums, analysis specification, and the status/checksums of
 every expected type report. Its creation fails if a report directory is missing
 its required deliverables, so a successful workflow cannot silently publish a
@@ -361,9 +461,10 @@ particular, the configured 50-neighbour graph is relatively dense for rare
 types. Inspect study-coloured UMAPs and per-study cluster composition before
 interpreting local clusters as biological states.
 
-Nextflow's `work/` directory is the cache for
-converted and other intermediate artifacts; only
-final deliverables are copied to `output/`.
+Nextflow's `work/` directory is the cache for task intermediates. Published
+outputs are copied to `output/`, including final reports, reusable cell-type
+split H5ADs, and the derived per-type analysis H5ADs; do not use paths inside
+`work/` as report inputs.
 
 Build and use both containers with:
 
@@ -374,12 +475,20 @@ make run-test STUDIES=wang25
 make run STUDIES=all
 make run-cell-types
 make run-cell-types-test
+make split-cell-types-test
+make run-cell-type-test CELL_TYPE=cd14-monocyte
+make render-cell-type-test CELL_TYPE=cd14-monocyte
+make docs-check
 ```
 
-`make run`, `make run-test`, and `make run-no-qc` build the two content-tagged
-local images automatically whenever `NF_PROFILE` contains `docker`; use `make
-images` to build them without launching a workflow. `IMAGE_TAG` defaults to
-the current image build context and may be set explicitly for a release build.
+`make run`, `make run-test`, and `make run-no-qc` build the required
+content-tagged local images automatically whenever `NF_PROFILE` contains
+`docker`; use `make images` to build both without launching a workflow. Python
+and R images are tagged independently from the runtime files copied by their
+respective Dockerfiles. Report templates and models are staged as task inputs,
+so report-only or documentation-only edits do not retag the Python image or
+invalidate unrelated workflow cache entries. Set `IMAGE_TAG` explicitly to use
+one common release tag for both images.
 They also select the matching Nextflow resource profile (`core` or
 `cell_type_analysis`), keeping process selectors scoped to the workflow that
 defines them. For direct Nextflow invocation, include the corresponding profile.
@@ -407,10 +516,12 @@ through Nextflow. The Python image and a complete Wang25 test workflow have
 been verified. The R conversion image is defined separately because it is much
 larger and only needed for RDS inputs.
 
-To preserve the Python dependency-install layer during source-only changes, the
-Python image temporarily installs a minimal placeholder package, then copies
-the real `src/` tree and reinstalls it with `--no-deps`. The cleanup before the
-second install is required to prevent stale setuptools build artifacts.
+The Python image installs the reviewed `requirements.lock` before application
+source, then installs the project with `--no-deps --no-build-isolation`.
+It contains package code and workflow configuration; task-specific report
+templates and models are staged by Nextflow. This preserves the pinned
+dependency layer during source-only changes without allowing the project install
+to resolve a different environment.
 
 The content-derived image tag participates in Nextflow task identity, so a
 changed build context automatically receives separate resumable cache entries.
@@ -423,14 +534,17 @@ workflow. Run `make help` to see its targets. Common commands include:
 ```bash
 make lint
 make workflow-lint
+make docs-check
 make test
-make verify
 make validate-test STUDIES=wang25
 make validate-full STUDIES=terekhova23
 make run-test STUDIES=wang25
 make run-no-qc STUDIES=wang25
 make run-test STUDIES=all MERGE_SINGLE_CELL=true
 ```
+
+Use `make verify` when a full, fresh Docker validation is warranted; it is not
+the routine command for an isolated edit.
 
 For a non-Docker Nextflow run, activate `.venv` so the installed
 `pbmc-harmonize`, `pbmc-qc`, `pbmc-merge`, `pbmc-merge-qc`, and `pbmc-manifest`

@@ -9,6 +9,7 @@ from pbmc_pipeline.config import (
     load_configuration,
     read_json,
     validate_configuration,
+    validate_document,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -85,3 +86,16 @@ def test_configuration_rejects_unmanifested_expression_input():
 
     with pytest.raises(ConfigurationError, match="fachrul26"):
         validate_configuration(pipeline, studies, schema, broken)
+
+
+def test_study_registry_schema_rejects_an_undeclared_field():
+    _, studies, _ = load_configuration(ROOT, Path("config/pipeline.json"))
+    broken = copy.deepcopy(studies)
+    broken["studies"]["aifi"]["unexpected"] = True
+
+    with pytest.raises(ConfigurationError, match="Additional properties"):
+        validate_document(
+            broken,
+            read_json(ROOT / "config/studies.schema.json"),
+            document_name="config/studies.json",
+        )

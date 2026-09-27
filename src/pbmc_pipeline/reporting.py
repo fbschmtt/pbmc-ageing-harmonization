@@ -46,8 +46,12 @@ def pseudobulk_celltype_fractions(obs: pd.DataFrame) -> pd.DataFrame:
     return composition.div(composition.sum(axis=1), axis=0)
 
 
-def sample_cell_type_fractions(adata, *, denominator: str, fraction_name: str) -> pd.DataFrame:
-    """Summarize one split type per sample against a declared cell-count denominator."""
+def sample_cell_type_fractions(
+    adata, *, denominator: str, fraction_name: str, min_denominator_cells: int = 1
+) -> pd.DataFrame:
+    """Summarize eligible samples for one split type against a cell-count denominator."""
+    if not isinstance(min_denominator_cells, int) or min_denominator_cells < 1:
+        raise ValueError("min_denominator_cells must be a positive integer")
     required = {"study", "sample", "age", denominator}
     missing = required - set(adata.obs)
     if missing:
@@ -65,11 +69,15 @@ def sample_cell_type_fractions(adata, *, denominator: str, fraction_name: str) -
     result[fraction_name] = result["n_cells_type"] / result["denominator_cells"]
     if (result[fraction_name] > 1).any():
         raise ValueError("Cell-type count exceeds its configured denominator")
-    return result.drop(columns=["n_unique_ages", "n_unique_denominators"])
+    return result.loc[
+        result["denominator_cells"] >= min_denominator_cells,
+    ].drop(columns=["n_unique_ages", "n_unique_denominators"])
 
 
-def sample_cluster_fractions(adata) -> pd.DataFrame:
-    """Return each local cluster's fraction of its cell type for every sample."""
+def sample_cluster_fractions(adata, *, min_denominator_cells: int = 1) -> pd.DataFrame:
+    """Return eligible samples' local-cluster fractions within their split cell type."""
+    if not isinstance(min_denominator_cells, int) or min_denominator_cells < 1:
+        raise ValueError("min_denominator_cells must be a positive integer")
     required = {"study", "sample", "age", "cluster"}
     missing = required - set(adata.obs)
     if missing:
@@ -89,4 +97,4 @@ def sample_cluster_fractions(adata) -> pd.DataFrame:
     )
     result = counts.merge(totals, on=sample_keys, validate="many_to_one")
     result["fraction_within_cell_type"] = result["n_cells_cluster"] / result["n_cells_type"]
-    return result
+    return result.loc[result["n_cells_type"] >= min_denominator_cells]

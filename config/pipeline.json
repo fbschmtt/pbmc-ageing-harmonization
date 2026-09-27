@@ -15,7 +15,7 @@
   "processing": {
     "target_sum": 10000,
     "hvg": {"min_mean": 0.0125, "max_mean": 3.0, "min_disp": 0.5},
-    "exclude_vdj_regex": "^(TRA[VDJ]|TRB[VDJ]|IGL[VDJ]|IGH[VDJ])",
+    "exclude_vdj_regex": "^(?:TRA[VDJ]|TRB[VDJ]|IGL[VDJ]|IGH[VDJ])",
     "neighbors": {"n_neighbors": 50, "n_pcs": 30},
     "random_seed": 42,
     "output_compression": "gzip"
@@ -36,9 +36,10 @@
     }
   },
   "cell_type_analysis": {
-    "analysis_version": 1,
+    "analysis_version": 3,
     "split_by": "aifi_l2_majority",
     "min_cells": 50,
+    "min_fraction_denominator_cells": 10,
     "clustering": {
       "method": "leiden",
       "resolution": 0.5

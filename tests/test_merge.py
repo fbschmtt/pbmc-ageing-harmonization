@@ -66,8 +66,6 @@ def test_pseudobulk_is_sample_and_l2_specific_then_outer_merged(tmp_path):
 
 
 def test_single_cell_embedding_uses_shared_genes_then_harmony_neighbors(monkeypatch):
-    import scanpy.external as sce
-
     adata = ad.AnnData(
         X=sparse.csr_matrix(np.random.default_rng(42).poisson(2, size=(80, 20))),
         obs=pd.DataFrame(
@@ -79,11 +77,12 @@ def test_single_cell_embedding_uses_shared_genes_then_harmony_neighbors(monkeypa
     shared_genes = pd.Index([f"gene_{index}" for index in range(12)])
     seen: dict[str, object] = {}
 
-    def fake_harmony(embedding, key, *, basis, adjusted_basis, **kwargs):
+    def fake_harmony(embedding, key, *, basis, adjusted_basis, random_state):
         seen.update({"genes": embedding.var_names.copy(), "key": key, "basis": basis})
         embedding.obsm[adjusted_basis] = embedding.obsm[basis].copy()
+        return {"method": "harmony", "implementation": "harmonypy"}
 
-    monkeypatch.setattr(sce.pp, "harmony_integrate", fake_harmony)
+    monkeypatch.setattr("pbmc_pipeline.harmonize._harmony_integrate", fake_harmony)
     details = _compute_embedding(
         adata,
         {

@@ -1,0 +1,7 @@
+# Python 3.12 development lock. The runtime/report environment is pinned in
+# requirements.lock; these pins add only local test and lint tooling.
+-r requirements.lock
+iniconfig==2.3.0
+pluggy==1.6.0
+pytest==9.1.1
+ruff==0.16.8

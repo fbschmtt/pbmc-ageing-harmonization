@@ -42,10 +42,11 @@ merge is available.
   inputs, so smoke tests exercise the RDS conversion process.
 - Nextflow's `work/` is the canonical cache for workflow intermediates. The
   existing `cache/converted` remains useful only for direct/manual conversion.
-- The Python image uses a temporary minimal package to cache dependency
-  installation before copying `src/`; the final install removes its setuptools
-  build artifacts and uses `--no-deps`. This is safe while packaging metadata
-  remains static in `pyproject.toml`.
+- The Python image installs the reviewed runtime/report `requirements.lock`
+  before copying `src/`, then installs the package with
+  `--no-deps --no-build-isolation`. `requirements.dev.lock` extends the same
+  base with test and lint tools for the local `.venv`; source-only image rebuilds
+  reuse the runtime dependency layer.
 - SciPy is pinned to 1.16.0 to prevent a segmentation fault in `sc.tl.umap`.
 
 ## Milestones
@@ -90,14 +91,33 @@ merge is available.
   existing converted/test representation.
 - [x] Remove the redundant Docker project mount in `nextflow.config`; Nextflow
   now stages the project inputs without a duplicate Docker mount.
+- [x] Enforce the study and input-source registry structures with tracked JSON
+  Schemas, in addition to semantic cross-reference checks.
+- [x] Publish retained source-`obs` CSV sidecars keyed by `cell_id` for every
+  prepared study, while keeping the harmonized H5AD metadata contract compact.
+- [x] Split per-cell-type computation from notebook/HTML rendering so analysis
+  artifacts are explicit workflow outputs.
+- [x] Pin the complete Python Docker runtime in `requirements.lock` and make it
+  part of the Python image's content-derived tag.
 
 ## Local development state
 
 - The scientific dependencies are installed in the ignored `.venv`.
 - All configured studies pass the complete test-data workflow.
-- Ruff passes, 23 Python tests pass, and `nextflow lint main.nf` reports no
-  errors (verified with Nextflow 26.04.6; minimum declared version is 25.04).
+- Ruff passes, 46 Python tests pass, and both `nextflow lint main.nf` and
+  `nextflow lint cell_type_analysis.nf` report no errors (verified with
+  Nextflow 26.04.6; minimum declared version is 25.04).
 - Revision-tagged Python and R images build successfully.
+- Harmony integration uses the pinned `harmonypy==2.0.2` C++ backend through a
+  direct adapter that validates the cells-by-PC output orientation and records
+  the implementation version in embedding provenance. Legacy OpenMP/OpenBLAS
+  overrides were removed after the backend upgrade.
+- Cell-type reports now use signed marker contrasts, direct UMAP cluster labels,
+  a compact study-coverage representation, PC1/2 and PC3/4 score plots coloured
+  by study and shaped by technology, up to ten PCA loading panels, and a
+  cumulative variance-explained plot. Local PCA age correlations are limited to
+  the first ten PCs. A focused CD14-monocyte run completed both the separate
+  analysis and report-rendering tasks.
 - A fresh `docker,test` Wang25 Nextflow run published its H5AD, JSON run report,
   executed QC notebook, and HTML report under an ignored temporary output
   directory.
@@ -110,7 +130,9 @@ merge is available.
 
 ```bash
 make install
-make verify
+make lint test-unit
+make workflow-lint
+make docs-check
 make run-test STUDIES=wang25
 make run STUDIES=all MERGE_SINGLE_CELL=true
 ```
@@ -129,6 +151,37 @@ make run STUDIES=all MERGE_SINGLE_CELL=true
   61 workbook records.
 - Decide whether final study files should retain UMAP/PCA artifacts or only labels.
 
+## Planned exploratory analysis: residual structure after pseudobulk DE
+
+After fitting the pseudobulk differential-expression model separately for each
+cell type, retain a sample × gene residual matrix: expression not explained by
+the prespecified model covariates. This is an exploratory companion to the
+primary age-DE analysis, not a replacement for it.
+
+- Prespecify the model formula and explicitly decide whether age is removed
+  before generating residuals. If age is in the model, residual structure for
+  age-DE genes represents heterogeneity beyond their fitted age trend; if it is
+  not, age-associated covariance remains in the residual matrix. Keep these
+  interpretations separate.
+- Inspect sample--sample correlation, clustering, and low-dimensional views of
+  the residual matrix to identify reproducible participant-level patterns or
+  possible ageing phenotypes. Test whether apparent groups replicate across
+  studies and are not driven by library size, batch, study, or sparse samples.
+- For primary age-DE genes, inspect gene--gene residual correlations and
+  cluster/module structure. This can reveal co-varying programmes whose mixed
+  contributions may underlie a single marginal age-DE list, and lets each
+  participant be described by a combination of module scores rather than a
+  single ageing label.
+- Report module scores and their associations with available metadata only as
+  exploratory results, with appropriate multiple-testing and cross-study
+  validation. Do not infer discrete ageing subtypes from an unreplicated
+  clustering.
+- As a targeted biological example, score a documented CMV-response signature
+  in memory T-cell pseudobulks and test whether it aligns with residual modules
+  or participant clusters. Establish the signature source, direction, and
+  scoring method in advance; distinguish measured CMV status from inferred
+  signature activity.
+
 ## Architecture risks to address before full-data runs
 
 1. **Memory remains the principal full-data constraint.** Harmonization reads a
@@ -139,18 +192,19 @@ make run STUDIES=all MERGE_SINGLE_CELL=true
    preparation adapter and declares only its auxiliary inputs. Each adapter
    materializes exactly one canonical metadata row per retained expression cell
    before the generic harmonizer runs. A subset is permitted only when the
-   adapter explicitly declares a cohort-exclusion rule in configuration. Add
-   formal JSON Schema or Pydantic validation as the configuration grows.
-3. **Preserve source metadata for auditability.** The harmonized output currently
-   replaces `obs` with the standardized schema. Consider a namespaced source
-   metadata sidecar (preferably Parquet) so mappings can be debugged later.
-4. **Freeze remaining dependencies for production.** SciPy is pinned to 1.16.0
-   because later resolution caused a `sc.tl.umap` segmentation fault; the R base
-   image is digest-pinned and key Python packages in that bridge are pinned.
-   The main Python environment otherwise still uses version ranges. Add a lock
-   file and use immutable/versioned image references in real runs. Rebuilding
-   mutable image tags is avoided by revision-derived local tags. A lock file
-   remains desirable for the main Python image.
+   adapter explicitly declares a cohort-exclusion rule in configuration. The
+   registry documents are now Schema-validated; keep their versioning and the
+   semantic cross-reference checks in step as new study features are added.
+3. **Preserve source metadata for auditability.** Preparation now publishes a
+   retained `<study>.source_obs.csv.gz` sidecar keyed by `cell_id`, containing
+   source `obs` rows only for retained cells. It is an audit artifact rather
+   than part of the harmonized metadata contract. Revisit a columnar format if
+   sidecars become too large for convenient inspection.
+4. **Freeze remaining dependencies for production.** The complete Python image
+   environment is now pinned in `requirements.lock`, and the lock participates
+   in the content-derived image tag. The remaining reproducibility work is to
+   publish immutable image digests for production releases and, where practical,
+   record package artifact hashes in addition to version pins.
 5. **Improve provenance.** `run_manifest.json` now records the Git revision,
    image references, configuration checksum, selected studies, and hashes of
    merged artifacts. Add input/model checksums and random seeds next.
@@ -169,5 +223,5 @@ make run STUDIES=all MERGE_SINGLE_CELL=true
 2. Measure peak memory on the largest testable/full study before full execution.
 3. Run and validate the real Wang25 conversion through Nextflow.
 4. Resolve the scientific `needs_review` entries and add complete input hashes.
-5. Lock the Python environment and record immutable image tags/digests.
+5. Record immutable Python and R image digests for production releases.
 6. Run each full study independently before launching all studies together.

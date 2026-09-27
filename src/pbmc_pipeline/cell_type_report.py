@@ -9,8 +9,10 @@ import tempfile
 from pathlib import Path
 
 
-def generate_cell_type_report(*, input_path: Path, output_dir: Path, template_path: Path, config_path: Path) -> Path:
-    for path in (input_path, template_path, config_path):
+def generate_cell_type_report(
+    *, input_path: Path, analysis_path: Path, output_dir: Path, template_path: Path, config_path: Path
+) -> Path:
+    for path in (input_path, analysis_path, template_path, config_path):
         if not path.exists():
             raise FileNotFoundError(path)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -18,6 +20,7 @@ def generate_cell_type_report(*, input_path: Path, output_dir: Path, template_pa
     env = os.environ.copy()
     env.update({
         "CELL_TYPE_H5AD": str(input_path.resolve()),
+        "CELL_TYPE_ANALYSIS_H5AD": str(analysis_path.resolve()),
         "CELL_TYPE_OUTPUT_DIR": str(output_dir.resolve()),
         "CELL_TYPE_CONFIG": str(config_path.resolve()),
     })
@@ -32,11 +35,18 @@ def generate_cell_type_report(*, input_path: Path, output_dir: Path, template_pa
 def main() -> None:
     parser = argparse.ArgumentParser(description="Render a cell-type analysis HTML report")
     parser.add_argument("--input", type=Path, required=True)
+    parser.add_argument("--analysis", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--template", type=Path, required=True)
     parser.add_argument("--config", type=Path, required=True)
     args = parser.parse_args()
-    print(generate_cell_type_report(input_path=args.input, output_dir=args.output_dir, template_path=args.template, config_path=args.config))
+    print(generate_cell_type_report(
+        input_path=args.input,
+        analysis_path=args.analysis,
+        output_dir=args.output_dir,
+        template_path=args.template,
+        config_path=args.config,
+    ))
 
 
 if __name__ == "__main__":

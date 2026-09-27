@@ -69,3 +69,25 @@ def test_sample_cluster_fractions_are_within_the_split_cell_type():
     fractions = sample_cluster_fractions(adata)
 
     assert fractions.set_index("cluster")["fraction_within_cell_type"].to_dict() == {"0": 2 / 3, "1": 1 / 3}
+
+
+def test_fraction_helpers_exclude_samples_below_the_minimum_denominator():
+    adata = type("Adata", (), {})()
+    adata.obs = pd.DataFrame({
+        "study": ["one"] * 11,
+        "sample": ["included"] * 10 + ["excluded"],
+        "age": [30.0] * 10 + [60.0],
+        "n_cells_in_sample": [10] * 10 + [1],
+        "cluster": ["0"] * 10 + ["1"],
+    })
+
+    cell_type = sample_cell_type_fractions(
+        adata,
+        denominator="n_cells_in_sample",
+        fraction_name="fraction",
+        min_denominator_cells=10,
+    )
+    clusters = sample_cluster_fractions(adata, min_denominator_cells=10)
+
+    assert cell_type["sample"].tolist() == ["included"]
+    assert clusters["sample"].unique().tolist() == ["included"]

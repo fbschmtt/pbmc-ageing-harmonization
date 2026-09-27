@@ -86,7 +86,6 @@ def test_marker_table_adds_group_when_scanpy_returns_a_single_cluster_without_on
 
 def test_analysis_uses_harmony_for_local_neighbors_but_keeps_native_pcs(tmp_path, monkeypatch):
     import scanpy as sc
-    import scanpy.external as sce
 
     rng = np.random.default_rng(42)
     counts = rng.poisson(2, size=(30, 12)) + 1
@@ -111,9 +110,10 @@ def test_analysis_uses_harmony_for_local_neighbors_but_keeps_native_pcs(tmp_path
     primitive.write_h5ad(input_path)
     observed = {}
 
-    def fake_harmony(adata, key, *, basis, adjusted_basis, **kwargs):
+    def fake_harmony(adata, key, *, basis, adjusted_basis, random_state):
         observed.update({"key": key, "basis": basis, "adjusted_basis": adjusted_basis})
         adata.obsm[adjusted_basis] = adata.obsm[basis].copy()
+        return {"method": "harmony", "implementation": "harmonypy"}
 
     def all_genes_are_hvg(adata, **kwargs):
         adata.var["highly_variable"] = True
@@ -121,7 +121,7 @@ def test_analysis_uses_harmony_for_local_neighbors_but_keeps_native_pcs(tmp_path
     def two_clusters(adata, *, key_added, **kwargs):
         adata.obs[key_added] = ["0"] * 15 + ["1"] * 15
 
-    monkeypatch.setattr(sce.pp, "harmony_integrate", fake_harmony)
+    monkeypatch.setattr("pbmc_pipeline.cell_type._harmony_integrate", fake_harmony)
     monkeypatch.setattr(sc.pp, "highly_variable_genes", all_genes_are_hvg)
     monkeypatch.setattr(sc.tl, "leiden", two_clusters)
     pipeline = {
@@ -143,6 +143,10 @@ def test_analysis_uses_harmony_for_local_neighbors_but_keeps_native_pcs(tmp_path
     assert report["status"] == "complete"
     assert observed == {"key": "study", "basis": "X_pca", "adjusted_basis": "X_pca_harmony"}
     assert {"X_pca", "X_pca_harmony", "X_umap"}.issubset(analysed.obsm)
+    assert analysed.varm["PCs"].shape == (12, 5)
+    assert analysed.var["used_for_local_pca"].all()
+    assert len(analysed.uns["pca"]["variance_ratio"]) == 5
     assert analysed.uns["neighbors"]["params"]["use_rep"] == "X_pca_harmony"
     markers = pd.read_csv(tmp_path / "analysis" / "markers.tsv", sep="\t")
     assert markers["logfoldchanges"].notna().all()
+    assert len(pd.read_csv(tmp_path / "analysis" / "pc_age_correlations.tsv", sep="\t")) == 5

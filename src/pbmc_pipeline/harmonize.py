@@ -32,6 +32,50 @@ def _log_step(study_id: str, step: str, started: float, **details: object) -> No
     )
 
 
+def _harmony_integrate(
+    adata,
+    batch_key: str,
+    *,
+    basis: str,
+    adjusted_basis: str,
+    random_state: int,
+) -> dict[str, object]:
+    """Run the Harmony2 backend and retain corrected PCs in AnnData.
+
+    Scanpy's compatibility wrapper transposes the legacy harmonypy output.
+    Harmony2 returns corrected PCs in the same cells-by-components orientation
+    as Scanpy's ``obsm`` representation, so call the backend directly.
+    """
+    import harmonypy
+
+    original = np.asarray(adata.obsm[basis])
+    # Harmony2 2.0.2 leaves scalar sigma unconverted when its inferred number
+    # of clusters is one. Passing the equivalent per-cluster vector works for
+    # both small and large cell types.
+    nclust = max(1, min(round(original.shape[0] / 30.0), 100))
+    corrected = np.asarray(
+        harmonypy.run_harmony(
+            original,
+            adata.obs,
+            batch_key,
+            random_state=random_state,
+            sigma=np.full(nclust, 0.1, dtype=np.float64),
+            verbose=True,
+        ).Z_corr
+    )
+    if corrected.shape != original.shape:
+        raise ValueError(
+            "Harmony returned corrected PCs with shape "
+            f"{corrected.shape}, expected {original.shape}; check the harmonypy backend version"
+        )
+    adata.obsm[adjusted_basis] = corrected
+    return {
+        "method": "harmony",
+        "implementation": "harmonypy",
+        "implementation_version": version("harmonypy"),
+    }
+
+
 def harmonize_study(
     root: Path,
     study_id: str,
@@ -403,17 +447,15 @@ def _compute_embedding(
     sc.tl.pca(embedding, svd_solver="arpack", random_state=pipeline["processing"]["random_seed"])
     _log_step(study_id, "pca", started, components=embedding.obsm["X_pca"].shape[1])
     neighbor_rep = "X_pca"
+    integration_details: dict[str, object] | None = None
     if batch_key is not None:
-        import scanpy.external as sce
-
         started = time.perf_counter()
-        sce.pp.harmony_integrate(
+        integration_details = _harmony_integrate(
             embedding,
             batch_key,
             basis="X_pca",
             adjusted_basis=harmony_basis,
             random_state=pipeline["processing"]["random_seed"],
-            verbose=False,
         )
         neighbor_rep = harmony_basis
         _log_step(study_id, "harmony_integrate", started, batch_key=batch_key, basis=harmony_basis)
@@ -448,6 +490,6 @@ def _compute_embedding(
         "neighbors_n_pcs": effective_n_pcs,
         "neighbors_use_rep": neighbor_rep,
         "integration": None if batch_key is None else {
-            "method": "harmony", "batch_key": batch_key, "adjusted_basis": harmony_basis,
+            **integration_details, "batch_key": batch_key, "adjusted_basis": harmony_basis,
         },
     }

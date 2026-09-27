@@ -27,11 +27,13 @@ def prepare_study(
     expression_path: Path,
     output_path: Path,
     report_path: Path,
+    source_obs_output_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Run one named adapter and write its canonical one-row-per-cell table."""
+    """Run one named adapter and write canonical plus source-metadata cell tables."""
     source = read_study_input(root, expression_path, study)
     source_obs = source.obs.copy()
     source_ids = pd.Index(source.obs_names.astype(str), name="cell_id")
+    source_obs.index = source_ids
 
     adapter_name = study["preparation"]["adapter"]
     module = importlib.import_module(f"pbmc_pipeline.studies.{adapter_name}")
@@ -43,6 +45,11 @@ def prepare_study(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     prepared.to_csv(output_path, index_label="cell_id", compression="infer")
+    if source_obs_output_path is not None:
+        source_obs_output_path.parent.mkdir(parents=True, exist_ok=True)
+        source_obs.loc[prepared.index].to_csv(
+            source_obs_output_path, index_label="cell_id", compression="infer"
+        )
     report = {
         "study": study_id,
         "adapter": adapter_name,
@@ -53,6 +60,8 @@ def prepare_study(
         "n_cells": len(prepared),
         "excluded_n_cells": len(source_ids) - len(prepared),
         "columns": list(prepared.columns),
+        "source_obs_output": None if source_obs_output_path is None else str(source_obs_output_path),
+        "source_obs_columns": list(source_obs.columns),
     }
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, indent=2) + "\n")

@@ -23,7 +23,9 @@ workflow {
     def conversion_inputs = []
     def dependencies = [
         root.resolve('config/pipeline.json'), root.resolve(pipeline.studies_config as String),
-        root.resolve(pipeline.obs_schema as String), root.resolve('reports/qc_report.ipynb'),
+        root.resolve(pipeline.obs_schema as String), root.resolve(pipeline.input_sources as String),
+        root.resolve('config/studies.schema.json'), root.resolve('config/input_sources.schema.json'),
+        root.resolve('reports/qc_report.ipynb'),
         root.resolve('reports/merge_qc_report.py'), root.resolve(pipeline.models.aifi_l2 as String)
     ]
     requested.each { study_id ->

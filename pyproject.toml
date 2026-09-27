@@ -6,12 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "pbmc-ageing-pipeline"
 version = "0.1.0"
 description = "Configuration-driven harmonization of PBMC ageing scRNA-seq studies"
-readme = "README.md"
+readme = {text = "Configuration-driven harmonization of PBMC ageing scRNA-seq studies.", content-type = "text/markdown"}
 requires-python = ">=3.10"
 dependencies = [
   "anndata>=0.10,<0.13",
   "celltypist>=1.6,<2",
-  "harmonypy==0.0.10",
+  "harmonypy==2.0.2",
+  "jsonschema>=4.23,<5",
   "leidenalg>=0.10,<1",
   "openpyxl>=3.1,<4",
   "xlrd>=2.0,<3",
