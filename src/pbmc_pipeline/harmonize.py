@@ -331,10 +331,17 @@ def _annotate_celltypist(
     embedding_genes: pd.Index | None = None,
     harmony_basis: str = "X_pca_harmony",
     label_prefix: str = "",
+    counts_backup=None,
+    restore_counts: bool = True,
+    compute_umap: bool = True,
 ) -> dict[str, object]:
     import scanpy as sc
 
-    raw_counts = adata.X.copy()
+    # Callers that already need to retain raw counts across multiple
+    # predictions can share that backup instead of duplicating the full matrix.
+    raw_counts = None
+    if restore_counts:
+        raw_counts = adata.X.copy() if counts_backup is None else counts_backup
     started = time.perf_counter()
     sc.pp.normalize_total(adata, target_sum=pipeline["processing"]["target_sum"])
     sc.pp.log1p(adata)
@@ -346,9 +353,11 @@ def _annotate_celltypist(
         batch_key=embedding_batch_key,
         embedding_genes=embedding_genes,
         harmony_basis=harmony_basis,
+        compute_umap=compute_umap,
     )
     _predict_celltypist(adata, annotation, pipeline, root, study_id, label_prefix=label_prefix)
-    adata.X = raw_counts
+    if restore_counts:
+        adata.X = raw_counts
     return embedding
 
 
@@ -366,6 +375,10 @@ def _predict_celltypist(
     import celltypist
 
     for level in annotation["levels"]:
+        LOGGER.info(
+            "study=%s step=annotate_celltypist start level=%s cells=%d",
+            study_id, level, adata.n_obs,
+        )
         started = time.perf_counter()
         model_path = root / pipeline["models"][f"aifi_{level}"]
         prediction = celltypist.annotate(
@@ -389,6 +402,7 @@ def _compute_embedding(
     batch_key: str | None = None,
     embedding_genes: pd.Index | None = None,
     harmony_basis: str = "X_pca_harmony",
+    compute_umap: bool = True,
 ) -> dict[str, object]:
     """Compute an embedding, optionally correcting its PCs with Harmony.
 
@@ -477,9 +491,10 @@ def _compute_embedding(
         n_neighbors=neighbors["n_neighbors"], n_pcs=effective_n_pcs,
         use_rep=neighbor_rep,
     )
-    started = time.perf_counter()
-    sc.tl.umap(embedding, random_state=pipeline["processing"]["random_seed"])
-    _log_step(study_id, "umap", started)
+    if compute_umap:
+        started = time.perf_counter()
+        sc.tl.umap(embedding, random_state=pipeline["processing"]["random_seed"])
+        _log_step(study_id, "umap", started)
     for key in ("uns", "obsm", "obsp"):
         setattr(adata, key, getattr(embedding, key))
     return {

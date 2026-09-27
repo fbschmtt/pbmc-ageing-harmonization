@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import platform
+import tempfile
 import time
 from collections.abc import Iterable
 from datetime import datetime, timezone
@@ -22,6 +23,25 @@ from .harmonize import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _start_step(study_id: str, step: str, **details: object) -> float:
+    """Log the start of a potentially long stage and return its timer."""
+    context = " ".join(f"{key}={value}" for key, value in details.items())
+    LOGGER.info("study=%s step=%s start%s", study_id, step, f" {context}" if context else "")
+    return time.perf_counter()
+
+
+def _log_step(study_id: str, step: str, started: float, **details: object) -> None:
+    """Log a completed processing step with elapsed time and compact context."""
+    context = " ".join(f"{key}={value}" for key, value in details.items())
+    LOGGER.info(
+        "study=%s step=%s duration_seconds=%.2f%s",
+        study_id,
+        step,
+        time.perf_counter() - started,
+        f" {context}" if context else "",
+    )
 
 
 def _write_report(path: Path, report: dict) -> None:
@@ -140,43 +160,146 @@ def _shared_gene_names(parts: list) -> pd.Index:
     return shared
 
 
+def _link_h5ad_for_merge(source: Path, destination: Path) -> None:
+    """Create a lightweight H5AD exposing only slots used by merge.
+
+    Single-cell merging uses X, obs, and var. Source embeddings, graphs, and
+    unstructured analysis results are discarded and recomputed on the merged
+    object. HDF5 external links expose the required source slots without
+    copying the large count matrix or making concat_on_disk process embeddings.
+    """
+    import h5py
+
+    with h5py.File(source, "r") as input_file, h5py.File(destination, "w") as output_file:
+        for key, value in input_file.attrs.items():
+            output_file.attrs[key] = value
+        for key in ("X", "obs", "var"):
+            output_file[key] = h5py.ExternalLink(str(source.resolve()), f"/{key}")
+        for key in ("layers", "obsm", "obsp", "uns", "varm", "varp"):
+            group = output_file.create_group(key)
+            group.attrs["encoding-type"] = "dict"
+            group.attrs["encoding-version"] = "0.1.0"
+
+
 def merge_single_cells(
     input_paths: Iterable[Path], output_path: Path, report_path: Path, pipeline: dict, root: Path
 ) -> dict:
     """Inner-join genes and compute experimental merged AIFI-L2 predictions.
 
-    This intentionally loads every input in memory and is only invoked by the
-    explicitly enabled Nextflow pathway.
+    Expression matrices are concatenated on disk to avoid retaining all source
+    matrices alongside the merged matrix in memory.
     """
     import anndata as ad
     import scanpy as sc
 
     paths = list(input_paths)
-    parts = [sc.read_h5ad(path) for path in paths]
-    if not parts:
+    if not paths:
         raise ValueError("No single-cell inputs supplied")
     spec = pipeline["merge"]["single_cell"]
-    shared_genes = _shared_gene_names(parts)
-    if shared_genes.empty:
-        raise ValueError("Studies have no shared genes for single-cell merge")
-    merged = ad.concat(
-        parts, join=spec["gene_join"], merge="same", index_unique="::", label="source_study"
+    study_id = "merged_single_cell"
+    LOGGER.info(
+        "study=%s step=start inputs=%d gene_join=%s",
+        study_id, len(paths), spec["gene_join"],
     )
+    # Read only the small obs/var metadata in backed mode. concat_on_disk
+    # streams the large expression matrices into one temporary H5AD, avoiding
+    # the previous peak of all source matrices plus a full in-memory concat.
+    started = _start_step(study_id, "read_input_metadata", inputs=len(paths))
+    parts = [ad.read_h5ad(path, backed="r") for path in paths]
+    try:
+        shared_genes = _shared_gene_names(parts)
+        if shared_genes.empty:
+            raise ValueError("Studies have no shared genes for single-cell merge")
+        _log_step(
+            study_id, "read_input_metadata", started,
+            inputs=len(paths), shared_genes=len(shared_genes),
+        )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Keep this temporary concat alive as the raw-count checkpoint.
+        concat_temp = tempfile.TemporaryDirectory(
+            prefix=".single-cell-concat-", dir=output_path.parent
+        )
+        concat_path = Path(concat_temp.name) / "merged.h5ad"
+        concat_inputs = []
+        csc_inputs = [
+            index for index, part in enumerate(parts)
+            if getattr(part.X, "format", None) == "csc"
+        ]
+        # Close the metadata-only handles before creating lean input copies.
+        for part in parts:
+            part.file.close()
+        for index, source_path in enumerate(paths):
+            started = _start_step(study_id, "prepare_concat_input", input=source_path.name)
+            lean_path = Path(concat_temp.name) / f"input_{index}.h5ad"
+            if index not in csc_inputs:
+                _link_h5ad_for_merge(source_path, lean_path)
+            else:
+                # AnnData's on-disk concat requires a common sparse format.
+                # Convert one CSC source at a time and omit unused slots.
+                conversion_started = _start_step(
+                    study_id, "convert_input_to_csr", input=source_path.name
+                )
+                part = sc.read_h5ad(source_path)
+                part.X = part.X.tocsr()
+                lean = ad.AnnData(X=part.X, obs=part.obs.copy(), var=part.var.copy())
+                lean.write_h5ad(lean_path)
+                del lean, part
+                _log_step(
+                    study_id, "convert_input_to_csr", conversion_started,
+                    input=source_path.name,
+                )
+            concat_inputs.append(lean_path)
+            _log_step(study_id, "prepare_concat_input", started, input=source_path.name)
+        started = _start_step(
+            study_id, "concat_on_disk", inputs=len(paths), gene_join=spec["gene_join"]
+        )
+        ad.experimental.concat_on_disk(
+            concat_inputs,
+            concat_path,
+            join=spec["gene_join"],
+            merge="same",
+            index_unique="::",
+            label="source_study",
+            # The AnnData default can load roughly 400 MB of sparse data at
+            # once. Smaller chunks reduce concat's working set on RAM-limited
+            # production machines.
+            max_loaded_elems=10_000_000,
+        )
+        _log_step(study_id, "concat_on_disk", started)
+        started = _start_step(study_id, "load_merged_matrix", path=concat_path)
+        merged = sc.read_h5ad(concat_path)
+        _log_step(
+            study_id, "load_merged_matrix", started,
+            cells=merged.n_obs, genes=merged.n_vars,
+        )
+    finally:
+        for part in parts:
+            part.file.close()
     if merged.n_vars == 0:
         raise ValueError("Studies have no shared genes for single-cell merge")
+    # Per-study embeddings are not used: the merged embedding below is
+    # recomputed from counts. Drop them before allocating the global versions.
+    merged.obsm.clear()
     # The shipped configuration uses an inner join.  Keep provenance available
     # if a caller explicitly opts into an outer join, where fill_value=0 creates
     # synthetic rather than observational zeros.
     if spec["gene_join"] == "outer":
+        started = _start_step(study_id, "gene_availability")
         _annotate_gene_availability(merged, parts)
+        _log_step(study_id, "gene_availability", started)
+    del parts
+    started = _start_step(study_id, "qc_metrics", cells=merged.n_obs, genes=merged.n_vars)
     _add_single_cell_qc_metrics(merged)
+    _log_step(study_id, "qc_metrics", started)
     integration = spec["integration"]
     # Keep each study's own L2 annotation as the downstream ground truth. The
     # merged prediction is diagnostic only and must never overwrite it.
     merged.obs["aifi_l2_study_majority"] = merged.obs["aifi_l2_majority"].astype(str)
+    embedding_genes = merged.var_names if spec["gene_join"] == "inner" else shared_genes
     # CellTypist detects ``obsp['connectivities']`` and uses it for its
     # over-clustering/majority-voting stage. The helper therefore installs the
     # Harmony-derived graph before CellTypist is invoked.
+    started = _start_step(study_id, "harmony_celltypist")
     embedding = _annotate_celltypist(
         merged,
         {"method": "celltypist", "levels": [spec["annotation_level"]]},
@@ -184,16 +307,19 @@ def merge_single_cells(
         root,
         "merged_single_cell",
         embedding_batch_key=integration["batch_key"],
-        embedding_genes=shared_genes,
+        embedding_genes=embedding_genes,
         harmony_basis=integration["adjusted_basis"],
         label_prefix="experimental_",
+        restore_counts=False,
+        compute_umap=False,
     )
+    _log_step(study_id, "harmony_celltypist", started)
     # The Harmony-graph prediction is experimental. Repeat the same diagnostic
     # with an unintegrated-PC graph, then restore Harmony's graph/UMAP as the
     # primary embedding stored in the merged artifact.
-    raw_counts = merged.X.copy()
-    sc.pp.normalize_total(merged, target_sum=pipeline["processing"]["target_sum"])
-    sc.pp.log1p(merged)
+    _clear_neighbor_graph(merged)
+    # The Harmony/CellTypist pass already left X normalized and log1p
+    # transformed, so reuse it for the unintegrated-PC prediction.
     _compute_neighbors_and_umap(
         merged, pipeline, "merged_single_cell", use_rep="X_pca", compute_umap=False
     )
@@ -206,22 +332,55 @@ def merge_single_cells(
         label_suffix="_unintegrated",
         label_prefix="experimental_",
     )
+    # The unintegrated graph has served its prediction pass. Remove it before
+    # rebuilding the final Harmony graph to avoid holding both full graphs.
+    _clear_neighbor_graph(merged)
+    # Release normalized counts before reading the raw checkpoint back. The
+    # backed read materializes only X, not the old per-study embeddings.
+    started = _start_step(study_id, "restore_raw_counts")
+    merged.X = None
+    backed_counts = ad.read_h5ad(concat_path, backed="r")
+    try:
+        backed_matrix = backed_counts.X
+        raw_counts = (
+            backed_matrix.to_memory()
+            if hasattr(backed_matrix, "to_memory")
+            else np.asarray(backed_matrix)
+        )
+    finally:
+        backed_counts.file.close()
     merged.X = raw_counts
+    del raw_counts, backed_matrix, backed_counts
+    _log_step(study_id, "restore_raw_counts", started)
+    started = _start_step(study_id, "final_harmony_graph_umap")
     _compute_neighbors_and_umap(
         merged, pipeline, "merged_single_cell", use_rep=integration["adjusted_basis"]
     )
+    _log_step(study_id, "final_harmony_graph_umap", started)
     merged.uns["pipeline_provenance"] = _merge_provenance(
         "single_cell_merge", paths, pipeline, gene_join=spec["gene_join"]
     )
-    # The helper restores raw counts after computing the Harmony graph/UMAP.
+    # The raw-count checkpoint has been restored for the published artifact.
     merged.uns["embedding"] = embedding
     _normalize_nullable_strings_for_h5ad(merged)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    started = _start_step(study_id, "write_merged_h5ad", output=output_path)
     merged.write_h5ad(output_path, compression=pipeline["processing"]["output_compression"])
+    _log_step(study_id, "write_merged_h5ad", started)
+    started = _start_step(study_id, "write_merge_report", output=report_path)
     report = _merge_report("single_cell_merge", merged, paths, pipeline)
     report.update({"embedding": embedding})
     _write_report(report_path, report)
+    _log_step(study_id, "write_merge_report", started)
+    concat_temp.cleanup()
     return report
+
+
+def _clear_neighbor_graph(adata) -> None:
+    """Release graph matrices once their CellTypist/UMAP consumer is done."""
+    for key in ("distances", "connectivities"):
+        if key in adata.obsp:
+            del adata.obsp[key]
+    adata.uns.pop("neighbors", None)
 
 
 def _add_single_cell_qc_metrics(adata) -> None:
@@ -249,7 +408,7 @@ def _compute_neighbors_and_umap(
     neighbor_args = dict(neighbors)
     effective_n_pcs = min(neighbor_args["n_pcs"], adata.obsm[use_rep].shape[1])
     neighbor_args["n_pcs"] = effective_n_pcs
-    started = time.perf_counter()
+    started = _start_step(study_id, "neighbors", use_rep=use_rep)
     sc.pp.neighbors(
         adata,
         **neighbor_args,
@@ -261,7 +420,7 @@ def _compute_neighbors_and_umap(
         study_id, time.perf_counter() - started, neighbors["n_neighbors"], effective_n_pcs, use_rep,
     )
     if compute_umap:
-        started = time.perf_counter()
+        started = _start_step(study_id, "umap", use_rep=use_rep)
         sc.tl.umap(adata, random_state=pipeline["processing"]["random_seed"])
         LOGGER.info(
             "study=%s step=umap duration_seconds=%.2f use_rep=%s",
