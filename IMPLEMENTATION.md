@@ -70,12 +70,15 @@ merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
 - `modules/cell_type_analysis.nf`: the split, analysis, and report-rendering processes.
 - `reports/cell_type_report.py`: Jupytext source for the per-type notebook. It
   plots the inherited global UMAP and renders visualizations from the completed
-  type-specific analysis artifact, plus optional DE summaries and plots when
-  the matching cell-type slug is present in the DE manifest.
+  type-specific analysis artifact, fraction-model covariate and noise
+  diagnostics, plus optional DE summaries and plots when the matching cell-type
+  slug is present in the DE manifest.
 - `differential_expression.nf` and `modules/differential_expression.nf`: the
-  independent pseudobulk DE entry workflow and its single fitting process.
+  independent pseudobulk DE workflow: label listing, one in-memory type subset
+  and fit per task, then result/manifest collection.
 - `src/pbmc_pipeline/differential_expression.py`: configured sample filtering,
-  per-study and merged PyDESeq2 fits, CSV output, and the result manifest.
+  per-study and merged PyDESeq2 fits, task-result collection, CSV output, and
+  the result manifest.
 - `src/pbmc_pipeline/synthetic_de.py`: deterministic on-demand positive-fit
   pseudobulk fixture generation; the generated H5AD is ignored output, not a
   checked-in fixture.
@@ -102,9 +105,12 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/qc/<study>/report.html`
 - `<outdir>/qc/merged/report.html` (one report for both merge branches)
 - `<outdir>/cell_type_analysis/<aifi-l2-type>/analysis.h5ad` (optional derived embeddings and clusters)
-- `<outdir>/cell_type_analysis/<aifi-l2-type>/report.html` (optional downstream report)
+- `<outdir>/cell_type_analysis/<aifi-l2-type>/report.html` (optional self-contained static, reader-facing downstream report)
+- `<outdir>/cell_type_analysis/<aifi-l2-type>/executed.ipynb` (optional executed technical/audit report)
+- `<outdir>/cell_type_analysis/<aifi-l2-type>/fraction_model_diagnostics.tsv` (optional per-study fraction-model covariates, residual SD, and binomial-sampling reference)
 - `<outdir>/cell_type_analysis/cell_type_manifest.json` (optional downstream provenance and completeness contract)
 - `<outdir>/differential_expression/<cell-type-slug>/...csv` (per-study and merged age results)
+- `<outdir>/differential_expression/<cell-type-slug>/cell_type_result.json` (per-task fit record collected into the root manifest)
 - `<outdir>/differential_expression/differential_expression.json` (DE status and cell-type result index)
 - `<outdir>/run_manifest.json`
 
@@ -174,8 +180,11 @@ configuration-defined downstream analysis contract.
 
 Cell-type splitting plus per-type analysis, analysis of an existing split, and
 report rendering are named Nextflow subworkflows. The DE workflow remains an
-independent producer; its `differential_expression.json` manifest indexes
-results by cell-type slug. A single report-render process receives either the
+independent producer: it lists labels, then each task loads the small merged
+pseudobulk H5AD and subsets its assigned type in memory (without materializing
+per-type pseudobulk inputs). A final collector writes the
+`differential_expression.json` manifest that indexes results by cell-type slug.
+A single report-render process receives either the
 matching result directory or a no-DE flag and publishes only beneath
 `cell_type_analysis/`. DE results publish only beneath
 `differential_expression/`.
@@ -231,8 +240,18 @@ only two cell types, so other reports exercise the ordinary no-DE path.
 `make run` is the resumable production entry point; `make run-no-qc` omits only
 report rendering.
 `MERGE_SINGLE_CELL=true` enables the optional single-cell branch.
-The current Nextflow profiles set CPU counts and task timeouts but do not set
-per-process memory limits. The full production pipeline has completed
-successfully, but resource reports/traces are not yet part of the tracked run
-artifacts; record measured peak RAM before sizing a different runner or adding
-memory directives.
+The current Nextflow profiles leave CPU and time requests unspecified except
+for one CPU per parallel cell-type DE task; they do not set per-process memory
+limits. The full production pipeline has completed successfully, but resource
+reports/traces are not yet part of the tracked run artifacts; record measured
+peak RAM before sizing a different runner or adding resource directives.
+
+The cell-type fraction model uses adults only and independently fits each
+study with eligible age, sex, BMI, and CMV covariates. Age effects are reported
+per decade. `cell_type_analysis.fraction_model` configures the deterministic
+parametric binomial bootstrap (currently 1,000 replicates and seed 0) used as
+the conditional cell-sampling reference in the report and diagnostics TSV.
+Each donor's OLS-fitted fraction is held fixed as its binomial probability
+(clipped to `[0, 1]`, with the count and fraction reported in diagnostics), its
+observed parent-cell count supplies the number of trials, and the same
+covariate design is refit in each replicate.

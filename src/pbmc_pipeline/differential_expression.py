@@ -309,16 +309,8 @@ def _run_model(
     return details
 
 
-def run_differential_expression(
-    input_path: Path,
-    output_dir: Path,
-    pipeline: dict,
-    *,
-    cpus: int = 1,
-    test_mode: bool = False,
-    synthetic_test_data: bool = False,
-) -> dict:
-    """Fit per-study and shared-slope PyDESeq2 models by AIFI L2 type."""
+def _load_pseudobulk(input_path: Path, pipeline: dict):
+    """Load and validate the merged pseudobulk input and its configured labels."""
     import anndata as ad
 
     spec = pipeline["differential_expression"]
@@ -337,61 +329,71 @@ def run_differential_expression(
     labels = adata.obs[split_by].astype("string")
     if labels.isna().any() or (labels.str.strip() == "").any():
         raise ValueError(f"{input_path}: split column {split_by!r} contains missing labels")
+    return adata, spec, labels
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    records = []
+
+def _cell_type_index(labels: pd.Series) -> list[tuple[str, str]]:
+    """Return sorted cell-type labels with unique, stable output slugs."""
     used_slugs: dict[str, str] = {}
+    cell_types = []
     for cell_type in sorted(labels.unique().tolist()):
-        slug = _slug(str(cell_type))
-        if slug in used_slugs and used_slugs[slug] != cell_type:
+        label = str(cell_type)
+        slug = _slug(label)
+        if slug in used_slugs and used_slugs[slug] != label:
             raise ValueError(
-                f"AIFI L2 labels collide as output names: {used_slugs[slug]!r} and {cell_type!r}"
+                f"AIFI L2 labels collide as output names: {used_slugs[slug]!r} and {label!r}"
             )
-        used_slugs[slug] = str(cell_type)
-        selected = labels == cell_type
-        type_adata = adata[selected.to_numpy(), :]
-        type_obs = type_adata.obs.copy()
-        (output_dir / slug).mkdir(parents=True, exist_ok=True)
-        metadata, exclusions, excluded_samples = _prepare_metadata(
-            type_obs, spec["sample_inclusion"], test_mode=test_mode
-        )
-        item = {
-            "cell_type": str(cell_type),
-            "slug": slug,
-            "n_pseudobulks": int(type_adata.n_obs),
-            "metadata_exclusions": exclusions,
-            "excluded_samples": excluded_samples,
-            "models": [],
-        }
-        for study in sorted(metadata["study"].astype(str).unique()):
-            study_metadata = metadata.loc[metadata["study"].astype(str) == study].copy()
-            model_metadata = study_metadata[["study", "sample", "age", "sex"]]
-            item["models"].append(
-                _run_model(
-                    adata=type_adata,
-                    obs=type_obs,
-                    metadata=model_metadata,
-                    cell_type=str(cell_type),
-                    model_name="per_study",
-                    study=study,
-                    design=spec["per_study_design"],
-                    age_term=spec["age_term"],
-                    alpha=spec["alpha"],
-                    cpus=cpus,
-                    output_dir=output_dir,
-                    test_mode=test_mode,
-                    synthetic_test_data=synthetic_test_data,
-                )
-            )
+        used_slugs[slug] = label
+        cell_types.append((slug, label))
+    return cell_types
+
+
+def list_pseudobulk_cell_types(input_path: Path, pipeline: dict) -> list[tuple[str, str]]:
+    """List configured split labels without creating any per-type pseudobulk files."""
+    _, _, labels = _load_pseudobulk(input_path, pipeline)
+    return _cell_type_index(labels)
+
+
+def _run_cell_type_differential_expression(
+    adata,
+    spec: dict,
+    labels: pd.Series,
+    output_dir: Path,
+    *,
+    cell_type: str,
+    cpus: int,
+    test_mode: bool,
+    synthetic_test_data: bool,
+) -> dict:
+    """Fit every configured DE model for one in-memory pseudobulk subset."""
+    slug = _slug(cell_type)
+    selected = labels == cell_type
+    type_adata = adata[selected.to_numpy(), :]
+    type_obs = type_adata.obs.copy()
+    (output_dir / slug).mkdir(parents=True, exist_ok=True)
+    metadata, exclusions, excluded_samples = _prepare_metadata(
+        type_obs, spec["sample_inclusion"], test_mode=test_mode
+    )
+    item = {
+        "cell_type": cell_type,
+        "slug": slug,
+        "n_pseudobulks": int(type_adata.n_obs),
+        "metadata_exclusions": exclusions,
+        "excluded_samples": excluded_samples,
+        "models": [],
+    }
+    for study in sorted(metadata["study"].astype(str).unique()):
+        study_metadata = metadata.loc[metadata["study"].astype(str) == study].copy()
+        model_metadata = study_metadata[["study", "sample", "age", "sex"]]
         item["models"].append(
             _run_model(
                 adata=type_adata,
                 obs=type_obs,
-                metadata=metadata[["study", "sample", "age", "sex"]],
-                cell_type=str(cell_type),
-                model_name="merged",
-                study=None,
-                design=spec["merged_design"],
+                metadata=model_metadata,
+                cell_type=cell_type,
+                model_name="per_study",
+                study=study,
+                design=spec["per_study_design"],
                 age_term=spec["age_term"],
                 alpha=spec["alpha"],
                 cpus=cpus,
@@ -400,28 +402,61 @@ def run_differential_expression(
                 synthetic_test_data=synthetic_test_data,
             )
         )
-        type_metadata = {
-            "kind": "pseudobulk_differential_expression_cell_type_metadata",
-            "cell_type": str(cell_type),
-            "analysis_mode": "test_only" if test_mode or synthetic_test_data else "standard",
-            "test_mode": test_mode,
-            "synthetic_test_data": synthetic_test_data,
-            "interpretation_warning": (
-                _SYNTHETIC_DATA_WARNING if synthetic_test_data else (
-                    _TEST_MODE_WARNING if test_mode else None
-                )
-            ),
-            "sample_inclusion_configured": spec["sample_inclusion"],
-            "sample_inclusion_applied": {
-                **spec["sample_inclusion"],
-                "minimum_cells_filter_enabled": not test_mode,
-            },
-            "metadata_exclusions": exclusions,
-        }
-        (output_dir / slug / "run_metadata.json").write_text(
-            json.dumps(type_metadata, indent=2) + "\n"
+    item["models"].append(
+        _run_model(
+            adata=type_adata,
+            obs=type_obs,
+            metadata=metadata[["study", "sample", "age", "sex"]],
+            cell_type=cell_type,
+            model_name="merged",
+            study=None,
+            design=spec["merged_design"],
+            age_term=spec["age_term"],
+            alpha=spec["alpha"],
+            cpus=cpus,
+            output_dir=output_dir,
+            test_mode=test_mode,
+            synthetic_test_data=synthetic_test_data,
         )
-        records.append(item)
+    )
+    type_metadata = {
+        "kind": "pseudobulk_differential_expression_cell_type_metadata",
+        "cell_type": cell_type,
+        "analysis_mode": "test_only" if test_mode or synthetic_test_data else "standard",
+        "test_mode": test_mode,
+        "synthetic_test_data": synthetic_test_data,
+        "interpretation_warning": (
+            _SYNTHETIC_DATA_WARNING if synthetic_test_data else (
+                _TEST_MODE_WARNING if test_mode else None
+            )
+        ),
+        "sample_inclusion_configured": spec["sample_inclusion"],
+        "sample_inclusion_applied": {
+            **spec["sample_inclusion"],
+            "minimum_cells_filter_enabled": not test_mode,
+        },
+        "metadata_exclusions": exclusions,
+    }
+    cell_type_dir = output_dir / slug
+    (cell_type_dir / "run_metadata.json").write_text(json.dumps(type_metadata, indent=2) + "\n")
+    (cell_type_dir / "cell_type_result.json").write_text(json.dumps(item, indent=2) + "\n")
+    return item
+
+
+def _write_differential_expression_manifest(
+    input_path: Path,
+    output_dir: Path,
+    pipeline: dict,
+    records: list[dict],
+    *,
+    test_mode: bool,
+    synthetic_test_data: bool,
+) -> dict:
+    """Write the stable top-level DE index after all cell-type tasks finish."""
+    spec = pipeline["differential_expression"]
+    split_by = spec["split_by"]
+    output_dir.mkdir(parents=True, exist_ok=True)
+    records = sorted(records, key=lambda item: item["cell_type"])
 
     report = {
         "schema_version": 1,
@@ -517,14 +552,128 @@ def run_differential_expression(
     return report
 
 
+def run_differential_expression(
+    input_path: Path,
+    output_dir: Path,
+    pipeline: dict,
+    *,
+    cpus: int = 1,
+    test_mode: bool = False,
+    synthetic_test_data: bool = False,
+) -> dict:
+    """Fit all cell types serially; retained for direct CLI/API use."""
+    adata, spec, labels = _load_pseudobulk(input_path, pipeline)
+    records = [
+        _run_cell_type_differential_expression(
+            adata, spec, labels, output_dir,
+            cell_type=cell_type,
+            cpus=cpus,
+            test_mode=test_mode,
+            synthetic_test_data=synthetic_test_data,
+        )
+        for _, cell_type in _cell_type_index(labels)
+    ]
+    return _write_differential_expression_manifest(
+        input_path, output_dir, pipeline, records,
+        test_mode=test_mode,
+        synthetic_test_data=synthetic_test_data,
+    )
+
+
+def run_cell_type_differential_expression(
+    input_path: Path,
+    output_dir: Path,
+    pipeline: dict,
+    *,
+    cell_type: str,
+    cpus: int = 1,
+    test_mode: bool = False,
+    synthetic_test_data: bool = False,
+) -> dict:
+    """Load the merged pseudobulk H5AD and fit one cell type in this task."""
+    adata, spec, labels = _load_pseudobulk(input_path, pipeline)
+    available = dict(_cell_type_index(labels))
+    if cell_type not in available.values():
+        raise ValueError(f"{input_path}: requested cell type is absent: {cell_type!r}")
+    return _run_cell_type_differential_expression(
+        adata, spec, labels, output_dir,
+        cell_type=cell_type,
+        cpus=cpus,
+        test_mode=test_mode,
+        synthetic_test_data=synthetic_test_data,
+    )
+
+
+def combine_cell_type_differential_expression(
+    input_path: Path,
+    output_dir: Path,
+    pipeline: dict,
+    result_dirs: list[Path],
+    *,
+    test_mode: bool = False,
+    synthetic_test_data: bool = False,
+) -> dict:
+    """Collect parallel task results into the established DE output contract."""
+    import shutil
+
+    expected = dict(list_pseudobulk_cell_types(input_path, pipeline))
+    records = []
+    seen_slugs = set()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for result_dir in result_dirs:
+        record_path = result_dir / "cell_type_result.json"
+        if not record_path.is_file():
+            raise FileNotFoundError(f"{result_dir}: missing cell_type_result.json")
+        item = json.loads(record_path.read_text())
+        slug = item.get("slug")
+        cell_type = item.get("cell_type")
+        if slug not in expected or expected[slug] != cell_type:
+            raise ValueError(f"{result_dir}: unexpected cell-type result {cell_type!r}/{slug!r}")
+        if slug in seen_slugs:
+            raise ValueError(f"Duplicate cell-type result for {slug!r}")
+        seen_slugs.add(slug)
+        shutil.copytree(result_dir, output_dir / slug)
+        records.append(item)
+    missing = sorted(set(expected) - seen_slugs)
+    if missing:
+        raise ValueError(f"Missing cell-type DE results: {missing}")
+    return _write_differential_expression_manifest(
+        input_path, output_dir, pipeline, records,
+        test_mode=test_mode,
+        synthetic_test_data=synthetic_test_data,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run per-study and merged PyDESeq2 models on a merged pseudobulk H5AD"
     )
     parser.add_argument("--input", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--cpus", type=int, default=1)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--list-cell-types",
+        action="store_true",
+        help="write the configured pseudobulk cell-type labels and slugs as TSV",
+    )
+    mode.add_argument(
+        "--cell-type",
+        help="fit only this cell type after loading and subsetting the merged pseudobulk H5AD",
+    )
+    mode.add_argument(
+        "--combine-cell-type-results",
+        type=Path,
+        nargs="+",
+        metavar="DIRECTORY",
+        help="combine directories emitted by parallel --cell-type tasks",
+    )
+    parser.add_argument(
+        "--cell-types-output",
+        type=Path,
+        help="TSV destination required with --list-cell-types",
+    )
     parser.add_argument(
         "--test-mode",
         action="store_true",
@@ -541,14 +690,46 @@ def main() -> None:
     args = parser.parse_args()
     if args.cpus < 1:
         parser.error("--cpus must be positive")
-    run_differential_expression(
-        args.input,
-        args.output_dir,
-        read_json(args.config),
-        cpus=args.cpus,
-        test_mode=args.test_mode,
-        synthetic_test_data=args.synthetic_test_data,
-    )
+    pipeline = read_json(args.config)
+    if args.list_cell_types:
+        if args.cell_types_output is None:
+            parser.error("--list-cell-types requires --cell-types-output")
+        records = list_pseudobulk_cell_types(args.input, pipeline)
+        args.cell_types_output.write_text(
+            "".join(f"{slug}\t{cell_type}\n" for slug, cell_type in records)
+        )
+        LOGGER.info("Wrote %s pseudobulk cell types to %s", len(records), args.cell_types_output)
+        return
+    if args.output_dir is None:
+        parser.error("--output-dir is required when fitting or combining DE results")
+    if args.combine_cell_type_results is not None:
+        combine_cell_type_differential_expression(
+            args.input,
+            args.output_dir,
+            pipeline,
+            args.combine_cell_type_results,
+            test_mode=args.test_mode,
+            synthetic_test_data=args.synthetic_test_data,
+        )
+    elif args.cell_type:
+        run_cell_type_differential_expression(
+            args.input,
+            args.output_dir,
+            pipeline,
+            cell_type=args.cell_type,
+            cpus=args.cpus,
+            test_mode=args.test_mode,
+            synthetic_test_data=args.synthetic_test_data,
+        )
+    else:
+        run_differential_expression(
+            args.input,
+            args.output_dir,
+            pipeline,
+            cpus=args.cpus,
+            test_mode=args.test_mode,
+            synthetic_test_data=args.synthetic_test_data,
+        )
     LOGGER.info("Differential-expression results written to %s", args.output_dir)
 
 

@@ -1,10 +1,51 @@
-process RUN_PSEUDOBULK_DIFFERENTIAL_EXPRESSION {
-    tag 'per-study and merged PyDESeq2 models'
+process LIST_PSEUDOBULK_CELL_TYPES {
+    tag 'list pseudobulk cell types'
+
+    input:
+    path pseudobulk_input
+    path pipeline_config
+
+    output:
+    path 'cell_types.tsv', emit: cell_types
+
+    script:
+    """
+    pbmc-differential-expression --input ${pseudobulk_input} --config ${pipeline_config} \
+      --list-cell-types --cell-types-output cell_types.tsv
+    """
+}
+
+process RUN_CELL_TYPE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION {
+    tag { cell_type }
+
+    input:
+    path pseudobulk_input
+    path pipeline_config
+    tuple val(slug), val(cell_type)
+    val de_test_mode
+    val synthetic_test_data
+
+    output:
+    path 'cell_type_result/*', emit: results
+
+    script:
+    def test_mode_argument = de_test_mode ? '--test-mode' : ''
+    def synthetic_data_argument = synthetic_test_data ? '--synthetic-test-data' : ''
+    """
+    pbmc-differential-expression --input ${pseudobulk_input} \
+      --output-dir cell_type_result --config ${pipeline_config} --cell-type "${cell_type}" \
+      --cpus ${task.cpus} ${test_mode_argument} ${synthetic_data_argument}
+    """
+}
+
+process WRITE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION_MANIFEST {
+    tag 'collect cell-type PyDESeq2 models'
     publishDir "${params.outdir}", mode: 'copy', overwrite: true
 
     input:
     path pseudobulk_input
     path pipeline_config
+    path cell_type_results
     val de_test_mode
     val synthetic_test_data
 
@@ -16,7 +57,8 @@ process RUN_PSEUDOBULK_DIFFERENTIAL_EXPRESSION {
     def synthetic_data_argument = synthetic_test_data ? '--synthetic-test-data' : ''
     """
     pbmc-differential-expression --input ${pseudobulk_input} \
-      --output-dir differential_expression --config ${pipeline_config} --cpus ${task.cpus} \
+      --output-dir differential_expression --config ${pipeline_config} \
+      --combine-cell-type-results ${cell_type_results} \
       ${test_mode_argument} ${synthetic_data_argument}
     """
 }

@@ -17,6 +17,9 @@
 
 ## Workflow checks
 
+- Start with the [Choosing a Make target](README.md#choosing-a-make-target)
+  table in `README.md` to select the smallest validation target; the rules
+  below add mandatory constraints and take precedence if they conflict.
 - Use Make targets as the entry points for linting, testing, Docker builds, and
   workflows. Choose the smallest target that covers the change; do not run
   `make verify` by default. `make verify` is the broad, non-resumed Docker

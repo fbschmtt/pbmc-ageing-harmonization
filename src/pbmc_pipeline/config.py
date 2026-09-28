@@ -110,6 +110,22 @@ def validate_configuration(
             raise ConfigurationError(
                 "cell_type_analysis.integration.adjusted_basis must be 'X_pca_harmony'"
             )
+        fraction_model = cell_type_analysis.get("fraction_model", {})
+        bootstrap_replicates = fraction_model.get("binomial_bootstrap_replicates")
+        if (
+            not isinstance(bootstrap_replicates, int)
+            or isinstance(bootstrap_replicates, bool)
+            or bootstrap_replicates < 1
+        ):
+            raise ConfigurationError(
+                "cell_type_analysis.fraction_model.binomial_bootstrap_replicates "
+                "must be a positive integer"
+            )
+        bootstrap_seed = fraction_model.get("binomial_bootstrap_seed")
+        if not isinstance(bootstrap_seed, int) or isinstance(bootstrap_seed, bool):
+            raise ConfigurationError(
+                "cell_type_analysis.fraction_model.binomial_bootstrap_seed must be an integer"
+            )
         parent_map = cell_type_analysis.get("l2_parent_l1")
         if not isinstance(parent_map, dict) or not parent_map or not all(
             isinstance(l2, str) and l2 and isinstance(l1, str) and l1

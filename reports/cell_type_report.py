@@ -273,8 +273,33 @@ def plot_cluster_fractions(data, *, palette):
     plt.show()
 
 
-def fit_parent_fraction_models(fractions, adata, *, fraction_column):
-    """Fit adult-only, study-specific OLS models for one L1-parent fraction."""
+def _bootstrap_binomial_residual_sd(design, denominators, fitted_probabilities, *, rng, n_bootstrap):
+    """Estimate post-model residual SD expected from binomial cell sampling alone.
+
+    The fitted probabilities and design are fixed inputs.  Thus this is a
+    conditional measurement-noise reference: only finite cell sampling varies
+    between replicates, while the observed covariate structure is retained.
+    """
+    n_samples, n_terms = design.shape
+    if n_samples <= n_terms:
+        return np.nan
+    denominators = np.asarray(denominators, dtype=np.int64)
+    fitted_probabilities = np.asarray(fitted_probabilities, dtype=float)
+    simulated = rng.binomial(
+        denominators, fitted_probabilities, size=(n_bootstrap, n_samples),
+    ) / denominators
+    orthonormal_design, _ = np.linalg.qr(design, mode="reduced")
+    # Refit the same fixed design because the observed quantity is also a
+    # post-covariate-model residual SD.  This removes chance alignment between
+    # simulated binomial noise and the covariates, just as in the observed fit.
+    residuals = simulated - (simulated @ orthonormal_design) @ orthonormal_design.T
+    return float(np.sqrt(np.mean(np.sum(residuals**2, axis=1) / (n_samples - n_terms))))
+
+
+def fit_parent_fraction_models(
+    fractions, adata, *, fraction_column, bootstrap_replicates, bootstrap_seed,
+):
+    """Fit adult-only, study-specific OLS models and residual diagnostics."""
     candidate_covariates = ["age", "sex", "bmi", "cmv"]
     present = [column for column in candidate_covariates if column in adata.obs]
     metadata_columns = [column for column in present if column != "age"]
@@ -288,7 +313,9 @@ def fit_parent_fraction_models(fractions, adata, *, fraction_column):
     data["age"] = pd.to_numeric(data["age"], errors="coerce")
     data = data.loc[data["age"] >= 20].copy()
     results = []
+    residual_diagnostics = []
     unavailable = {"", "not_provided", "unknown", "nan", "none"}
+    bootstrap_rng = np.random.default_rng(bootstrap_seed)
 
     def valid_values(values, column):
         if column in {"age", "bmi"}:
@@ -339,8 +366,36 @@ def fit_parent_fraction_models(fractions, adata, *, fraction_column):
         design = pd.concat(pieces, axis=1).astype(float)
         if len(model_data) <= design.shape[1] or np.linalg.matrix_rank(design.to_numpy()) < design.shape[1]:
             continue
-        fit = sm.OLS(model_data[fraction_column].to_numpy(dtype=float), design.to_numpy()).fit()
+        design_array = design.to_numpy()
+        fit = sm.OLS(model_data[fraction_column].to_numpy(dtype=float), design_array).fit()
         confidence = fit.conf_int()
+        mean_fraction = float(model_data[fraction_column].mean())
+        unbounded_fitted_probabilities = np.asarray(fit.predict(design_array), dtype=float)
+        n_clipped_probabilities = int(
+            ((unbounded_fitted_probabilities < 0) | (unbounded_fitted_probabilities > 1)).sum()
+        )
+        # OLS is retained as the reported fraction model.  Its fitted values
+        # provide donor-specific conditional means for the binomial null; clip
+        # only because binomial probabilities must lie in [0, 1].  The count is
+        # published so any material boundary correction is visible.
+        fitted_probabilities = np.clip(unbounded_fitted_probabilities, 0, 1)
+        residual_diagnostics.append({
+            "study": str(study),
+            "residual_sd": float(np.sqrt(fit.mse_resid)),
+            "binomial_sampling_sd": _bootstrap_binomial_residual_sd(
+                design_array,
+                model_data["denominator_cells"].to_numpy(),
+                fitted_probabilities,
+                rng=bootstrap_rng,
+                n_bootstrap=bootstrap_replicates,
+            ),
+            "n_samples": len(model_data),
+            "mean_fraction": mean_fraction,
+            "n_clipped_binomial_probabilities": n_clipped_probabilities,
+            "fraction_clipped_binomial_probabilities": n_clipped_probabilities / len(model_data),
+            "covariates": ";".join(selected),
+            "model_terms": ";".join(design.columns.drop("intercept")),
+        })
         for index, term in enumerate(design.columns):
             if term == "intercept":
                 continue
@@ -349,26 +404,34 @@ def fit_parent_fraction_models(fractions, adata, *, fraction_column):
                 levels = sorted(model_data[covariate].astype("string").str.strip().str.lower().unique())
                 contrast = f"{term.removeprefix(f'{covariate}_')} vs {levels[0]}"
             else:
-                contrast = "per year" if covariate == "age" else "per BMI unit"
+                contrast = "per decade" if covariate == "age" else "per BMI unit"
+            effect_scale = 10 if covariate == "age" else 1
             results.append({
                 "study": str(study), "covariate": covariate, "term": term,
-                "contrast": contrast, "estimate": fit.params[index],
-                "ci_low": confidence[index, 0], "ci_high": confidence[index, 1],
+                "contrast": contrast, "estimate": fit.params[index] * effect_scale,
+                "ci_low": confidence[index, 0] * effect_scale,
+                "ci_high": confidence[index, 1] * effect_scale,
                 "n_samples": len(model_data),
             })
-    return pd.DataFrame(results)
+    diagnostic_columns = [
+        "study", "residual_sd", "binomial_sampling_sd", "n_samples", "mean_fraction",
+        "n_clipped_binomial_probabilities", "fraction_clipped_binomial_probabilities",
+        "covariates", "model_terms",
+    ]
+    return pd.DataFrame(results), pd.DataFrame(residual_diagnostics, columns=diagnostic_columns)
 
 
-def plot_parent_fraction_coefficients(coefficients, *, palette):
-    """Plot each study's adjusted OLS coefficient and 95% CI by covariate."""
+def plot_parent_fraction_coefficients(coefficients, residual_diagnostics, *, palette):
+    """Plot adjusted coefficients plus observed and binomial residual variation."""
     if coefficients.empty:
         display(Markdown("_No estimable adult-only study models for this fraction._"))
         return
     covariate_order = [name for name in ["age", "sex", "bmi", "cmv"]
                        if name in coefficients["covariate"].unique()]
     studies = sorted(coefficients["study"].unique())
-    y_positions = {name: index for index, name in enumerate(covariate_order)}
-    figure, axis = plt.subplots(figsize=(9, max(3.5, 1.15 * len(covariate_order))))
+    residual_label = "residual_sd"
+    y_positions = {name: index for index, name in enumerate([*covariate_order, residual_label])}
+    figure, axis = plt.subplots(figsize=(9, max(4.4, 1.15 * (len(covariate_order) + 1))))
     for study_index, study in enumerate(studies):
         subset = coefficients.loc[coefficients["study"] == study]
         for _, row in subset.iterrows():
@@ -379,15 +442,44 @@ def plot_parent_fraction_coefficients(coefficients, *, palette):
                 xerr=[[row["estimate"] - row["ci_low"]], [row["ci_high"] - row["estimate"]]],
                 fmt="o", color=palette[study], capsize=3, markersize=5,
             )
+    for study_index, study in enumerate(studies):
+        subset = residual_diagnostics.loc[residual_diagnostics["study"] == study]
+        if subset.empty:
+            continue
+        row = subset.iloc[0]
+        # Interpretation check: assess whether residual variation is too large
+        # for the coefficient estimates above to support useful interpretation.
+        offset = (study_index - (len(studies) - 1) / 2) * 0.055
+        y = y_positions[residual_label] + offset
+        axis.plot(row["residual_sd"], y, "o", color=palette[study], markersize=6)
+        axis.plot(
+            row["binomial_sampling_sd"], y, marker="D", linestyle="", markersize=5,
+            markerfacecolor="none", markeredgecolor=palette[study], markeredgewidth=1.25,
+        )
     axis.axvline(0, color="#333333", linewidth=1, linestyle="--")
-    axis.set_yticks(list(y_positions.values()), [name.upper() for name in covariate_order])
+    axis.set_yticks(
+        list(y_positions.values()),
+        [
+            *("AGE (Effect per decade)" if name == "age" else name.upper() for name in covariate_order),
+            "RESIDUAL SD (fraction)",
+        ],
+    )
     axis.set_xlabel("OLS coefficient (95% CI)")
-    axis.set_ylabel("Covariate")
+    axis.set_ylabel("Covariate / diagnostic")
     axis.invert_yaxis()
-    axis.legend(
+    study_legend = axis.legend(
         handles=[plt.Line2D([], [], marker="o", linestyle="", color=palette[study], label=study)
                  for study in studies],
-        title="Study", bbox_to_anchor=(1.02, 1), loc="upper left",
+        title="Study (AGE = per decade)", bbox_to_anchor=(1.02, 1), loc="upper left",
+    )
+    axis.add_artist(study_legend)
+    axis.legend(
+        handles=[
+            plt.Line2D([], [], marker="o", linestyle="", color="#333333", label="Observed model residual SD"),
+            plt.Line2D([], [], marker="D", linestyle="", color="#333333", markerfacecolor="none",
+                       label="Conditional binomial sampling SD (bootstrap mean)"),
+        ],
+        title="Residual diagnostic", bbox_to_anchor=(1.02, 0.53), loc="upper left",
     )
     axis.set_title("Adult sample-level fraction model coefficients")
     figure.tight_layout()
@@ -406,8 +498,8 @@ def directional_cluster_genes(markers, *, cluster, n_genes=8):
     return result.sort_values("logfoldchanges")
 
 
-def plot_pca_study_and_technology(adata):
-    """Show the first four native local PC scores with study and chemistry encoded."""
+def plot_pca_study_technology_and_introns(adata):
+    """Show native PC scores with detailed and collapsed protocol covariates."""
     scores = adata.obsm["X_pca"]
     if scores.shape[1] < 2:
         display(Markdown("_Fewer than two local PCs are available to plot._"))
@@ -416,24 +508,55 @@ def plot_pca_study_and_technology(adata):
     pairs = [(0, 1)]
     if scores.shape[1] >= 4:
         pairs.append((2, 3))
-    score_data = adata.obs[["study", "technology"]].copy()
+    score_data = adata.obs[["study", "technology", "include_intronic"]].copy()
     score_data["study"] = score_data["study"].astype(str)
     score_data["technology"] = score_data["technology"].astype(str)
+    score_data["include_intronic"] = score_data["include_intronic"].astype(str)
+
+    def technology_end(value):
+        normalized = value.lower().replace("′", "'").replace(" ", "")
+        if "3'" in normalized:
+            return "3′"
+        if "5'" in normalized:
+            return "5′"
+        return "other"
+
+    intronic_labels = {
+        "yes": "Yes",
+        "no": "No",
+        "not_provided": "Not provided",
+    }
+    score_data["technology_end"] = score_data["technology"].map(technology_end)
+    score_data["include_intronic_label"] = score_data["include_intronic"].map(
+        lambda value: intronic_labels.get(value.lower(), value)
+    )
     for component in {component for pair in pairs for component in pair}:
         score_data[f"PC {component + 1}"] = scores[:, component]
 
     studies = sorted(score_data["study"].unique())
     technologies = sorted(score_data["technology"].unique())
     palette = dict(zip(studies, sns.color_palette("tab10", n_colors=len(studies))))
+    intronic_levels = [
+        label for label in ["Yes", "No", "Not provided"]
+        if label in score_data["include_intronic_label"].unique()
+    ]
+    intronic_palette = {
+        level: {"Yes": "#0072B2", "No": "#D55E00", "Not provided": "#7F7F7F"}[level]
+        for level in intronic_levels
+    }
     marker_cycle = ["o", "s", "^", "D", "P", "X", "v", "<", ">", "h"]
     technology_markers = {
         technology: marker_cycle[index % len(marker_cycle)]
         for index, technology in enumerate(technologies)
     }
+    technology_end_order = [
+        end for end in ["3′", "5′", "other"] if end in score_data["technology_end"].unique()
+    ]
+    technology_end_markers = {"3′": "o", "5′": "s", "other": "X"}
     variance_ratio = np.asarray(adata.uns["pca"]["variance_ratio"])
 
-    figure, axes = plt.subplots(1, len(pairs), figsize=(8 * len(pairs), 6.4), squeeze=False)
-    for axis, (x_component, y_component) in zip(axes.flat, pairs):
+    figure, axes = plt.subplots(2, len(pairs), figsize=(8 * len(pairs), 11), squeeze=False)
+    for axis, (x_component, y_component) in zip(axes[0], pairs):
         sns.scatterplot(
             data=score_data,
             x=f"PC {x_component + 1}",
@@ -449,7 +572,28 @@ def plot_pca_study_and_technology(adata):
             rasterized=True,
             ax=axis,
         )
-        axis.set_title(f"PC {x_component + 1} vs. PC {y_component + 1}")
+        axis.set_title(f"PC {x_component + 1} vs. PC {y_component + 1}: study and technology")
+        axis.set_xlabel(f"PC {x_component + 1} ({variance_ratio[x_component]:.1%} variance)")
+        axis.set_ylabel(f"PC {y_component + 1} ({variance_ratio[y_component]:.1%} variance)")
+    for axis, (x_component, y_component) in zip(axes[1], pairs):
+        sns.scatterplot(
+            data=score_data,
+            x=f"PC {x_component + 1}",
+            y=f"PC {y_component + 1}",
+            hue="include_intronic_label",
+            hue_order=intronic_levels,
+            style="technology_end",
+            style_order=technology_end_order,
+            palette=intronic_palette,
+            markers=technology_end_markers,
+            s=max(8, 120_000 / adata.n_obs),
+            alpha=0.65,
+            edgecolor="none",
+            legend=False,
+            rasterized=True,
+            ax=axis,
+        )
+        axis.set_title(f"PC {x_component + 1} vs. PC {y_component + 1}: intronic reads and 3′/5′")
         axis.set_xlabel(f"PC {x_component + 1} ({variance_ratio[x_component]:.1%} variance)")
         axis.set_ylabel(f"PC {y_component + 1} ({variance_ratio[y_component]:.1%} variance)")
 
@@ -464,17 +608,38 @@ def plot_pca_study_and_technology(adata):
         )
         for technology in technologies
     ]
+    intronic_handles = [
+        plt.Line2D([], [], marker="o", linestyle="", color=intronic_palette[level], label=level, markersize=6)
+        for level in intronic_levels
+    ]
+    technology_end_handles = [
+        plt.Line2D(
+            [], [], marker=technology_end_markers[end], linestyle="", color="0.35",
+            label=end, markersize=6,
+        )
+        for end in technology_end_order
+    ]
     study_legend = figure.legend(
-        handles=study_handles, title="Study", loc="lower center",
-        bbox_to_anchor=(0.5, 0.09), ncol=min(4, len(studies)),
+        handles=study_handles, title="Study", loc="upper left",
+        bbox_to_anchor=(0.81, 0.94),
     )
     figure.add_artist(study_legend)
-    figure.legend(
-        handles=technology_handles, title="Technology", loc="lower center",
-        bbox_to_anchor=(0.5, 0.0), ncol=min(5, len(technologies)),
+    technology_legend = figure.legend(
+        handles=technology_handles, title="Technology", loc="upper left",
+        bbox_to_anchor=(0.81, 0.67),
     )
-    figure.suptitle("Native local PCA scores by study and technology", y=0.99)
-    figure.tight_layout(rect=(0, 0.2, 1, 0.95))
+    figure.add_artist(technology_legend)
+    intronic_legend = figure.legend(
+        handles=intronic_handles, title="Intronic reads used\nin alignment", loc="upper left",
+        bbox_to_anchor=(0.81, 0.39),
+    )
+    figure.add_artist(intronic_legend)
+    figure.legend(
+        handles=technology_end_handles, title="Technology end", loc="upper left",
+        bbox_to_anchor=(0.81, 0.17),
+    )
+    figure.suptitle("Native local PCA scores by study and protocol covariates", y=0.99)
+    figure.tight_layout(rect=(0, 0, 0.8, 0.96))
     plt.show()
 
 # %% [markdown]
@@ -607,9 +772,20 @@ plot_combined_study_fits([
 # sex and CMV are categorical treatment-coded terms. A covariate is included
 # when it is present and observed in at least 95% of adult samples in that
 # study. Models use complete cases for the included covariates, and categorical
-# contrasts use the first sorted level as the reference. The plot shows adjusted
-# coefficients and 95% confidence intervals; no model or covariate tables are
-# printed.
+# contrasts use the first sorted level as the reference. Age coefficients and
+# intervals are scaled to a 10-year change. The bottom row compares each model's
+# residual SD with a conditional parametric bootstrap of binomial cell-sampling
+# noise. For donor *i*, the reported OLS model supplies its fitted fraction
+# \(p_i\), clipped to [0, 1], and its observed parent-cell count is \(n_i\).
+# Each replicate draws \(K_i \sim Binomial(n_i, p_i)\), analyzes
+# \(K_i / n_i\) with the same covariate design, and records the residual SD.
+# This holds the fitted covariate structure fixed and varies only finite
+# cell-count sampling; it is therefore directly comparable with the observed
+# post-model residual SD. The number and fraction of clipped OLS predictions
+# are published in the diagnostics TSV. More bootstrap replicates improve Monte-Carlo
+# precision, but do not change the target quantity. The residuals need review
+# before interpreting the other terms: if they are too large relative to their
+# scale, those effects may not support a reasonable interpretation.
 
 # %%
 display(Markdown(
@@ -618,10 +794,26 @@ display(Markdown(
 display(Markdown("**Model sample restriction:** adults aged ≥20 years only."))
 parent_fraction_data = fraction_specs[1][0]
 parent_fraction_column = fraction_specs[1][1]
-fraction_coefficients = fit_parent_fraction_models(
+fraction_model_settings = pipeline["cell_type_analysis"]["fraction_model"]
+fraction_coefficients, fraction_residual_diagnostics = fit_parent_fraction_models(
     parent_fraction_data, adata, fraction_column=parent_fraction_column,
+    bootstrap_replicates=fraction_model_settings["binomial_bootstrap_replicates"],
+    bootstrap_seed=fraction_model_settings["binomial_bootstrap_seed"],
 )
-plot_parent_fraction_coefficients(fraction_coefficients, palette=palette)
+fraction_residual_diagnostics.insert(0, "cell_type", cell_type_name)
+fraction_residual_diagnostics.insert(1, "aifi_l1_parent", parent)
+fraction_residual_diagnostics.insert(2, "response", parent_fraction_column)
+fraction_residual_diagnostics["binomial_bootstrap_replicates"] = (
+    fraction_model_settings["binomial_bootstrap_replicates"]
+)
+fraction_residual_diagnostics["binomial_bootstrap_seed"] = fraction_model_settings["binomial_bootstrap_seed"]
+fraction_diagnostics_path = output_dir / "fraction_model_diagnostics.tsv"
+fraction_residual_diagnostics.to_csv(fraction_diagnostics_path, sep="\t", index=False)
+display(Markdown("#### Fraction-model residual and sampling diagnostics"))
+display(fraction_residual_diagnostics)
+plot_parent_fraction_coefficients(
+    fraction_coefficients, fraction_residual_diagnostics, palette=palette,
+)
 
 # %%
 if report["status"] != "complete":
@@ -691,17 +883,18 @@ if report["status"] == "complete":
 
 # %% [markdown]
 # <a id="pc-study-technology"></a>
-# ## PCA scores by study and technology
+# ## PCA scores by study and protocol covariates
 #
 # These are the native, local PCA scores before Harmony adjustment. Colour uses
 # the report's standard study palette and marker shape indicates the recorded
-# single-cell technology, so technical structure in the first four PCs is
-# visible directly. The Harmony-adjusted representation is used only for the
-# local neighbour graph, UMAP, and clustering.
+# single-cell technology in the top row. The lower row collapses technology to
+# 3′ or 5′ marker shapes and maps intronic read inclusion to colour. The
+# Harmony-adjusted representation is used only for the local neighbour graph,
+# UMAP, and clustering.
 
 # %%
 if report["status"] == "complete":
-    plot_pca_study_and_technology(adata)
+    plot_pca_study_technology_and_introns(adata)
 
 # %% [markdown]
 # <a id="pc-age"></a>

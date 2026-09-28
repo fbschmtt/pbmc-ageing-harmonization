@@ -84,14 +84,17 @@ optional downstream cell-type workflow
                                             └──> render notebook/HTML
                                                   └──> output/cell_type_analysis/<type>/
                                                         ├── report.html
-                                                        └── executed.ipynb + tables
+                                                        └── executed.ipynb + tables, including
+                                                            fraction_model_diagnostics.tsv
                               output/cell_type_analysis/cell_type_manifest.json
 
 optional pseudobulk differential-expression workflow
-  pseudobulk_merged.h5ad ──> split by per-study AIFI-L2 labels in Python
-                                ├──> per-study ~ age + sex fits
-                                └──> merged ~ study + age + sex fit
-                                      └──> gene-level CSVs + indexed JSON manifest
+  pseudobulk_merged.h5ad ──> list per-study AIFI-L2 labels
+                              └──> one parallel task per label, each loading and
+                                   subsetting the same small pseudobulk H5AD in memory
+                                     ├──> per-study ~ age + sex fits
+                                     └──> merged ~ study + age + sex fit
+                                           └──> collector: gene-level CSVs + indexed JSON manifest
 ```
 
 All immutable local inputs belong under `input_data/`. Generated conversions,
@@ -318,8 +321,7 @@ make run-test STUDIES=wang25
 make run STUDIES=aifi,onek1k
 ```
 
-The `test` profile uses isolated 200-cell fixtures from `test_data/`; the
-`core_test` profile shortens the harmonization and QC task timeouts. RDS-based
+The `test` profile uses isolated 200-cell fixtures from `test_data/`. RDS-based
 studies retain an RDS fixture and therefore still
 pass through the same `CONVERT_RDS` process as a production run. Create or refresh fixtures
 from the production inputs once with `make test-data`; this never modifies
@@ -339,16 +341,28 @@ restores all configured studies by default because it is now an occasional
 broad check; pass an explicit `STUDIES` list if a narrower verification is
 needed.
 
-Choose the smallest check that covers a change during development. Python-only
-changes normally need `make lint test-unit`; Nextflow or configuration changes
-need `make workflow-lint` plus a focused `make run-test STUDIES=<study>` when
-the wiring needs execution. For one cell-type report, reuse its split with
-`make run-cell-type-test CELL_TYPE=cd14-monocyte`; when only the report
-template changed, reuse its published analysis with
-`make render-cell-type-test CELL_TYPE=cd14-monocyte`. Run `make verify` for
-broad cross-cutting or release-level validation, rather than after every
-focused change. Run `make docs-check` after changing tracked Markdown files or
-Make target names.
+## Choosing a Make target
+
+Choose the smallest target that directly exercises the changed contract. The
+repository instructions in [AGENTS.md](AGENTS.md) use this table when deciding
+which validation to run.
+
+| Change or goal | Preferred target | When to use a broader target |
+|---|---|---|
+| Python library, CLI, or deterministic test change | `make lint test-unit` | Run a focused workflow too if a task contract or published artifact changed. |
+| Nextflow workflow or configuration change | `make workflow-lint` | Add `make run-test STUDIES=<study>` when task wiring must execute. |
+| One cell-type report template | `make run-cell-type-test CELL_TYPE=cd14-monocyte` | Use `make render-cell-type-test` only when an existing analysis is sufficient and no analysis output changed. |
+| Cell-type splitting or shared analysis | `make run-cell-type-analysis-test` | Use `make verify` only when the change affects all reports or release validation. |
+| Positive pseudobulk DE fitting | `make run-de-synthetic-test` then `make check-synthetic-de-results` | Follow with `make run-cell-type-analysis-test-existing` when checking that DE results reach reports. |
+| Core workflow for one or a few studies | `make run-test STUDIES=<list>` | Use `STUDIES=all` for all-study fixture coverage. |
+| Markdown documentation or Make target names | `make docs-check` | Also run the target described by changed commands. |
+| Broad cross-cutting or release validation | `make verify` | This is deliberately non-resumed and includes all studies by default. |
+| Production analysis | `make run` | It is resumable; use only after the relevant focused checks pass. |
+
+Nextflow submission alone is not a passing workflow check: confirm each task's
+`.exitcode` and the published deliverables. Development test targets omit
+`nehar_belaid26` by default because its larger fixture dominates runtime;
+pass `STUDIES=all` (or an explicit comma-separated list) to override this.
 
 Harmony integration uses the pinned Harmony2 C++ backend. It uses the backend's
 native thread policy; the legacy OpenMP/OpenBLAS thread overrides that crashed
@@ -358,8 +372,19 @@ Cell-type reports show signed marker log-fold changes (higher and lower genes),
 direct cluster labels on the local UMAP, compact study metadata coverage, and
 up to ten local PCA loading panels. They include native local PC1-versus-PC2
 and PC3-versus-PC4 scatterplots, with the standard study palette as colour and
-the reported `technology` field as marker shape. They also include cumulative
-variance explained and descriptive age correlations for the first ten PCs.
+the reported `technology` field as marker shape. A companion PCA row maps
+intronic-read inclusion to colour and 3′/5′ technology to marker shape. They
+also include cumulative variance explained and descriptive age correlations for
+the first ten PCs. The parent-fraction forest plot reports age effects per
+decade and a per-study residual-SD row with a conditional binomial
+cell-sampling reference. For each donor, the reference uses the fitted
+covariate-model fraction (clipped to the valid probability range) and that
+donor's observed parent-cell count, then refits the same model in each
+bootstrap replicate.
+The accompanying `fraction_model_diagnostics.tsv` records each estimable
+study's included covariates and model terms, residual and sampling SDs, sample
+count, mean fraction, count and fraction of clipped sampling probabilities,
+and the configured bootstrap seed and replicate count.
 PCA loading figures use explicit subplot spacing because Scanpy's composite
 figure is not compatible with Matplotlib `tight_layout()`.
 
@@ -377,6 +402,16 @@ report runners materialize a temporary notebook immediately before execution;
 the generated template notebooks are intentionally not tracked. The published
 `executed.ipynb` is instead the executed report artifact. The separate
 `reports/qc_report.ipynb` study-QC template remains hand-maintained.
+
+### Report artifacts and web delivery
+
+Each report run publishes a self-contained static `report.html`, which can be
+opened directly in a browser or served from a static file host, plus an
+`executed.ipynb` that retains code and outputs for technical reproduction. The
+HTML report is the reader-facing analysis artifact; the notebook is the audit
+artifact. These standalone pages are intentionally separate from any future
+project-level website or custom frontend, which should browse manifests and
+structured report tables rather than parse notebook HTML.
 
 ## Per-cell-type residual-variation reports
 
@@ -571,20 +606,26 @@ changed build context automatically receives separate resumable cache entries.
 ## Pseudobulk differential expression
 
 The separate `differential_expression.nf` workflow consumes the merged
-sample-level pseudobulk H5AD. Its Python task splits the file by the retained
-per-study `aifi_l2_majority` label in memory, then runs PyDESeq2 for each type:
-one `~ age + sex` fit per study and one shared age-slope `~ study + age + sex`
-fit across studies. The age effect is reported as log2 fold change per year.
-The per-study fit uses genes available in that study; each merged fit uses the
-intersection of genes available across the studies contributing samples, so
-study-absent genes' synthetic outer-join zeros are excluded.
+sample-level pseudobulk H5AD. It first lists retained per-study
+`aifi_l2_majority` labels, then runs one independent task per label. Each task
+loads the same small merged pseudobulk H5AD and subsets its label in memory; it
+does not materialize a per-type pseudobulk H5AD. Each task runs one `~ age +
+sex` fit per study and one shared age-slope `~ study + age + sex` fit across
+studies. A final collector writes the ordinary result directories and manifest.
+The age effect is reported as log2 fold change per year. The per-study fit uses
+genes available in that study; each merged fit uses the intersection of genes
+available across the studies contributing samples, so study-absent genes'
+synthetic outer-join zeros are excluded. The parallel type-fitting task is
+configured for one CPU, which is passed directly to PyDESeq2; all other CPU,
+time, and memory requests use the executor defaults.
 
 Samples must be age 20 or older and have at least 10 cells in that
 sample × cell-type pseudobulk. Samples with missing/unknown sex metadata or
 zero counts over the fit's gene universe are also omitted. All sample
 exclusions and model fits that cannot estimate the configured covariates are
 recorded in the JSON manifest. CSV results and the manifest are published
-beneath `<outdir>/differential_expression/`.
+beneath `<outdir>/differential_expression/`; each cell-type directory also
+contains the task fit record (`cell_type_result.json`) used by the collector.
 
 The DE manifest is the handoff contract for reports. Its
 `results_by_cell_type` index lists the per-study and merged result paths (or an

@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import anndata as ad
 import pandas as pd
 
-from pbmc_pipeline.differential_expression import _prepare_metadata
+from pbmc_pipeline.config import read_json
+from pbmc_pipeline.differential_expression import (
+    _prepare_metadata,
+    combine_cell_type_differential_expression,
+    list_pseudobulk_cell_types,
+)
 from pbmc_pipeline.synthetic_de import create_synthetic_pseudobulk
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_test_mode_bypasses_cell_count_cutoff_but_keeps_adult_filter() -> None:
@@ -59,3 +69,34 @@ def test_synthetic_fixture_requires_production_cell_cutoff(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="configured DE cell cutoff"):
         create_synthetic_pseudobulk(tmp_path / "too_small.h5ad", cells_per_pseudobulk=9)
+
+
+def test_parallel_cell_type_results_rebuild_the_standard_de_manifest(tmp_path) -> None:
+    input_path = create_synthetic_pseudobulk(tmp_path / "pseudobulk.h5ad")
+    pipeline = read_json(ROOT / "config" / "pipeline.json")
+    cell_types = list_pseudobulk_cell_types(input_path, pipeline)
+    assert len(cell_types) == 2
+    assert [slug for slug, _ in cell_types] == ["cd14-monocyte", "naive-cd4-t-cell"]
+
+    task_results = []
+    for slug, cell_type in cell_types:
+        result_dir = tmp_path / "task_results" / slug
+        result_dir.mkdir(parents=True)
+        (result_dir / "cell_type_result.json").write_text(json.dumps({
+            "cell_type": cell_type,
+            "slug": slug,
+            "n_pseudobulks": 24,
+            "metadata_exclusions": {},
+            "excluded_samples": [],
+            "models": [],
+        }))
+        task_results.append(result_dir)
+
+    report = combine_cell_type_differential_expression(
+        input_path, tmp_path / "differential_expression", pipeline, task_results,
+        synthetic_test_data=True,
+    )
+
+    assert report["status"] == "no_estimable_models"
+    assert list(report["results_by_cell_type"]) == [slug for slug, _ in cell_types]
+    assert (tmp_path / "differential_expression" / cell_types[0][0] / "cell_type_result.json").is_file()

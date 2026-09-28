@@ -104,7 +104,8 @@ merge is available.
 - [x] Pin the complete Python Docker runtime in `requirements.lock` and make it
   part of the Python image's content-derived tag.
 - [x] Add the separate pseudobulk PyDESeq2 workflow with per-study and merged
-  age models, configured sample filters, and a manifest indexed by cell type.
+  age models, configured sample filters, task-level cell-type fan-out without
+  materialized per-type pseudobulk inputs, and a manifest indexed by cell type.
 - [x] Allow standard cell-type reports to include matching DE results through
   that manifest, keeping DE files and single-cell reports in separate folders.
 - [x] Generate a deterministic positive-fit DE fixture on demand and include
@@ -114,7 +115,7 @@ merge is available.
 
 - The scientific dependencies are installed in the ignored `.venv`.
 - All configured studies pass the complete test-data workflow.
-- Ruff passes, 49 Python tests pass, and `nextflow lint` reports no errors for
+- Ruff passes, 52 Python tests pass, and `nextflow lint` reports no errors for
   the core, cell-type, and differential-expression workflows (Nextflow 26.04.6;
   minimum declared version is 25.04).
 - Revision-tagged Python and R images build successfully.
@@ -124,11 +125,13 @@ merge is available.
   overrides were removed after the backend upgrade.
 - Cell-type reports now use signed marker contrasts, direct UMAP cluster labels,
   a compact study-coverage representation, PC1/2 and PC3/4 score plots coloured
-  by study and shaped by technology, up to ten PCA loading panels, and a
-  cumulative variance-explained plot. Sample-fraction views include within-study
-  linear trends with and without samples under age 20, plus separate combined
-  linear and LOWESS plots with unshaded per-study fits and sample-share-weighted
-  means. Local PCA age correlations are limited to the first ten PCs. A focused
+  by study and shaped by technology, a companion intronic-read/3′--5′ PCA row,
+  up to ten PCA loading panels, and a cumulative variance-explained plot.
+  Sample-fraction views include within-study linear trends with and without
+  samples under age 20, separate combined linear and LOWESS plots with unshaded
+  per-study fits and sample-share-weighted means, plus adult-only adjusted
+  fraction-model forest plots and published residual/sampling diagnostics.
+  Local PCA age correlations are limited to the first ten PCs. A focused
   CD14-monocyte run completed both the separate analysis and report-rendering
   tasks.
 - A fresh `docker,test` Wang25 Nextflow run published its H5AD, JSON run report,
@@ -176,10 +179,14 @@ make run STUDIES=all MERGE_SINGLE_CELL=true
 The first implementation uses **PyDESeq2** on sample × cell-type raw-count
 pseudobulks. It runs one model per study (`~ age + sex`) and one shared-slope
 merged model (`~ study + age + sex`) for each AIFI L2 type. The age coefficient
-is a linear effect per year, tested with a Wald test. Python splits the merged
-pseudobulk H5AD by cell type in memory. Per-study fits use genes available in
-that study; the merged fit uses the intersection of genes available in all
-studies contributing samples to that fit, avoiding synthetic outer-join zeros.
+is a linear effect per year, tested with a Wald test. Nextflow lists cell types
+then runs one task per type; each task loads and subsets the same small merged
+pseudobulk H5AD in memory, without materializing a per-type pseudobulk input.
+The final collector writes the standard result layout and root manifest.
+Per-study fits use genes available in that study; the merged fit uses the
+intersection of genes available in all studies contributing samples to that
+fit, avoiding synthetic outer-join zeros. Each parallel type task is configured
+for one CPU; other CPU, time, and memory requests are left to executor defaults.
 
 The DE workflow remains independent of per-celltype analysis; celltype reports
 consume matching DE result directories through the root manifest's explicit
@@ -298,3 +305,6 @@ primary age-DE analysis, not a replacement for it.
    edge cases that random smoke-test subsets may omit.
 6. Continue with the exploratory residual-structure analysis only after the
    production outputs and provenance have been reviewed.
+7. Polish the existing static HTML reports for reader-facing use (without
+   sacrificing the executed notebooks as audit artifacts), then add a static
+   manifest-driven report index before considering a custom web frontend.

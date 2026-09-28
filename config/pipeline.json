@@ -36,7 +36,7 @@
     }
   },
   "cell_type_analysis": {
-    "analysis_version": 3,
+    "analysis_version": 4,
     "split_by": "aifi_l2_majority",
     "min_cells": 50,
     "min_fraction_denominator_cells": 10,
@@ -48,6 +48,10 @@
       "method": "harmony",
       "batch_key": "study",
       "adjusted_basis": "X_pca_harmony"
+    },
+    "fraction_model": {
+      "binomial_bootstrap_replicates": 1000,
+      "binomial_bootstrap_seed": 0
     },
     "l2_parent_l1": {
       "ASDC": "DC",
