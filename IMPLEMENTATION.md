@@ -123,8 +123,11 @@ use `available_in_<study>`, `n_studies_with_gene`,
 synthetic zeros from observed zero counts.
 
 The optional `--merge_single_cell` branch additionally writes
-`merged/single_cell_merged.h5ad`. It is disabled by default because it loads
-all selected studies simultaneously. It preserves per-study predictions in
+`merged/single_cell_merged.h5ad`. It is disabled by default because the merged
+matrix must ultimately fit in memory for normalization and integration. Before
+that step, an on-disk concat streams the source matrices into a temporary H5AD,
+avoiding a peak that holds all source matrices plus a second full concat in
+memory. It preserves per-study predictions in
 `obs['aifi_l2_majority']` for downstream grouping and splitting, with a
 redundant `obs['aifi_l2_study_majority']` comparison alias.
 Its embedding uses only the gene intersection across studies: it selects HVGs
@@ -228,3 +231,8 @@ only two cell types, so other reports exercise the ordinary no-DE path.
 `make run` is the resumable production entry point; `make run-no-qc` omits only
 report rendering.
 `MERGE_SINGLE_CELL=true` enables the optional single-cell branch.
+The current Nextflow profiles set CPU counts and task timeouts but do not set
+per-process memory limits. The full production pipeline has completed
+successfully, but resource reports/traces are not yet part of the tracked run
+artifacts; record measured peak RAM before sizing a different runner or adding
+memory directives.

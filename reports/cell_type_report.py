@@ -22,6 +22,7 @@ import scanpy as sc
 import seaborn as sns
 from IPython.display import Markdown, display
 from statsmodels.nonparametric.smoothers_lowess import lowess
+import statsmodels.api as sm
 
 sns.set_theme(style="whitegrid")
 from pbmc_pipeline.config import read_json
@@ -40,7 +41,8 @@ if de_dir:
     de_metadata_path = Path(de_dir) / "run_metadata.json"
     if de_metadata_path.is_file():
         de_run_metadata = read_json(de_metadata_path)
-display(Markdown(f"## {primitive.obs['aifi_l2_majority'].iloc[0]}\n\n{primitive.n_obs:,} cells × {primitive.n_vars:,} genes"))
+cell_type_name = str(primitive.obs["aifi_l2_majority"].iloc[0])
+display(Markdown(f"## {cell_type_name}\n\n{primitive.n_obs:,} cells × {primitive.n_vars:,} genes"))
 display(pd.Series(report, name="value").to_frame())
 if de_run_metadata.get("analysis_mode") == "test_only":
     display(Markdown(
@@ -271,6 +273,127 @@ def plot_cluster_fractions(data, *, palette):
     plt.show()
 
 
+def fit_parent_fraction_models(fractions, adata, *, fraction_column):
+    """Fit adult-only, study-specific OLS models for one L1-parent fraction."""
+    candidate_covariates = ["age", "sex", "bmi", "cmv"]
+    present = [column for column in candidate_covariates if column in adata.obs]
+    metadata_columns = [column for column in present if column != "age"]
+    metadata = adata.obs.groupby(["study", "sample"], observed=True)[metadata_columns].first().reset_index()
+    # Repeated cell metadata must describe one sample consistently.
+    for column in present:
+        n_unique = adata.obs.groupby(["study", "sample"], observed=True)[column].nunique(dropna=False)
+        if (n_unique > 1).any():
+            raise ValueError(f"{column} must be constant within each study × sample")
+    data = fractions.merge(metadata, on=["study", "sample"], how="left", validate="one_to_one")
+    data["age"] = pd.to_numeric(data["age"], errors="coerce")
+    data = data.loc[data["age"] >= 20].copy()
+    results = []
+    unavailable = {"", "not_provided", "unknown", "nan", "none"}
+
+    def valid_values(values, column):
+        if column in {"age", "bmi"}:
+            numeric = pd.to_numeric(values, errors="coerce")
+            return numeric.notna() & np.isfinite(numeric)
+        normalized = values.astype("string").str.strip().str.lower()
+        return normalized.notna() & ~normalized.isin(unavailable)
+
+    for study, subset in data.groupby("study", sort=True):
+        eligible = subset.copy()
+        selected = []
+        for column in candidate_covariates:
+            if column not in present:
+                continue
+            valid = valid_values(eligible[column], column)
+            coverage = float(valid.mean()) if len(eligible) else np.nan
+            if coverage >= 0.95:
+                if column in {"sex", "cmv"}:
+                    levels = eligible.loc[valid, column].astype("string").str.strip().str.lower().nunique()
+                    variable = levels >= 2
+                else:
+                    variable = pd.to_numeric(eligible.loc[valid, column], errors="coerce").nunique() >= 2
+                if variable:
+                    selected.append(column)
+
+        if not selected:
+            continue
+        valid_rows = pd.Series(True, index=eligible.index)
+        for column in selected:
+            valid_rows &= valid_values(eligible[column], column)
+        model_data = eligible.loc[valid_rows].copy()
+        if model_data.empty:
+            continue
+        pieces = [pd.Series(1.0, index=model_data.index, name="intercept")]
+        term_covariates = {"intercept": "intercept"}
+        for column in selected:
+            if column in {"age", "bmi"}:
+                pieces.append(pd.to_numeric(model_data[column], errors="coerce").rename(column))
+                term_covariates[column] = column
+            else:
+                values = model_data[column].astype("string").str.strip().str.lower()
+                levels = sorted(values.unique().tolist())
+                values = pd.Series(pd.Categorical(values, categories=levels), index=model_data.index)
+                dummies = pd.get_dummies(values, prefix=column, drop_first=True, dtype=float)
+                for term in dummies:
+                    pieces.append(dummies[term].rename(term))
+                    term_covariates[term] = column
+        design = pd.concat(pieces, axis=1).astype(float)
+        if len(model_data) <= design.shape[1] or np.linalg.matrix_rank(design.to_numpy()) < design.shape[1]:
+            continue
+        fit = sm.OLS(model_data[fraction_column].to_numpy(dtype=float), design.to_numpy()).fit()
+        confidence = fit.conf_int()
+        for index, term in enumerate(design.columns):
+            if term == "intercept":
+                continue
+            covariate = term_covariates[term]
+            if covariate in {"sex", "cmv"}:
+                levels = sorted(model_data[covariate].astype("string").str.strip().str.lower().unique())
+                contrast = f"{term.removeprefix(f'{covariate}_')} vs {levels[0]}"
+            else:
+                contrast = "per year" if covariate == "age" else "per BMI unit"
+            results.append({
+                "study": str(study), "covariate": covariate, "term": term,
+                "contrast": contrast, "estimate": fit.params[index],
+                "ci_low": confidence[index, 0], "ci_high": confidence[index, 1],
+                "n_samples": len(model_data),
+            })
+    return pd.DataFrame(results)
+
+
+def plot_parent_fraction_coefficients(coefficients, *, palette):
+    """Plot each study's adjusted OLS coefficient and 95% CI by covariate."""
+    if coefficients.empty:
+        display(Markdown("_No estimable adult-only study models for this fraction._"))
+        return
+    covariate_order = [name for name in ["age", "sex", "bmi", "cmv"]
+                       if name in coefficients["covariate"].unique()]
+    studies = sorted(coefficients["study"].unique())
+    y_positions = {name: index for index, name in enumerate(covariate_order)}
+    figure, axis = plt.subplots(figsize=(9, max(3.5, 1.15 * len(covariate_order))))
+    for study_index, study in enumerate(studies):
+        subset = coefficients.loc[coefficients["study"] == study]
+        for _, row in subset.iterrows():
+            offset = (study_index - (len(studies) - 1) / 2) * 0.055
+            y = y_positions[row["covariate"]] + offset
+            axis.errorbar(
+                row["estimate"], y,
+                xerr=[[row["estimate"] - row["ci_low"]], [row["ci_high"] - row["estimate"]]],
+                fmt="o", color=palette[study], capsize=3, markersize=5,
+            )
+    axis.axvline(0, color="#333333", linewidth=1, linestyle="--")
+    axis.set_yticks(list(y_positions.values()), [name.upper() for name in covariate_order])
+    axis.set_xlabel("OLS coefficient (95% CI)")
+    axis.set_ylabel("Covariate")
+    axis.invert_yaxis()
+    axis.legend(
+        handles=[plt.Line2D([], [], marker="o", linestyle="", color=palette[study], label=study)
+                 for study in studies],
+        title="Study", bbox_to_anchor=(1.02, 1), loc="upper left",
+    )
+    axis.set_title("Adult sample-level fraction model coefficients")
+    figure.tight_layout()
+    plt.show()
+
+
 def directional_cluster_genes(markers, *, cluster, n_genes=8):
     """Return the strongest positive and negative genes for one cluster contrast."""
     subset = markers.loc[markers["group"].astype(str) == str(cluster)].copy()
@@ -462,17 +585,43 @@ display(pd.DataFrame({
     ],
     "minimum_denominator_cells": min_fraction_denominator,
 }))
+
 studies = sorted(pd.concat([spec[0] for spec in fraction_specs])["study"].unique())
 palette = dict(zip(studies, sns.color_palette("tab10", n_colors=len(studies))))
+display(Markdown(f"### 1. Linear Age Models per Study ({cell_type_name})"))
 for index, (fractions, fraction_column, title, ylabel) in enumerate(fraction_specs):
     plot_study_linear_trends(
         fractions, fraction_column=fraction_column, title=title, ylabel=ylabel, palette=palette,
         show_fit_legend=index == 0,
     )
+display(Markdown(f"### 2. Combined Fitted Fractional Model ({cell_type_name})"))
 plot_combined_study_fits([
     (fractions, fraction_column, ylabel)
     for fractions, fraction_column, _, ylabel in fraction_specs
 ])
+
+# %% [markdown]
+# Each study has a separate ordinary least-squares model with one row per
+# eligible sample aged **20 years or older**. The response is this cell type's
+# fraction of its derived AIFI-L1 parent compartment. Age and BMI are numeric;
+# sex and CMV are categorical treatment-coded terms. A covariate is included
+# when it is present and observed in at least 95% of adult samples in that
+# study. Models use complete cases for the included covariates, and categorical
+# contrasts use the first sorted level as the reference. The plot shows adjusted
+# coefficients and 95% confidence intervals; no model or covariate tables are
+# printed.
+
+# %%
+display(Markdown(
+    f"### 3. Fraction of {cell_type_name} in {parent}: Linear Models, All Covariates"
+))
+display(Markdown("**Model sample restriction:** adults aged ≥20 years only."))
+parent_fraction_data = fraction_specs[1][0]
+parent_fraction_column = fraction_specs[1][1]
+fraction_coefficients = fit_parent_fraction_models(
+    parent_fraction_data, adata, fraction_column=parent_fraction_column,
+)
+plot_parent_fraction_coefficients(fraction_coefficients, palette=palette)
 
 # %%
 if report["status"] != "complete":

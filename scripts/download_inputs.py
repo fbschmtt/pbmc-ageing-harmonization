@@ -75,7 +75,13 @@ def main() -> None:
         destination = root / item["path"]
         record = {"id": item["id"], "path": item["path"], "timestamp_utc": datetime.now(timezone.utc).isoformat()}
         if destination.exists() and not args.force:
-            record["status"] = "present"
+            observed_size = destination.stat().st_size
+            record["observed_size_bytes"] = observed_size
+            if item.get("expected_size_bytes") not in (None, observed_size):
+                record["status"] = "size_mismatch"
+                record["expected_size_bytes"] = item["expected_size_bytes"]
+            else:
+                record["status"] = "present"
         elif "url" not in item:
             record.update({"status": "manual", "manual_url": item.get("manual_url"), "note": item.get("note")})
         else:
@@ -91,9 +97,18 @@ def main() -> None:
             except (OSError, ValueError, tarfile.TarError, urllib.error.URLError, zipfile.BadZipFile) as error:
                 record.update({"status": "failed", "error": str(error), "source_page": item.get("source_page")})
         if destination.exists():
+            record["observed_size_bytes"] = destination.stat().st_size
             record["sha256"] = sha256(destination)
             if item.get("sha256") and record["sha256"] != item["sha256"]:
                 record["status"] = "checksum_mismatch"
+            expected_size = item.get("expected_size_bytes")
+            if (
+                record["status"] != "failed"
+                and expected_size is not None
+                and record["observed_size_bytes"] != expected_size
+            ):
+                record["status"] = "size_mismatch"
+                record["expected_size_bytes"] = expected_size
         records.append(record)
         print(f"{record['status']:>17}  {item['id']}  {destination}")
         if record["status"] == "manual":
@@ -102,7 +117,7 @@ def main() -> None:
     report_path = root / "input_data/download_manifest.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps({"records": records}, indent=2) + "\n")
-    incomplete = {"manual", "failed", "checksum_mismatch"}
+    incomplete = {"manual", "failed", "checksum_mismatch", "size_mismatch"}
     if args.require_all and any(record["status"] in incomplete for record in records):
         raise SystemExit(1)
 

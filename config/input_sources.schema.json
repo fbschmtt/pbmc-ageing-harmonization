@@ -26,6 +26,7 @@
           "manual_url": {"type": "string", "minLength": 1},
           "source_page": {"type": "string", "format": "uri"},
           "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "expected_size_bytes": {"type": "integer", "minimum": 1},
           "note": {"type": "string", "minLength": 1}
         },
         "anyOf": [{"required": ["url"]}, {"required": ["manual_url"]}]

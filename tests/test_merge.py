@@ -9,6 +9,7 @@ from scipy import sparse
 from pbmc_pipeline.harmonize import _compute_embedding, _predict_celltypist
 from pbmc_pipeline.merge import (
     _add_single_cell_qc_metrics,
+    _match_csr_index_dtypes,
     _shared_gene_names,
     merge_pseudobulks,
     pseudobulk_study,
@@ -125,6 +126,27 @@ def test_single_cell_qc_metrics_use_raw_counts_and_mt_prefix():
 
     assert adata.obs["UMIs_per_cell"].tolist() == [10, 0]
     assert adata.obs["percent_mito"].tolist() == [40.0, 0.0]
+
+
+def test_matching_csr_index_dtypes_unblocks_scanpy_normalization():
+    import scanpy as sc
+
+    matrix = sparse.csr_matrix([[3, 1], [2, 4]], dtype=np.int64)
+    matrix.indices = matrix.indices.astype(np.int32)
+    matrix.indptr = matrix.indptr.astype(np.int64)
+    assert matrix.indices.dtype != matrix.indptr.dtype
+    adata = ad.AnnData(X=_match_csr_index_dtypes(matrix))
+
+    assert adata.X.indices.dtype == adata.X.indptr.dtype == np.dtype(np.int32)
+    sc.pp.normalize_total(adata, target_sum=10_000)
+    assert np.allclose(np.asarray(adata.X.sum(axis=1)).ravel(), 10_000)
+
+
+def test_matching_csr_index_dtypes_leaves_compatible_matrix_in_place():
+    matrix = sparse.csr_matrix([[1, 0], [0, 1]], dtype=np.float32)
+
+    assert _match_csr_index_dtypes(matrix) is matrix
+    assert matrix.indices.dtype == matrix.indptr.dtype
 
 
 def test_experimental_prediction_prefix_does_not_replace_per_study_l2(monkeypatch, tmp_path):

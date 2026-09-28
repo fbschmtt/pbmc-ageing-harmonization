@@ -65,13 +65,16 @@ merge is available.
   produced the legacy intermediate `2_wang.h5ad`.
 - [ ] Review all `needs_review` provenance entries against publications/source
   metadata.
-- [ ] Run the full datasets and review per-study QC reports.
+- [x] Run the full production pipeline successfully on production datasets,
+  including the real Wang25 RDS conversion (confirmed by the user).
+- [ ] Review the production per-study QC reports and confirm their scientific
+  outputs are suitable for downstream analysis.
 - [x] Add legacy-compatible per-study sample × AIFI-L2 pseudobulks,
   outer-joined pseudobulk merge with gene-availability flags, a combined merge
   report, and a gene-presence UpSet plot.
 - [x] Add an opt-in whole-dataset single-cell merge with a
   shared-gene embedding and experimental merged AIFI-L2 diagnostics.
-- [ ] Run and review merge artifacts on the full frozen studies.
+- [ ] Review the full production merge artifacts and merged QC reports.
 - [x] Add the initial Python harmonization Docker image definition.
 - [x] Add an executable QC notebook and self-contained HTML report generation.
 - [x] Replace notebook-based RDS conversion with a one-input/one-output R script.
@@ -87,8 +90,9 @@ merge is available.
 - [x] Run the containerized Nextflow test profile for all configured studies,
   including preparation, pseudobulk/single-cell merges, and QC (29 successful
   processes).
-- [ ] Run the real Wang25 RDS conversion and compare its H5AD against the
-  existing converted/test representation.
+- [x] Run the real Wang25 RDS conversion through the successful production
+  workflow.
+- [ ] Compare its production H5AD against the prior converted representation.
 - [x] Remove the redundant Docker project mount in `nextflow.config`; Nextflow
   now stages the project inputs without a duplicate Docker mount.
 - [x] Enforce the study and input-source registry structures with tracked JSON
@@ -136,6 +140,9 @@ merge is available.
   in Nextflow's ignored `work/` directory. `tests/` contains test code only.
 - A narrowed `make verify TEST_STUDIES=wang25` passed, including the generated
   DE fixture, planted age-marker checks, and standard report artifact checks.
+- The full production pipeline has since completed successfully on production
+  datasets, including real Wang25 RDS conversion. Production QC and merge
+  artifacts still need explicit review and their run records should be retained.
 
 ## Expected commands
 
@@ -233,12 +240,14 @@ primary age-DE analysis, not a replacement for it.
   scoring method in advance; distinguish measured CMV status from inferred
   signature activity.
 
-## Architecture risks to address before full-data runs
+## Production follow-up and architecture risks
 
-1. **Memory remains the principal full-data constraint.** Harmonization reads a
-   complete H5AD, copies counts, and performs selected-HVG scaling/PCA. Full
-   Terekhova (~1.9 million cells) needs a measured memory budget before
-   execution. QC also loads the complete object.
+1. **Memory remains deployment-specific.** The full production run succeeded,
+   but this repository does not yet retain a task-level RAM/CPU profile for it.
+   Harmonization and QC load a full study object; single-cell merge streams the
+   concat to disk, then loads the merged matrix into RAM for normalization and
+   integration. Record production peak usage before changing resource requests
+   or sizing a different runner.
 2. **Keep study transformation code explicit.** `studies.json` now selects a
    preparation adapter and declares only its auxiliary inputs. Each adapter
    materializes exactly one canonical metadata row per retained expression cell
@@ -256,9 +265,11 @@ primary age-DE analysis, not a replacement for it.
    in the content-derived image tag. The remaining reproducibility work is to
    publish immutable image digests for production releases and, where practical,
    record package artifact hashes in addition to version pins.
-5. **Improve provenance.** `run_manifest.json` now records the Git revision,
+5. **Complete run provenance.** `run_manifest.json` records the Git revision,
    image references, configuration checksum, selected studies, and hashes of
-   merged artifacts. Add input/model checksums and random seeds next.
+   artifacts and reports. Add the input and CellTypist model checksums, random
+   seeds, and production image digests so the successful run can be reproduced
+   and audited.
 6. **Atomic writes are low priority inside Nextflow.** Failed processes remain in
    isolated work directories and outputs are published only after success. A
    temporary-write/validate/rename helper remains useful for large H5AD files
@@ -266,13 +277,24 @@ primary age-DE analysis, not a replacement for it.
 7. **Test edge cases explicitly.** Random 200-cell subsets may omit rare labels,
    batches, or join cases. Keep them for end-to-end smoke tests and add small
    synthetic fixtures for metadata and conversion edge cases.
+8. **Add optional resource profiling.** Start with Nextflow's built-in execution
+   report, task trace, and timeline on a production run; summarize per-process
+   peak RSS, CPU use, and elapsed time with run metadata. The merge already logs
+   phase timings. Add in-process memory sampling only if task-level metrics do
+   not explain its peaks. Keep these measurements observational rather than
+   making noisy resource estimates CI pass/fail criteria.
 
 ## Recommended next sequence
 
-1. Populate verified direct input URLs and checksums; manual-only sources are
-   recorded in `config/input_sources.json`.
-2. Measure peak memory on the largest testable/full study before full execution.
-3. Run and validate the real Wang25 conversion through Nextflow.
-4. Resolve the scientific `needs_review` entries and add complete input hashes.
-5. Record immutable Python and R image digests for production releases.
-6. Run each full study independently before launching all studies together.
+1. Review the successful production QC, merge, and DE outputs; archive the run
+   manifest, task logs, and execution reports with the production artifacts.
+2. Resolve the scientific `needs_review` entries against source publications
+   and metadata, preserving any remaining inferences explicitly.
+3. Complete the run manifest with input/model checksums and random seeds; record
+   immutable Python and R image digests for the production run.
+4. Add opt-in Nextflow execution reports and traces, then record per-task RAM,
+   CPU, and elapsed-time baselines from production.
+5. Add targeted synthetic tests for metadata joins, rare labels, and conversion
+   edge cases that random smoke-test subsets may omit.
+6. Continue with the exploratory residual-structure analysis only after the
+   production outputs and provenance have been reviewed.

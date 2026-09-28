@@ -43,7 +43,7 @@
 - `make verify` runs the fresh core test once, generates and fits the synthetic
   DE fixture, then renders all cell-type reports from that merge with matching
   synthetic DE results. Do not reintroduce a core-workflow prerequisite on
-  `test-cell-type-integration`.
+  `run-cell-type-analysis-test-existing`.
 - When adding a required CLI argument or published output, find every invocation
   with `rg` (Make, Nextflow, tests, and docs) and run the smallest public Make
   target that exercises the changed contract.

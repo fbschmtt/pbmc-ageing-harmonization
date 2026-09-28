@@ -22,9 +22,12 @@ supplementary metadata, CellTypist models, expected paths, and checksums.
 - The complete Docker test workflow has passed with every configured
   preparation adapter, per-study harmonization/QC, pseudobulks, and both merge
   branches (29 successful processes).
+- The full production pipeline has run successfully on production datasets,
+  including conversion of the real Wang25 RDS through Nextflow.
 - Executed QC notebooks can produce self-contained per-study HTML reports.
-- The full datasets, including the real Wang25 RDS conversion, have not been
-  run in this workspace.
+- Review of the production QC, merge outputs, and resource usage remains the
+  next validation step; this development checkout still holds local ignored
+  test-scale inputs at several production paths.
 - A DSL2 Nextflow workflow connects conversion, preparation, harmonization,
   merge, and QC, with a test profile for the 200-cell inputs.
 - Both Docker images build successfully. A synthetic Seurat object passed the
@@ -238,8 +241,16 @@ are also direct, verified downloads, so a fresh input can be acquired with:
 make download-inputs STUDIES=nehar_belaid26
 ```
 
-The remaining study inputs are explicitly manual-only until stable, verified
-file URLs are recorded. See `config/input_sources.json` and [INPUT_FILES.md](INPUT_FILES.md).
+The manifest now includes direct links for the four CELLxGENE H5ADs, AIFI and
+Nehar-Belaid26 expression inputs, and the Wang25 participant workbook. Some
+sources remain manual-only, including the Synapse expression objects. The
+current local files at some production input paths are test-scale subsets;
+the four CELLxGENE file sizes are checked by the downloader. See
+`config/input_sources.json` and [INPUT_FILES.md](INPUT_FILES.md).
+
+> **Status:** the download machinery has not yet been tested end-to-end. Treat
+> it as an unvalidated convenience feature and verify every downloaded file
+> before using it for production analysis.
 
 ## Convert a Seurat RDS
 
@@ -307,14 +318,17 @@ make run-test STUDIES=wang25
 make run STUDIES=aifi,onek1k
 ```
 
-The `test` profile lowers resource requests and uses isolated 200-cell fixtures
-from `test_data/`. RDS-based studies retain an RDS fixture and therefore still
+The `test` profile uses isolated 200-cell fixtures from `test_data/`; the
+`core_test` profile shortens the harmonization and QC task timeouts. RDS-based
+studies retain an RDS fixture and therefore still
 pass through the same `CONVERT_RDS` process as a production run. Create or refresh fixtures
 from the production inputs once with `make test-data`; this never modifies
 `input_data/`. Override the fixture size with `make test-data TEST_CELLS=500`
 when needed. `--skip_qc` stops after the H5AD merge artifacts are created (it
 skips only notebook/HTML QC). By default the workflow does not create a
-whole-dataset single-cell merge, because all studies must fit in RAM at once.
+whole-dataset single-cell merge. Its on-disk concat avoids retaining all source
+matrices plus a second full concat in memory, but the merged matrix is later
+loaded into RAM for normalization, Harmony, and annotation.
 
 For faster development, `make run-test` and `make run-cell-type-analysis-test` default
 to every configured study except `nehar_belaid26`, whose much larger fixture
@@ -421,16 +435,14 @@ make run-cell-type-analysis
 
 This downstream workflow requires an existing merged single-cell H5AD at
 `<outdir>/merged/single_cell_merged.h5ad`. Override that location with
-`MERGED_INPUT=/path/to/single_cell_merged.h5ad`. The old
-`make run-cell-types` name remains as a compatibility alias.
+`MERGED_INPUT=/path/to/single_cell_merged.h5ad`.
 
 For a complete production run, `make run-all` executes the core workflow with
 single-cell merging enabled, then runs differential expression and cell-type
 analysis/reporting in order. The workflow is resumable. It uses the configured
 `STUDIES`, `OUTDIR`, and `WORK_DIR` values. `make run-cell-type-analysis-test`
 first creates the small core test merge and then runs the downstream workflow
-under `output/test/`; `make run-cell-types-test` remains as a compatibility
-alias. All test targets publish only beneath `output/test/`.
+under `output/test/`. All test targets publish only beneath `output/test/`.
 
 The raw-count splits are published under `<outdir>/cell_type_splits/` so one
 report can be rerun without re-splitting the merged H5AD:
@@ -542,7 +554,8 @@ image and adds the Python/anndata bridge. Metadata and externally
 supplied CellTypist models remain outside the images and are declared as
 Nextflow task dependencies. Expression files and generated artifacts are staged
 through Nextflow. The Python image and a complete Wang25 test workflow have
-been verified. The R conversion image is defined separately because it is much
+been verified; the full production run also completed the real Wang25 RDS
+conversion. The R conversion image is defined separately because it is much
 larger and only needed for RDS inputs.
 
 The Python image installs the reviewed `requirements.lock` before application
@@ -660,7 +673,7 @@ workflow. Run `make help` to see its targets. Common commands include:
 make lint
 make workflow-lint
 make docs-check
-make test
+make test-unit
 make validate-test STUDIES=wang25
 make validate-full STUDIES=terekhova23
 make run-test STUDIES=wang25

@@ -35,7 +35,15 @@ CORE_CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),images,)
 PYTHON_CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),image-python,)
 MERGE_ARGS = $(if $(filter true 1 yes,$(MERGE_SINGLE_CELL)),--merge_single_cell,)
 
-.PHONY: help install lint workflow-lint docs-check test test-unit test-integration test-cell-type-integration verify verify-workflows validate-study validate-test validate-full test-data download-inputs images image-python image-r run run-no-qc run-test run-all split-cell-types split-cell-types-test run-cell-type-analysis run-cell-types run-cell-type-analysis-test run-cell-types-test run-cell-type-analysis-test-existing run-cell-types-test-existing run-cell-type run-cell-type-test render-cell-type render-cell-type-test run-de run-de-test run-de-test-existing run-de-synthetic-test check-synthetic-de-results check-synthetic-de-reports check-de-prerequisites check-cell-type-prerequisites check-cell-type-test-prerequisites check-cell-type-render-prerequisites check-cell-type-test-render-prerequisites clean-work
+.PHONY: help install lint workflow-lint docs-check test-unit verify verify-workflows \
+	validate-study validate-test validate-full test-data download-inputs images image-python \
+	image-r run run-no-qc run-test run-all split-cell-types split-cell-types-test \
+	run-cell-type-analysis run-cell-type-analysis-test run-cell-type-analysis-test-existing \
+	run-cell-type run-cell-type-test render-cell-type render-cell-type-test \
+	run-de run-de-test run-de-test-existing run-de-synthetic-test \
+	check-synthetic-de-results check-synthetic-de-reports check-de-prerequisites \
+	check-cell-type-prerequisites check-cell-type-test-prerequisites \
+	check-cell-type-render-prerequisites check-cell-type-test-render-prerequisites clean-work
 
 help: ## Show available development commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target> [STUDIES=wang25]\n\n"} /^[a-zA-Z_-]+:.*## / {printf "  %-31s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -64,21 +72,15 @@ docs-check: ## Validate repository Markdown links and documented Make targets
 test-unit: $(VENV_DEPS) ## Run deterministic unit and output-contract tests
 	$(VENV_PYTHON) -m pytest -q
 
-test: test-unit ## Backward-compatible alias for unit tests
-
-test-integration: run-test
-
-test-cell-type-integration: run-cell-type-analysis-test-existing
-
 verify: lint test-unit workflow-lint docs-check verify-workflows ## Run all checks and fresh Docker workflows for all studies
 verify: TEST_STUDIES = all
 
 # Keep DE and reports ordered even under `make -j`: the report renderer consumes
 # the synthetic DE manifest produced immediately above.
-verify-workflows: test-integration
+verify-workflows: run-test
 	$(MAKE) run-de-synthetic-test
 	$(MAKE) check-synthetic-de-results
-	$(MAKE) test-cell-type-integration
+	$(MAKE) run-cell-type-analysis-test-existing
 	$(MAKE) check-synthetic-de-reports
 
 validate-study:
@@ -99,7 +101,7 @@ test-data: images ## Create isolated 200-cell H5AD and RDS smoke-test fixtures
 	docker run --rm -v "$(CURDIR):/work" -w /work $(R_IMAGE) Rscript scripts/create_test_rds.R --project-root /work --cells $(TEST_CELLS) --seed $(TEST_SEED) --studies "$(STUDIES)"
 
 download-inputs: $(VENV_DEPS) ## Best-effort public input download; never runs implicitly
-	$(VENV_PYTHON) scripts/download_inputs.py --project-root "$(CURDIR)" --studies "$(STUDIES)"
+	$(VENV_PYTHON) scripts/download_inputs.py --project-root "$(CURDIR)" --studies "$(STUDIES)" $(if $(filter 1 true yes,$(DOWNLOAD_FORCE)),--force,)
 
 images: image-python image-r ## Build cached local workflow images
 
@@ -127,8 +129,6 @@ run-test: $(CORE_CONTAINER_PREREQS) ## Fresh deterministic test workflow; exclud
 
 run-cell-type-analysis: $(PYTHON_CONTAINER_PREREQS) ## Analyse all cell types and render their reports, including DE results when present
 	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(MERGED_INPUT)" --differential_expression_manifest "$(DE_RESULTS_DIR)/differential_expression.json" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume
-
-run-cell-types: run-cell-type-analysis ## Backward-compatible alias for run-cell-type-analysis
 
 check-de-prerequisites:
 	@if test ! -f "$(PSEUDOBULK_INPUT)"; then \
@@ -192,14 +192,10 @@ run-cell-type-analysis-test: OUTDIR = output/test
 run-cell-type-analysis-test: MERGED_INPUT = output/test/merged/single_cell_merged.h5ad
 run-cell-type-analysis-test: run-test run-cell-type-analysis-test-existing ## Fresh core and downstream Docker test workflow
 
-run-cell-types-test: run-cell-type-analysis-test ## Backward-compatible alias for run-cell-type-analysis-test
-
 run-cell-type-analysis-test-existing: OUTDIR = output/test
 run-cell-type-analysis-test-existing: MERGED_INPUT = output/test/merged/single_cell_merged.h5ad
 run-cell-type-analysis-test-existing: $(PYTHON_CONTAINER_PREREQS)
 	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(MERGED_INPUT)" --differential_expression_manifest "$(DE_RESULTS_DIR)/differential_expression.json" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
-
-run-cell-types-test-existing: run-cell-type-analysis-test-existing ## Backward-compatible alias for run-cell-type-analysis-test-existing
 
 split-cell-types-test: OUTDIR = output/test
 split-cell-types-test: MERGED_INPUT = output/test/merged/single_cell_merged.h5ad
@@ -219,7 +215,7 @@ check-cell-type-test-prerequisites:
 	elif test -f "$(MERGED_INPUT)"; then \
 		echo "Missing split: $(CELL_TYPE_INPUT). Run: make split-cell-types-test CELL_TYPE=$(CELL_TYPE)" >&2; exit 2; \
 	else \
-		echo "Missing test merge: $(MERGED_INPUT). Run: make run-cell-types-test CELL_TYPE=$(CELL_TYPE)" >&2; exit 2; \
+		echo "Missing test merge: $(MERGED_INPUT). Run: make run-cell-type-analysis-test CELL_TYPE=$(CELL_TYPE)" >&2; exit 2; \
 	fi
 
 run-cell-type-test: check-cell-type-test-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Analyse and render one existing test split; default CELL_TYPE=cd14-monocyte

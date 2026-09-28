@@ -8,10 +8,19 @@ and preparation dependency to have a manifest entry. Each study owns a
 directory containing its expression object and every study-specific
 supplementary file.
 
-Downsampled smoke-test fixtures are kept separately under `test_data/`, so full
-and test inputs can coexist. Create or refresh them with `make test-data`.
-Wang25's test fixture is an RDS, so test runs exercise the same RDS conversion
-process as production.
+Downsampled smoke-test fixtures are kept separately under `test_data/` and are
+created or refreshed with `make test-data`. The current ignored files at several
+production input paths in this checkout are also smoke-test-scale subsets
+(200 or 500 cells), not the complete published sources. The four CELLxGENE H5AD
+objects have authoritative expected byte sizes in the input registry, so the
+optional downloader reports these local subsets as `size_mismatch`. Do not use
+them as full production inputs. To replace a selected local file with its
+published download, opt in explicitly, for example
+`make download-inputs STUDIES=onek1k DOWNLOAD_FORCE=true`; this downloads the
+multi-gigabyte source object. Wang25's test fixture is an RDS, so test runs
+exercise the same RDS conversion process as production.
+This describes the ignored files in the development checkout; it does not
+describe or invalidate the full inputs used by the successful production run.
 
 The current study directories are `aida25/`, `aifi/`, `fachrul26/`,
 `nehar_belaid26/`, `onek1k/`, `perez22/`, `terekhova23/`, and `wang25/`. Keep
@@ -40,13 +49,20 @@ python scripts/prepare_auxiliary_metadata.py
 ```
 
 `config/input_sources.json` is the tracked input manifest. It records direct
-URLs for the AIFI expression object and the Nehar-Belaid26 RAW archive, label H5AD, plus
-Supplementary Data 1, checksums for local supplementary files, and manual
-acquisition locations for the remaining inputs. Populate verified direct URLs
-and expression checksums before treating the pipeline as release-ready.
+download URLs for the four CELLxGENE H5ADs, AIFI expression data, the
+Nehar-Belaid26 GEO archive and label H5AD, Nehar-Belaid26 Supplementary Data 1,
+and the Wang25 participant workbook. CELLxGENE file sizes are recorded as
+integrity checks because full SHA-256 values are not published in this
+registry. Synapse-hosted Terekhova23 and Wang25 expression objects remain
+manual sources because they may require authentication or terms acceptance.
+Source pages and paper links are recorded for the inputs where verified.
 
 For convenience, `make download-inputs STUDIES=<study>` reads the tracked
 `config/input_sources.json` manifest and makes a best-effort download of direct
 public files. It is opt-in and deliberately does not authenticate or scrape
-portals. Manual-only sources are reported with their acquisition instructions;
-the ignored `download_manifest.json` records what was obtained locally.
+portals. Manual-only sources are reported with their acquisition instructions.
+Existing files are normally left alone; pass `DOWNLOAD_FORCE=true` to replace
+them. The ignored `download_manifest.json` records observed sizes, checksums,
+and download results. **The download machinery has not yet been tested
+end-to-end**; treat it as an unvalidated convenience feature and verify every
+downloaded file before production use.

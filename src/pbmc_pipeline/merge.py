@@ -55,6 +55,23 @@ def _matrix_nnz_by_row(matrix) -> np.ndarray:
     return np.count_nonzero(matrix, axis=1)
 
 
+def _match_csr_index_dtypes(matrix):
+    """Make CSR index arrays compatible with Scanpy's Numba normalizer.
+
+    ``concat_on_disk`` can write an ``int32`` ``indices`` array alongside an
+    ``int64`` ``indptr`` array. Scanpy requires both arrays to share a dtype
+    when normalizing a CSR matrix. Prefer downcasting the much smaller pointer
+    array; retain 64-bit pointers when the matrix has too many nonzeros.
+    """
+    if not sparse.isspmatrix_csr(matrix) or matrix.indices.dtype == matrix.indptr.dtype:
+        return matrix
+    if int(matrix.indptr[-1]) <= np.iinfo(matrix.indices.dtype).max:
+        matrix.indptr = matrix.indptr.astype(matrix.indices.dtype, copy=False)
+    else:
+        matrix.indices = matrix.indices.astype(matrix.indptr.dtype, copy=False)
+    return matrix
+
+
 def pseudobulk_study(
     input_path: Path, output_path: Path, report_path: Path, pipeline: dict
 ) -> dict:
@@ -268,6 +285,7 @@ def merge_single_cells(
         _log_step(study_id, "concat_on_disk", started)
         started = _start_step(study_id, "load_merged_matrix", path=concat_path)
         merged = sc.read_h5ad(concat_path)
+        merged.X = _match_csr_index_dtypes(merged.X)
         _log_step(
             study_id, "load_merged_matrix", started,
             cells=merged.n_obs, genes=merged.n_vars,
