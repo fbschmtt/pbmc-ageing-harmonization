@@ -1,4 +1,4 @@
-# PBMC ageing pipeline plan
+# PBMC Ageing Harmonization plan
 
 ## Goal of the current milestone
 
@@ -92,8 +92,7 @@ merge is available.
 - [x] Add a lint-clean DSL2 Nextflow workflow for conversion, harmonization, QC,
   per-study selection, test inputs, Docker execution, and resumable caching.
 - [x] Run the containerized Nextflow test profile for all configured studies,
-  including preparation, pseudobulk/single-cell merges, and QC (29 successful
-  processes).
+  including preparation, pseudobulk/single-cell merges, and QC.
 - [x] Run the real Wang25 RDS conversion through the successful production
   workflow.
 - [ ] Compare its production H5AD against the prior converted representation.
@@ -113,13 +112,14 @@ merge is available.
 - [x] Allow standard cell-type reports to include matching DE results through
   that manifest, keeping DE files and single-cell reports in separate folders.
 - [x] Generate a deterministic positive-fit DE fixture on demand and include
-  fit, planted-marker, and report-artifact assertions in `make verify`.
+  fit, planted-marker, and report-artifact assertions in `make run-all-test`
+  and `make verify`.
 
 ## Local development state
 
 - The scientific dependencies are installed in the ignored `.venv`.
 - All configured studies pass the complete test-data workflow.
-- Ruff passes, 52 Python tests pass, and `nextflow lint` reports no errors for
+- Ruff passes, 53 Python tests pass, and `nextflow lint` reports no errors for
   the core, cell-type, and differential-expression workflows (Nextflow 26.04.6;
   minimum declared version is 25.04).
 - Revision-tagged Python and R images build successfully.
@@ -145,8 +145,9 @@ merge is available.
   application progress logs are captured in each Nextflow task's `.command.err`.
 - Test fixtures live under ignored `test_data/`; conversion intermediates live
   in Nextflow's ignored `work/` directory. `tests/` contains test code only.
-- A narrowed `make verify TEST_STUDIES=wang25` passed, including the generated
-  DE fixture, planted age-marker checks, and standard report artifact checks.
+- A fresh all-study `make verify` passed, including all eight configured test
+  studies, the generated DE fixture, planted age-marker checks, and 21
+  cell-type report artifact checks.
 - The full production pipeline has since completed successfully on production
   datasets, including real Wang25 RDS conversion. Production QC and merge
   artifacts still need explicit review and their run records should be retained.
@@ -160,7 +161,8 @@ make workflow-lint
 make docs-check
 make run-test STUDIES=wang25
 make run-de-synthetic-test
-make verify TEST_STUDIES=wang25
+make run-all-test
+make verify
 make run STUDIES=all MERGE_SINGLE_CELL=true
 ```
 

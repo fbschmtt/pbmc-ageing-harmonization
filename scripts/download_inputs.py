@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import shutil
+import sys
 import tarfile
 import urllib.error
 import urllib.request
@@ -53,13 +54,52 @@ def selected_artifacts(document: dict, studies: set[str]):
     return [item for item in document["artifacts"] if studies.intersection(item["studies"])]
 
 
+def format_size(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes} bytes"
+    for unit in ("KiB", "MiB", "GiB", "TiB"):
+        size_bytes /= 1024
+        if size_bytes < 1024 or unit == "TiB":
+            return f"{size_bytes:.1f} {unit}"
+    raise AssertionError("unreachable")
+
+
+def warn_about_pending_downloads(artifacts: list[dict], root: Path, force: bool) -> None:
+    """Make the deliberately separate, potentially large acquisition visible."""
+    pending = [
+        item for item in artifacts
+        if item.get("url") and (force or not (root / item["path"]).exists())
+    ]
+    if not pending:
+        return
+    known_size = sum(item.get("expected_size_bytes") or 0 for item in pending)
+    unknown_sizes = sum(item.get("expected_size_bytes") is None for item in pending)
+    size_summary = (
+        f"recorded output sizes total at least {format_size(known_size)}"
+        if known_size
+        else "no recorded output sizes are available"
+    )
+    if unknown_sizes:
+        size_summary += f"; {unknown_sizes} artifact(s) have no recorded size"
+    print(
+        "WARNING: input acquisition is strictly opt-in. This command will download "
+        f"{len(pending)} configured artifact(s); {size_summary}. Source files may be large. "
+        "No install, test, or workflow command invokes this downloader.",
+        file=sys.stderr,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Best-effort download of configured public inputs")
     parser.add_argument("--project-root", type=Path, default=Path.cwd())
     parser.add_argument("--manifest", type=Path, default=Path("config/input_sources.json"))
     parser.add_argument("--studies", default="all", help="Comma-separated study IDs or all")
     parser.add_argument("--force", action="store_true", help="Redownload files that already exist")
-    parser.add_argument("--require-all", action="store_true", help="Fail if any selected artifact is manual-only")
+    parser.add_argument(
+        "--require-all",
+        action="store_true",
+        help="Fail unless every selected artifact is present and passes its recorded checks",
+    )
     args = parser.parse_args()
 
     root = args.project_root.resolve()
@@ -70,8 +110,10 @@ def main() -> None:
     if unknown:
         parser.error(f"unknown studies: {', '.join(sorted(unknown))}")
 
+    artifacts = selected_artifacts(document, studies)
+    warn_about_pending_downloads(artifacts, root, args.force)
     records = []
-    for item in selected_artifacts(document, studies):
+    for item in artifacts:
         destination = root / item["path"]
         record = {"id": item["id"], "path": item["path"], "timestamp_utc": datetime.now(timezone.utc).isoformat()}
         if destination.exists() and not args.force:

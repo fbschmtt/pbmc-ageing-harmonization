@@ -1,8 +1,8 @@
-# Pipeline architecture
+# PBMC Ageing Harmonization architecture
 
 ## Purpose
 
-This pipeline harmonizes PBMC ageing studies into a common raw-count H5AD
+PBMC Ageing Harmonization harmonizes PBMC ageing studies into a common raw-count H5AD
 contract, creates comparable sample-level pseudobulks, and produces merge-aware
 QC reports. Nextflow is the workflow engine; the study JSON is the source of
 truth for source-specific metadata handling.
@@ -85,8 +85,8 @@ merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
 - `src/pbmc_pipeline/synthetic_de.py`: deterministic on-demand positive-fit
   pseudobulk fixture generation; the generated H5AD is ignored output, not a
   checked-in fixture.
-- `scripts/check_synthetic_de.py`: assertions used by `make verify` for model
-  completion, planted age-marker detection, and report output.
+- `scripts/check_synthetic_de.py`: assertions used by `make run-all-test` and
+  `make verify` for model completion, planted age-marker detection, and report output.
 - `src/pbmc_pipeline/reporting.py`: testable report data transformations.
 - `reports/merge_qc_report.py`: Jupytext source for the generated merge
   notebook. Report runners materialize these Python sources in a temporary
@@ -115,7 +115,8 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/differential_expression/<cell-type-slug>/...csv` (per-study and merged age results)
 - `<outdir>/differential_expression/<cell-type-slug>/cell_type_result.json` (per-task fit record collected into the root manifest)
 - `<outdir>/differential_expression/differential_expression.json` (DE status and cell-type result index)
-- `<outdir>/run_manifest.json`
+- `<outdir>/run_manifest.json` (requested, selected, and skipped studies;
+  selected studies are the complete requested set for explicit study lists)
 
 ### Harmonized expression contract
 
@@ -204,17 +205,12 @@ Use Make targets rather than raw Nextflow or Docker commands:
 
 ```bash
 make help
-make images
 make lint test-unit
 make workflow-lint
 make run-test STUDIES=wang25
-make run STUDIES=all OUTDIR=/path/to/output WORK_DIR=/path/to/work
-make run STUDIES=all MERGE_SINGLE_CELL=true
-make run-all
-make run-cell-type-analysis
-make run-cell-type-analysis-test
-make run-de-synthetic-test
-make verify TEST_STUDIES=wang25
+make run-all-test
+make verify
+make run-all STUDIES=all
 make split-cell-types-test
 make run-cell-type-test CELL_TYPE=cd14-monocyte
 make render-cell-type-test CELL_TYPE=cd14-monocyte

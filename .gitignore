@@ -11,6 +11,20 @@ work/
 # Externally distributed CellTypist models
 aifi_models/*.pkl
 
+# Local credentials and scientific data
+# Source data belongs under input_data/ and generated artifacts under output/.
+# Keep these broad guards as a last line of defence against accidental staging
+# elsewhere in the working tree.
+.env
+.env.*
+!.env.example
+credentials*.json
+secrets*.json
+*.pem
+*.key
+id_rsa
+id_ed25519
+
 # Python
 __pycache__/
 *.py[cod]

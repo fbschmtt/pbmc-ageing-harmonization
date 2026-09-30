@@ -48,21 +48,12 @@ again, recreate the lookup with:
 python scripts/prepare_auxiliary_metadata.py
 ```
 
-`config/input_sources.json` is the tracked input manifest. It records direct
-download URLs for the four CELLxGENE H5ADs, AIFI expression data, the
-Nehar-Belaid26 GEO archive and label H5AD, Nehar-Belaid26 Supplementary Data 1,
-and the Wang25 participant workbook. CELLxGENE file sizes are recorded as
-integrity checks because full SHA-256 values are not published in this
-registry. Synapse-hosted Terekhova23 and Wang25 expression objects remain
-manual sources because they may require authentication or terms acceptance.
-Source pages and paper links are recorded for the inputs where verified.
+## Acquisition
 
-For convenience, `make download-inputs STUDIES=<study>` reads the tracked
-`config/input_sources.json` manifest and makes a best-effort download of direct
-public files. It is opt-in and deliberately does not authenticate or scrape
-portals. Manual-only sources are reported with their acquisition instructions.
-Existing files are normally left alone; pass `DOWNLOAD_FORCE=true` to replace
-them. The ignored `download_manifest.json` records observed sizes, checksums,
-and download results. **The download machinery has not yet been tested
-end-to-end**; treat it as an unvalidated convenience feature and verify every
-downloaded file before production use.
+`config/input_sources.json` is the tracked source registry. It records direct
+URLs where programmatic retrieval is appropriate, integrity information where
+available, and manual-source instructions where access conditions require it.
+Acquisition is strictly opt-in and is documented once in the top-level
+[Download inputs guide](../README.md#download-inputs); neither installation nor
+workflow execution downloads data. Consult [INPUT_FILES.md](../INPUT_FILES.md)
+for the exact paths, links, checksums, and reasons that a source is manual.

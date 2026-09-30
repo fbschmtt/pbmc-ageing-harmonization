@@ -72,7 +72,7 @@
       "path": "input_data/terekhova23/pbmc_gex_raw_with_var_obs.h5ad",
       "manual_url": "https://www.synapse.org/Synapse:syn49637038",
       "source_page": "https://doi.org/10.1016/j.immuni.2023.10.013",
-      "note": "The source archive and its access terms must be obtained from the study repository."
+      "note": "The source archive is hosted by Synapse; its login or access terms must be accepted manually. The downloader deliberately does not authenticate or scrape portal downloads."
     },
     {
       "id": "wang_expression",
@@ -81,7 +81,7 @@
       ],
       "path": "input_data/wang25/scRNA-seqProcessedLabelledObject.rds",
       "manual_url": "https://www.synapse.org/Synapse:syn61609846",
-      "note": "Synapse source; authentication or terms acceptance may be required."
+      "note": "The published processed Seurat RDS is hosted at this Synapse entity and requires a Synapse login. No other public host for this processed object was identified on 2026-09-30; the paper's raw-data deposit (HRA009014) does not replace it."
     },
     {
       "id": "aida_metadata",
@@ -89,10 +89,10 @@
         "aida25"
       ],
       "path": "input_data/aida25/mmc1.xlsx",
-      "manual_url": "https://doi.org/10.1016/j.cell.2025.02.017",
+      "manual_url": "https://www.cell.com/cms/10.1016/j.cell.2025.02.017/attachment/9a67479a-652f-43f5-8f44-30359d9541d5/mmc1.xlsx",
       "source_page": "https://prabhakarlab.github.io/AIDA.html",
       "sha256": "7610edd1105181e7fecb9e61e25e2668d57433524cc801838ed9c76f92bb4eef",
-      "note": "Supplementary Table 1 for the AIDA Phase 1 paper."
+      "note": "Supplementary Table 1 for the AIDA Phase 1 paper. The direct publisher attachment is at manual_url, but non-browser requests receive a Cloudflare bot challenge (HTTP 403, checked 2026-09-30); download it in a browser and place it at the configured path."
     },
     {
       "id": "terekhova_metadata",
@@ -101,7 +101,8 @@
       ],
       "path": "input_data/terekhova23/mmc2.xlsx",
       "manual_url": "https://www.cell.com/immunity/home",
-      "sha256": "af8da63efbaf6800da79f4660412ea3100aac88b18748b01679593e29b4444a2"
+      "sha256": "af8da63efbaf6800da79f4660412ea3100aac88b18748b01679593e29b4444a2",
+      "note": "Publisher supplementary workbook; obtain it manually from the study materials because no stable direct artifact URL is configured."
     },
     {
       "id": "nehar_belaid26_labels",
@@ -133,7 +134,7 @@
       "manual_url": "https://www.synapse.org/Synapse:syn49637038",
       "source_page": "https://doi.org/10.1016/j.immuni.2023.10.013",
       "sha256": "bf0dede2434136b6f5515210c6c48fb2a7105c60e836ad007b7407856705df5a",
-      "note": "Generate from the published all_pbmcs_metadata.csv with scripts/prepare_auxiliary_metadata.py."
+      "note": "Generate from the published all_pbmcs_metadata.csv with scripts/prepare_auxiliary_metadata.py. That source CSV is hosted through Synapse, whose login or access terms must be handled manually."
     },
     {
       "id": "wang_metadata",
@@ -153,7 +154,7 @@
       "path": "input_data/terekhova23/all_pbmcs_metadata.csv",
       "manual_url": "https://www.synapse.org/Synapse:syn49637038",
       "source_page": "https://doi.org/10.1016/j.immuni.2023.10.013",
-      "note": "Large source metadata file used to generate cell_to_tube.csv.gz; retained for provenance and lookup regeneration, not read by the normal workflow."
+      "note": "Large source metadata file hosted through Synapse; login or access terms must be handled manually. It generates cell_to_tube.csv.gz and is retained for provenance and lookup regeneration, not read by the normal workflow."
     }
   ]
 }

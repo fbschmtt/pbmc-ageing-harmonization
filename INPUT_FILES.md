@@ -4,9 +4,12 @@ The pipeline source does not redistribute expression data, supplementary study
 metadata, or trained CellTypist models. Place each external file at the exact
 path below. Paths are relative to the repository root.
 
-Checksums are recorded where the file is currently available locally. The
-best-effort `make download-inputs` command reads `config/input_sources.json`;
-it checks a SHA-256 where recorded, checks expected byte sizes for CELLxGENE
+Checksums are recorded where the file is currently available locally. Acquisition
+is strictly opt-in: only the explicit downloader commands described in the
+[README](README.md#download-inputs) retrieve public files. They never run as
+part of installation, testing, or analysis, and they warn when pending sources
+may be large. The best-effort downloader reads `config/input_sources.json`,
+checks a SHA-256 where recorded, checks expected byte sizes for CELLxGENE
 objects, and reports manual-only sources. Full published CELLxGENE H5ADs are
 large; local files at these paths may be test-scale subsets and must be checked
 before production use. To deliberately replace existing files, pass
@@ -23,8 +26,8 @@ before production use. To deliberately replace existing files, pass
 | Nehar-Belaid26 | `input_data/nehar_belaid26/GSE233321_all_PBMCs.h5ad` | [GEO label H5AD](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE233321); labels transfer only on unique `obs.sample_id` plus normalized barcode-sequence matches | Not yet recorded |
 | OneK1K | `input_data/onek1k/81d84489-bff9-4fb6-b0ee-78348126eada.h5ad` | [CELLxGENE OneK1K dataset](https://cellxgene.cziscience.com/collections/dde06e0f-ab3b-46be-96a2-a8082383c4a1), raw-count H5AD | 4,436,424,475 bytes expected |
 | Perez22 | `input_data/perez22/c55dc602-d168-4d15-acc1-5de4f2f5d551.h5ad` | [CELLxGENE dataset](https://cellxgene.cziscience.com/collections/436154da-bcf1-4130-9c8b-120ff9a888f2), raw-count H5AD with embedded observation metadata | 12,218,105,530 bytes expected |
-| Terekhova23 | `input_data/terekhova23/pbmc_gex_raw_with_var_obs.h5ad` | [Synapse study data](https://www.synapse.org/Synapse:syn49637038); access conditions may apply | Not yet recorded |
-| Wang25 | `input_data/wang25/scRNA-seqProcessedLabelledObject.rds` | [Synapse entity syn61609846](https://www.synapse.org/Synapse:syn61609846), Seurat RDS converted by `scripts/convert_rds.R` | Not yet recorded |
+| Terekhova23 | `input_data/terekhova23/pbmc_gex_raw_with_var_obs.h5ad` | [Synapse study data](https://www.synapse.org/Synapse:syn49637038); download manually after satisfying any login/access terms | Not yet recorded |
+| Wang25 | `input_data/wang25/scRNA-seqProcessedLabelledObject.rds` | [Synapse entity syn61609846](https://www.synapse.org/Synapse:syn61609846), the published processed Seurat RDS; requires a Synapse login and is converted by `scripts/convert_rds.R` | Not yet recorded |
 
 The Wang RDS conversion produces
 `cache/converted/scRNA-seqProcessedLabelledObject.h5ad`. This is a generated
@@ -34,9 +37,9 @@ intermediate, not an external input.
 
 | Study | Required path | Role | SHA-256 |
 |---|---|---|---|
-| AIDA25 | `input_data/aida25/mmc1.xlsx` | Donor and single-cell batch metadata | `7610edd1105181e7fecb9e61e25e2668d57433524cc801838ed9c76f92bb4eef` |
-| Terekhova23 | `input_data/terekhova23/mmc2.xlsx` | Donor, visit, BMI, and ethnicity metadata | `af8da63efbaf6800da79f4660412ea3100aac88b18748b01679593e29b4444a2` |
-| Terekhova23 | `input_data/terekhova23/cell_to_tube.csv.gz` | Cell ID to demultiplexed tube mapping | `bf0dede2434136b6f5515210c6c48fb2a7105c60e836ad007b7407856705df5a` |
+| AIDA25 | `input_data/aida25/mmc1.xlsx` | [Supplementary Table 1 attachment](https://www.cell.com/cms/10.1016/j.cell.2025.02.017/attachment/9a67479a-652f-43f5-8f44-30359d9541d5/mmc1.xlsx); download in a browser because non-browser requests receive a Cloudflare bot challenge (HTTP 403, checked 2026-09-30) | `7610edd1105181e7fecb9e61e25e2668d57433524cc801838ed9c76f92bb4eef` |
+| Terekhova23 | `input_data/terekhova23/mmc2.xlsx` | Donor, visit, BMI, and ethnicity metadata; obtain manually from the publisher study materials | `af8da63efbaf6800da79f4660412ea3100aac88b18748b01679593e29b4444a2` |
+| Terekhova23 | `input_data/terekhova23/cell_to_tube.csv.gz` | Cell ID to demultiplexed tube mapping, generated from manually obtained Synapse metadata | `bf0dede2434136b6f5515210c6c48fb2a7105c60e836ad007b7407856705df5a` |
 | Nehar-Belaid26 | `input_data/nehar_belaid26/41467_2026_73729_MOESM3_ESM.xls` | Nehar-Belaid et al. (2026) Supplementary Data 1; sheet 1a in-house donor metadata | `c55555c2765b0fb4cbe872ffdd37271dde4d0aefa5a92d3343d2368778f8b0b5` |
 | Wang25 | `input_data/wang25/41590_2024_2059_MOESM3_ESM.xlsx` | Published sample-level metadata | `a46e3aa3f877890fa6100e42a6ffc641ec481e7f122b00b5a68fa89689b9fd2f` |
 | Terekhova23 | `input_data/terekhova23/all_pbmcs_metadata.csv` | [Synapse study source](https://www.synapse.org/Synapse:syn49637038); large source metadata used to generate the compact lookup below, not read by the normal workflow | Not yet recorded |
@@ -50,18 +53,19 @@ compact lookup, first place the original file at
 
 ## CellTypist models
 
-The models were downloaded from the Allen Institute Immune Health Atlas model
-downloads page on 2025-06-27. Confirm redistribution terms before publishing
-them; the binary files are ignored by Git.
+Download the models manually from the [Allen Institute Immune Health Atlas
+model page](https://apps.allenimmunology.org/aifi/resources/imm-health-atlas/downloads/models/)
+and place them at the paths below. They are not part of the input downloader:
+the current binary links redirect through a Google-authenticated Allen service,
+and the downloader deliberately does not handle credentials or interactive
+login. Redistribution terms must also be confirmed before publishing the
+binaries. The files are ignored by Git.
 
 | Level | Required path | SHA-256 |
 |---|---|---|
 | AIFI L1 | `aifi_models/ref_pbmc_clean_celltypist_model_AIFI_L1_2024-04-18.pkl` | `c63ec36ec90e195706dbab0e5596082d3bc06d980fcb212781c60c5ddb63d973` |
 | AIFI L2 | `aifi_models/ref_pbmc_clean_celltypist_model_AIFI_L2_2024-04-19.pkl` | `1f5d49bb85bf1fdff4936a6b250a4a24362ec5b58472a73d891f77f706e0eb10` |
 | AIFI L3 | `aifi_models/ref_pbmc_clean_celltypist_model_AIFI_L3_2024-04-19.pkl` | `df18d419fc3b73468b5d0e3fd940871c3930f207bddab91f1fba69e3905ff5cc` |
-
-Source page:
-<https://apps.allenimmunology.org/aifi/resources/imm-health-atlas/downloads/models/>
 
 ## Test data
 

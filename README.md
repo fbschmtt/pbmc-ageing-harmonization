@@ -1,4 +1,4 @@
-# PBMC ageing scRNA-seq pipeline
+# PBMC Ageing Harmonization
 
 Configuration-driven processing of PBMC ageing scRNA-seq studies. It produces
 one harmonized H5AD per study, per-study sample × AIFI-L2 pseudobulks, and a
@@ -17,35 +17,87 @@ architecture.
 See `INPUT_FILES.md` for the complete list of external expression files,
 supplementary metadata, CellTypist models, expected paths, and checksums.
 
+## Quick start
+
+The supported workflow environment requires [Nextflow](https://www.nextflow.io/)
+version 25.04 or newer and Docker on the host. To fetch the publicly available
+inputs, run:
+
+```bash
+make download-inputs STUDIES=all
+```
+
+> **Large downloads.** This can download multi-gigabyte source files. It does
+> not download sources requiring a login, portal access, or browser challenge;
+> the workflow skips studies whose inputs remain unavailable.
+
+The only manual download needed for this quick start is the three
+[AIFI CellTypist models](aifi_models/README). The AIDA25, Terekhova23, and
+Wang25 manual dataset files are optional: `STUDIES=all` skips each study whose
+inputs are incomplete and records the decision in `output/run_manifest.json`.
+
+After the required AIFI models and the inputs for the studies you want to
+include are in their configured paths, run:
+
+```bash
+make run-all STUDIES=all
+```
+
+This builds the workflow images when needed, runs the core harmonization and
+single-cell merge, fits pseudobulk differential-expression models, and renders
+all cell-type reports. It uses the Docker profile by default; no local Python
+or R installation is required.
+
+## Test quick start
+
+Run this before a production workflow: it confirms that Docker, Nextflow,
+models, and the available inputs work before committing to the much longer full
+analysis. It creates missing test fixtures for locally available inputs, then
+runs the complete ordered Docker test workflow:
+
+```bash
+make test-data
+make run-all-test
+```
+
+By default this requests every configured study, including Nehar-Belaid26, and
+skips any unavailable fixture. It includes the positive synthetic-DE check and
+standard cell-type reports. Use an explicit `STUDIES=<list>` to narrow a run.
+Existing fixtures are preserved; use `TEST_DATA_OVERWRITE=true` only when they
+need refreshing.
+
+## Setup details
+
+Input acquisition is a separate, strictly opt-in step: `make install`, tests,
+and workflow runs never download data. Follow [Download inputs](#download-inputs)
+for the explicit commands and use `INPUT_FILES.md` for exact paths and
+checksums. The three AIFI models require an interactive Allen login. Other
+manual sources are optional additions for their respective studies; an
+all-studies workflow skips a study when one of its inputs is unavailable.
+
+For production, `make run STUDIES=all` analyses every study whose expression
+input and declared preparation dependencies are present. It skips unavailable
+studies with a warning and records requested, selected, and skipped studies in
+`output/run_manifest.json`. An explicit list such as
+`make run STUDIES=aifi,terekhova23` is strict: missing inputs are an error, so
+the selected analysis population is never reduced silently. Test workflows
+instead skip unavailable fixtures and fail only when no requested fixture is
+available.
+
+For local Python development or host-side tools such as linting and unit tests,
+create the local environment with `make install`.
+It is not a substitute for Docker for the complete workflow: in particular, it
+does not provision the R, Seurat, reticulate, and anndata stack used for RDS
+conversion.
+
 ## Current status
 
-- The complete Docker test workflow has passed with every configured
-  preparation adapter, per-study harmonization/QC, pseudobulks, and both merge
-  branches (29 successful processes).
-- The full production pipeline has run successfully on production datasets,
-  including conversion of the real Wang25 RDS through Nextflow.
-- Executed QC notebooks can produce self-contained per-study HTML reports.
-- Review of the production QC, merge outputs, and resource usage remains the
-  next validation step; this development checkout still holds local ignored
-  test-scale inputs at several production paths.
-- A DSL2 Nextflow workflow connects conversion, preparation, harmonization,
-  merge, and QC, with a test profile for the 200-cell inputs.
-- Both Docker images build successfully. A synthetic Seurat object passed the
-  RDS-to-H5AD conversion with counts, names, and metadata intact.
-- Pseudobulk aggregation and merge are part of the production Nextflow graph;
-  merge QC reports include study/sample contribution, AIFI-L2 overlap, depth,
-  gene coverage, and (when applicable) merged UMAP checks.
-- Per-cell-type analysis and report rendering are separate workflow stages.
-  The focused CD14-monocyte test has produced the derived analysis H5AD, report
-  tables, executed notebook, and self-contained HTML report.
-- A dedicated PyDESeq2 workflow is wired to fit age effects per study and in a
-  merged study-adjusted model from the pseudobulk merge.
-- Cell-type reports optionally include matching DE summaries and plots. The
-  broad `make verify` workflow generates a deterministic positive DE fixture,
-  checks its fits and planted age markers, and validates the normal report
-  output path.
-- Python image dependencies are pinned in `requirements.lock`; preparation also
-  publishes retained source-`obs` metadata sidecars for adapter auditing.
+The complete `make verify` workflow passes with all eight configured test
+studies. It validates preparation, RDS conversion, harmonization, QC,
+pseudobulk and single-cell merges, positive synthetic DE fits, and 21
+cell-type reports. The full production workflow has also completed with the
+real Wang25 RDS. Scientific review of the production QC, merge, and DE outputs
+remains separate from this software validation.
 
 ## Data flow
 
@@ -197,78 +249,39 @@ never defines a pseudobulk. Missing string metadata is written as
 are collected under `cache/` for RDS-to-H5AD conversions. Downsampled smoke-test
 fixtures are generated under the ignored `test_data/` directory.
 
-## Local Python setup
+## Download inputs
 
-`requirements.lock` pins the Python 3.12 runtime and report environment used
-by the Docker image. `requirements.dev.lock` extends that exact base with the
-test and lint tools used in the local `.venv`. Docker installs the runtime lock
-before the project package, so source-only image rebuilds reuse the dependency
-layer. Update the locks only as a deliberate dependency change and review their
-complete diffs alongside `pyproject.toml`. Use `make install` for the local
-development environment.
+> **Strictly opt-in and potentially large.** Only `make download-inputs` and
+> `make download-inputs-strict` retrieve data; `make install`, test targets,
+> and production workflow targets never do. Before it starts, the downloader
+> warns about pending artifacts and their recorded size where available. A
+> selected study can require multi-gigabyte source files.
 
-```bash
-python -m venv .venv
-. .venv/bin/activate
-make install
-```
-
-## Run harmonization
+Choose the study or studies you want to acquire. The best-effort command
+downloads only registered public URLs, never authenticates or scrapes portals,
+and records outcomes in ignored `input_data/download_manifest.json`:
 
 ```bash
-# Complete all downsampled test studies and generate QC reports
-make run-test STUDIES=all
-
-# Recreate downsampled inputs from locally available full inputs
-python scripts/create_test_data.py --cells 200
-```
-
-Each study is prepared before harmonization. `pbmc-prepare` materializes a
-gzip-compressed CSV with exactly one canonical metadata row for every expression
-cell and a retained-source-`obs` sidecar with the same `cell_id` index.
-`pbmc-harmonize --prepared-obs <study>.cells.csv.gz` then attaches only the
-canonical artifact to raw counts. This is the debugging boundary used by
-Nextflow; the sidecar exists solely to audit source-to-canonical mappings.
-
-## Download public inputs
-
-`make download-inputs STUDIES=aifi` runs the opt-in, best-effort downloader.
-It never runs automatically with analysis commands, does not authenticate or
-scrape portals, and records outcomes in ignored
-`input_data/download_manifest.json`. Sources requiring terms acceptance or a
-manual portal download are reported with instructions rather than treated as a
-pipeline failure. The Nehar-Belaid26 raw 10x archive, label H5AD, and Supplementary Data 1
-are also direct, verified downloads, so a fresh input can be acquired with:
-
-```bash
+make download-inputs STUDIES=aifi
 make download-inputs STUDIES=nehar_belaid26
 ```
 
-The manifest now includes direct links for the four CELLxGENE H5ADs, AIFI and
-Nehar-Belaid26 expression inputs, and the Wang25 participant workbook. Some
-sources remain manual-only, including the Synapse expression objects. The
-current local files at some production input paths are test-scale subsets;
-the four CELLxGENE file sizes are checked by the downloader. See
+`make download-inputs-strict STUDIES=fachrul26` is the explicit acquisition
+preflight. It exits nonzero for a failed download, a size/checksum mismatch, or
+a manual-only artifact that has not yet been placed at its configured path. It
+is an acquisition preflight, not a routine test, and never runs as part of
+analysis commands. Existing files are left unchanged unless
+`DOWNLOAD_FORCE=true` is supplied deliberately.
+
+The manifest covers the public direct sources and reports manual-only sources
+with their instructions instead of treating them as pipeline failures. The
+Synapse expression objects require portal access; the AIDA publisher attachment
+rejects unauthenticated programmatic requests; and the AIFI model downloads
+require interactive authentication. The current local files at some production
+paths are test-scale subsets. The downloader verifies recorded SHA-256 values
+and CELLxGENE byte sizes, but third-party availability and access conditions
+can change; verify an acquired file before production analysis. See
 `config/input_sources.json` and [INPUT_FILES.md](INPUT_FILES.md).
-
-> **Status:** the download machinery has not yet been tested end-to-end. Treat
-> it as an unvalidated convenience feature and verify every downloaded file
-> before using it for production analysis.
-
-## Convert a Seurat RDS
-
-The converter requires R, Seurat, reticulate, and Python anndata. It processes exactly one object
-and retains only raw counts plus observation metadata:
-
-```bash
-Rscript scripts/convert_rds.R \
-  --input input_data/wang25/scRNA-seqProcessedLabelledObject.rds \
-  --output cache/converted/scRNA-seqProcessedLabelledObject.h5ad
-```
-
-Nextflow invokes this for studies with a `conversion` entry in
-`config/studies.json`. At present that is Wang25. Test runs use its downsampled
-RDS fixture and therefore exercise the same conversion process.
 
 ## QC reports
 
@@ -306,40 +319,19 @@ downstream grouping and splitting. Diagnostic re-annotations are stored in
 `experimental_aifi_l2_majority` (Harmony graph) and
 `experimental_aifi_l2_unintegrated_majority` (unintegrated PCA graph); the QC
 report shows their UMAPs and label-concordance heatmaps.
-`output/run_manifest.json` records selected studies, image references,
-configuration checksum, and checksums of the merged deliverables.
+`output/run_manifest.json` records requested, selected, and skipped studies,
+image references, configuration checksum, and checksums of the merged
+deliverables.
 
 ## Nextflow and Docker
 
-Nextflow >=25.04 is the canonical workflow runner. It reads studies and inputs from
-`config/studies.json`, runs independent studies in parallel, caches successful
-processes, and publishes the final H5AD, JSON, and QC artifacts. Limit a run
-with a comma-separated study list:
-
-```bash
-make run-test STUDIES=wang25
-make run STUDIES=aifi,onek1k
-```
-
-The `test` profile uses isolated 200-cell fixtures from `test_data/`. RDS-based
-studies retain an RDS fixture and therefore still
-pass through the same `CONVERT_RDS` process as a production run. Create or refresh fixtures
-from the production inputs once with `make test-data`; this never modifies
-`input_data/`. Override the fixture size with `make test-data TEST_CELLS=500`
-when needed. `--skip_qc` stops after the H5AD merge artifacts are created (it
-skips only notebook/HTML QC). By default the workflow does not create a
-whole-dataset single-cell merge. Its on-disk concat avoids retaining all source
-matrices plus a second full concat in memory, but the merged matrix is later
-loaded into RAM for normalization, Harmony, and annotation.
-
-For faster development, `make run-test` and `make run-cell-type-analysis-test` default
-to every configured study except `nehar_belaid26`, whose much larger fixture
-dominates test runtime. This is Make-level test selection only: it does not
-change the configured studies or production runs. Pass `STUDIES=all` (or an
-explicit comma-separated list) to override it. `make verify` deliberately
-restores all configured studies by default because it is now an occasional
-broad check; pass an explicit `STUDIES` list if a narrower verification is
-needed.
+Nextflow runs the configured studies in parallel and caches completed tasks.
+The Docker profile is the supported workflow environment and is selected by
+default. The test profile uses isolated 200-cell fixtures from `test_data/`;
+RDS fixtures still use the normal conversion process. `make test-data` creates
+only missing fixtures and never changes `input_data/`; use
+`TEST_DATA_OVERWRITE=true` to refresh them. Pass `STUDIES=<list>` to narrow a
+test or production run.
 
 ## Choosing a Make target
 
@@ -352,55 +344,29 @@ which validation to run.
 | Python library, CLI, or deterministic test change | `make lint test-unit` | Run a focused workflow too if a task contract or published artifact changed. |
 | Nextflow workflow or configuration change | `make workflow-lint` | Add `make run-test STUDIES=<study>` when task wiring must execute. |
 | One cell-type report template | `make run-cell-type-test CELL_TYPE=cd14-monocyte` | Use `make render-cell-type-test` only when an existing analysis is sufficient and no analysis output changed. |
-| Cell-type splitting or shared analysis | `make run-cell-type-analysis-test` | Use `make verify` only when the change affects all reports or release validation. |
-| Positive pseudobulk DE fitting | `make run-de-synthetic-test` then `make check-synthetic-de-results` | Follow with `make run-cell-type-analysis-test-existing` when checking that DE results reach reports. |
-| Core workflow for one or a few studies | `make run-test STUDIES=<list>` | Use `STUDIES=all` for all-study fixture coverage. |
+| Cell-type splitting or shared analysis | `make run-test`, then `make run-cell-type-analysis-test` | Use `make run-all-test` when the complete ordered test workflow is needed. |
+| Positive pseudobulk DE fitting | `make run-test`, then `make run-de-synthetic-test` and `make check-synthetic-de-results` | Follow with `make run-cell-type-analysis-test` when checking that DE results reach reports. |
+| Core workflow for one or a few studies | `make run-test STUDIES=<list>` | Omit `STUDIES` to request all configured studies. |
+| Ordered Docker integration test | `make run-all-test` | Use `make verify` when local lint, unit, and documentation checks are also needed. |
 | Markdown documentation or Make target names | `make docs-check` | Also run the target described by changed commands. |
 | Broad cross-cutting or release validation | `make verify` | This is deliberately non-resumed and includes all studies by default. |
 | Production analysis | `make run` | It is resumable; use only after the relevant focused checks pass. |
 
 Nextflow submission alone is not a passing workflow check: confirm each task's
-`.exitcode` and the published deliverables. Development test targets omit
-`nehar_belaid26` by default because its larger fixture dominates runtime;
-pass `STUDIES=all` (or an explicit comma-separated list) to override this.
+`.exitcode` and the published deliverables. Development test targets request
+all configured studies and skip unavailable test fixtures; pass an explicit
+comma-separated `STUDIES` list to narrow a run.
 
 Harmony integration uses the pinned Harmony2 C++ backend. It uses the backend's
 native thread policy; the legacy OpenMP/OpenBLAS thread overrides that crashed
 on large production runs have been removed.
 
-Cell-type reports show signed marker log-fold changes (higher and lower genes),
-direct cluster labels on the local UMAP, compact study metadata coverage
-(including technology and intronic-read inclusion), and
-up to ten local PCA loading panels. They include native local PC1-versus-PC2
-and PC3-versus-PC4 scatterplots, with the standard study palette as colour and
-the reported `technology` field as marker shape. A companion PCA row maps
-intronic-read inclusion to colour and 3′/5′ technology to marker shape. They
-also include cumulative variance explained and descriptive age correlations for
-the first ten PCs. The parent-fraction forest plot reports age effects per
-decade and a per-study residual-SD row with a conditional binomial
-cell-sampling reference. For each eligible study × sample row, the reference
-uses the fitted covariate-model fraction (clipped to the valid probability range) and that
-sample's observed parent-cell count, then refits the same model in each
-bootstrap replicate.
-The accompanying `fraction_model_diagnostics.tsv` records each estimable
-study's included covariates and model terms, residual and sampling SDs, sample
-count, mean fraction, count and fraction of clipped sampling probabilities,
-and the configured bootstrap seed and replicate count.
-The reader-facing HTML opens with a compact study/sample/age-support summary
-and a grouped table of contents, followed by a results-first section order. Its
-fraction-model evidence card summarizes the number of estimable studies, the
-count and direction of age estimates, the residual-to-cell-sampling comparison,
-and covariates represented; it is explicitly descriptive rather than a pooled
-biological conclusion. When no study has an estimable model, the same card
-states that condition without failing the report. Short captions distinguish
-technical PCA structure, inherited embeddings, and study-level replication
-evidence from formal inference.
-PCA loading figures use explicit subplot spacing because Scanpy's composite
-figure is not compatible with Matplotlib `tight_layout()`.
+Cell-type reports provide local embeddings, marker contrasts, study coverage,
+descriptive fraction trends, and optional DE summaries. Their model and
+interpretation details are documented in the downstream section below.
 
-The deterministic `make run-test` workflow enables that branch by default;
-production runs remain opt-in.
-Enable that separate path on a runner sized for the selected inputs:
+`make run-test` always creates the test single-cell merge. Production runs
+create it only through `make run-all` or when explicitly enabled:
 
 ```bash
 make run STUDIES=all MERGE_SINGLE_CELL=true
@@ -486,9 +452,9 @@ This downstream workflow requires an existing merged single-cell H5AD at
 For a complete production run, `make run-all` executes the core workflow with
 single-cell merging enabled, then runs differential expression and cell-type
 analysis/reporting in order. The workflow is resumable. It uses the configured
-`STUDIES`, `OUTDIR`, and `WORK_DIR` values. `make run-cell-type-analysis-test`
-first creates the small core test merge and then runs the downstream workflow
-under `output/test/`. All test targets publish only beneath `output/test/`.
+`STUDIES`, `OUTDIR`, and `WORK_DIR` values. For test output, run `make run-test`
+first, then `make run-cell-type-analysis-test` to consume the test merge under
+`output/test/`. All test targets publish only beneath `output/test/`.
 
 The raw-count splits are published under `<outdir>/cell_type_splits/` so one
 report can be rerun without re-splitting the merged H5AD:
@@ -503,8 +469,8 @@ make render-cell-type-test CELL_TYPE=cd14-monocyte
 The targeted test command deliberately does not build a core test merge or all
 reports; it requires the corresponding split to already exist. It runs the
 analysis and rendering stages for that one type. Create only the reusable splits
-from an existing merge with `make split-cell-types-test`, or run the full
-`make run-cell-type-analysis-test` when a fresh merge is needed. A targeted rerun
+from an existing merge with `make split-cell-types-test`, or run `make run-test`
+followed by `make run-cell-type-analysis-test` for all types. A targeted rerun
 refreshes that type directory but not `cell_type_manifest.json`; rerun the
 all-type workflow before treating the published report set as a new
 manifest-backed release. `cd14-monocyte` is the default targeted test type
@@ -551,68 +517,18 @@ outputs are copied to `output/`, including final reports, reusable cell-type
 split H5ADs, and the derived per-type analysis H5ADs; do not use paths inside
 `work/` as report inputs.
 
-Build and use both containers with:
-
-```bash
-make images
-make test-data
-make run-test STUDIES=wang25
-make run STUDIES=all
-make run-all
-make run-cell-type-analysis
-make run-cell-type-analysis-test
-make run-cell-type-analysis-test-existing
-make split-cell-types-test
-make run-cell-type-test CELL_TYPE=cd14-monocyte
-make render-cell-type-test CELL_TYPE=cd14-monocyte
-make docs-check
-```
-
-`make run`, `make run-test`, and `make run-no-qc` build the required
-content-tagged local images automatically whenever `NF_PROFILE` contains
-`docker`; use `make images` to build both without launching a workflow. Python
-and R images are tagged independently from the runtime files copied by their
-respective Dockerfiles. Report templates and models are staged as task inputs,
-so report-only or documentation-only edits do not retag the Python image or
-invalidate unrelated workflow cache entries. Set `IMAGE_TAG` explicitly to use
-one common release tag for both images.
-They also select the matching Nextflow resource profile (`core` or
-`cell_type_analysis`), keeping process selectors scoped to the workflow that
-defines them. For direct Nextflow invocation, include the corresponding profile.
-
-For a production run whose repository and task filesystem are separate, keep
-the repository path readable by Docker and choose an external work/output
-location:
+Workflow targets build their required content-tagged images automatically; use
+`make images` only to build them without a run. For a production run whose
+repository and task filesystem are separate, keep the repository readable by
+Docker and choose external work/output locations:
 
 ```bash
 make run NF_PROFILE=docker STUDIES=all \
   WORK_DIR=/path/to/run/work OUTDIR=/path/to/run/output
 ```
 
-Nextflow stages each declared task input into the Docker work directory. Keep
-the repository readable to Nextflow, and ensure `WORK_DIR` supports symbolic
-links; do not rely on arbitrary host repository paths being available inside a
-container.
-
-The Python image is defined by `docker/python.Dockerfile`; the conversion image is defined by
-`docker/r-conversion.Dockerfile`. The latter starts from a digest-pinned Seurat
-image and adds the Python/anndata bridge. Metadata and externally
-supplied CellTypist models remain outside the images and are declared as
-Nextflow task dependencies. Expression files and generated artifacts are staged
-through Nextflow. The Python image and a complete Wang25 test workflow have
-been verified; the full production run also completed the real Wang25 RDS
-conversion. The R conversion image is defined separately because it is much
-larger and only needed for RDS inputs.
-
-The Python image installs the reviewed `requirements.lock` before application
-source, then installs the project with `--no-deps --no-build-isolation`.
-It contains package code and workflow configuration; task-specific report
-templates and models are staged by Nextflow. This preserves the pinned
-dependency layer during source-only changes without allowing the project install
-to resolve a different environment.
-
-The content-derived image tag participates in Nextflow task identity, so a
-changed build context automatically receives separate resumable cache entries.
+Nextflow stages declared inputs into the task directory. Keep the repository
+readable to Nextflow and use a `WORK_DIR` that supports symbolic links.
 
 ## Pseudobulk differential expression
 
@@ -648,9 +564,8 @@ directory. Named Nextflow subworkflows group splitting plus analysis, analysis
 of an existing split, and report rendering while retaining the separate
 single-cell and pseudobulk entry points.
 
-The Nextflow `test` profile used by `make run-de-test` and
-`make run-de-test-existing` enables a test-only mode that bypasses only the
-minimum-cell cutoff. It keeps the adult-age, metadata, and model-estimability
+The Nextflow `test` profile used by `make run-de-test` enables a test-only mode
+that bypasses only the minimum-cell cutoff. It keeps the adult-age, metadata, and model-estimability
 checks, so the small fixture can exercise PyDESeq2 without changing the
 production inclusion rules. Every test-mode run is labeled `test_only`; its
 root and per-celltype metadata, result CSVs, and rendered reports carry a clear
@@ -674,15 +589,16 @@ independent samples.
 To render the standard test reports with the synthetic DE results, run:
 
 ```bash
-make run-cell-type-analysis-test
+make run-test
 make run-de-synthetic-test
-make run-cell-type-analysis-test-existing
+make run-cell-type-analysis-test
 ```
 
-For the complete ordered test, use `make verify`; it generates the synthetic
-fixture, checks the DE outputs, then renders the ordinary reports and checks
-that the synthetic DE panels appear. Pass `STUDIES=<list>` to narrow the core
-test inputs when needed.
+`make run-all-test` is the complete ordered Docker test: it generates the
+synthetic fixture, checks the DE outputs, then renders the ordinary reports and
+checks that the synthetic DE panels appear. `make verify` runs this same target
+after linting, unit tests, Nextflow lint, and documentation checks. Pass
+`STUDIES=<list>` to narrow the core test inputs when needed.
 
 The generated input stays under `output/test/synthetic_de/`. DE outputs use the
 standard `output/test/differential_expression/` directory, and the ordinary
@@ -705,9 +621,8 @@ By default this reads `output/merged/pseudobulk_merged.h5ad`. Override the
 input or output roots with `PSEUDOBULK_INPUT=/path/to/pseudobulk_merged.h5ad`
 or `OUTDIR=/path/to/output`. Override where cell-type report generation looks
 for DE results with `DE_RESULTS_DIR=/path/to/differential_expression`.
-`make run-de-test` creates and analyzes the test
-pseudobulk merge, while `make run-de-test-existing` requires that merge to
-already exist. Both use the explicitly labeled test mode described above.
+`make run-de-test` requires an existing test pseudobulk merge; create it first
+with `make run-test`. It uses the explicitly labeled test mode described above.
 Use `make run-de-synthetic-test` to exercise successful PyDESeq2 fits with the
 production sample-inclusion filters enabled.
 
@@ -716,34 +631,8 @@ are retained metadata fields but are not model covariates yet. Later work will
 probably add all available covariates, including BMI and CMV, to per-study
 plots.
 
-## Make shortcuts
+## Further reading
 
-The `Makefile` is intentionally a thin convenience layer rather than a second
-workflow. Run `make help` to see its targets. Common commands include:
-
-```bash
-make lint
-make workflow-lint
-make docs-check
-make test-unit
-make validate-test STUDIES=wang25
-make validate-full STUDIES=terekhova23
-make run-test STUDIES=wang25
-make run-no-qc STUDIES=wang25
-make run-test STUDIES=all MERGE_SINGLE_CELL=true
-make run-de
-```
-
-`make verify` includes the synthetic positive-DE check: it generates a small
-pseudobulk fixture, checks all expected fits and planted age markers, then
-renders the normal cell-type reports with matching DE results and checks their
-warnings, marker results, and plot output. Use it when a full, fresh Docker
-validation is warranted; it is not the routine command for an isolated edit.
-
-For a non-Docker Nextflow run, activate `.venv` so the installed
-`pbmc-harmonize`, `pbmc-qc`, `pbmc-merge`, `pbmc-merge-qc`,
-`pbmc-differential-expression`, and `pbmc-manifest` commands are on `PATH`. The
-Docker profile does not require the Python environment on the host.
-
-See `input_data/README.md` for the expected input layout and `PLAN.md` for the
-remaining reproducibility work.
+See [INPUT_FILES.md](INPUT_FILES.md) for exact external paths and checksums,
+[IMPLEMENTATION.md](IMPLEMENTATION.md) for architecture and output contracts,
+and [PLAN.md](PLAN.md) for open scientific and reproducibility work.

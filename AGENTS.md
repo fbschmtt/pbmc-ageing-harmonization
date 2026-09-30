@@ -2,8 +2,7 @@
 
 ## Environments and dependencies
 
-- Nextflow is expected to be available on `PATH`. Agent-only local fallback:
-  it is also available in the `scanpy` Conda environment. Do not encode that
+- Nextflow is expected to be available on `PATH`. Do not encode that
   fallback in repository scripts, Make targets, or user-facing documentation.
 - Keep dependency installs local to this repository. Use the existing `.venv`
   for Python development dependencies (for example,
@@ -38,15 +37,16 @@
   workflow or all reports. If no type is specified, use `cd14-monocyte`: it is
   well represented in the bundled multi-study fixture. If the split is absent
   but the test merge exists, run `make split-cell-types-test`; if the merge is
-  absent, use `make run-cell-type-analysis-test`. Reserve the full all-type
+  absent, run `make run-test` before `make run-cell-type-analysis-test`. Reserve the full all-type
   test workflow for changes that affect splitting, shared analysis, or publication.
 - Use `make run-de-synthetic-test` for positive DE model coverage with production
-  inclusion filters. Then use `make run-cell-type-analysis-test-existing` to
-  check that synthetic DE artifacts reach the ordinary cell-type reports.
-- `make verify` runs the fresh core test once, generates and fits the synthetic
-  DE fixture, then renders all cell-type reports from that merge with matching
-  synthetic DE results. Do not reintroduce a core-workflow prerequisite on
-  `run-cell-type-analysis-test-existing`.
+  inclusion filters. Then use `make run-cell-type-analysis-test` to check that
+  synthetic DE artifacts reach the ordinary cell-type reports.
+- `make run-all-test` runs the fresh core test once, generates and fits the
+  synthetic DE fixture, then renders all cell-type reports from that merge with
+  matching synthetic DE results. `make verify` adds local static checks before
+  calling `make run-all-test`. Do not reintroduce a core-workflow prerequisite
+  on `run-cell-type-analysis-test`.
 - When adding a required CLI argument or published output, find every invocation
   with `rg` (Make, Nextflow, tests, and docs) and run the smallest public Make
   target that exercises the changed contract.
@@ -54,11 +54,9 @@
   and the published deliverables before reporting a focused workflow as passed.
 - Run `make docs-check` after editing tracked Markdown documentation or Make
   target names.
-- Development test targets omit `nehar_belaid26` by default because its larger
-  fixture dominates runtime. This is a Make-level selection only; use
-  `STUDIES=all` for all-study coverage. `make verify` is the exception: it
-  restores all configured studies by default, while an explicit `STUDIES` list
-  still permits a narrower verification run.
+- Development test targets request every configured study, including
+  `nehar_belaid26`, and skip unavailable fixtures. Use an explicit `STUDIES`
+  list to narrow coverage; this is a Make-level selection only.
 
 ## Working style
 

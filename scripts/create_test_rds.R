@@ -6,12 +6,17 @@ suppressPackageStartupMessages({
 })
 
 parse_args <- function(args) {
-  result <- list(project_root = ".", config = "config/pipeline.json", studies = "all", cells = 200L, seed = 42L)
+  result <- list(project_root = ".", config = "config/pipeline.json", studies = "all", cells = 200L, seed = 42L, overwrite = FALSE)
   i <- 1L
   while (i <= length(args)) {
     key <- args[[i]]
+    if (key == "--overwrite") {
+      result$overwrite <- TRUE
+      i <- i + 1L
+      next
+    }
     if (!key %in% c("--project-root", "--config", "--studies", "--cells", "--seed")) {
-      stop("Usage: create_test_rds.R [--project-root DIR] [--config config/pipeline.json] [--studies all] [--cells 200] [--seed 42]")
+      stop("Usage: create_test_rds.R [--project-root DIR] [--config config/pipeline.json] [--studies all] [--cells 200] [--seed 42] [--overwrite]")
     }
     if (i == length(args)) stop("Missing value for ", key)
     result[[sub("^--", "", key)]] <- args[[i + 1L]]
@@ -46,7 +51,14 @@ for (study_id in requested) {
   }
   input <- file.path(root, conversion$source)
   output <- file.path(root, conversion$test_source)
-  if (!file.exists(input)) stop(study_id, ": input does not exist: ", input)
+  if (!file.exists(input)) {
+    message("SKIP ", study_id, ": missing ", input)
+    next
+  }
+  if (file.exists(output) && !args$overwrite) {
+    message("SKIP ", study_id, ": ", output, " exists")
+    next
+  }
 
   object <- readRDS(input)
   available <- Cells(object)
