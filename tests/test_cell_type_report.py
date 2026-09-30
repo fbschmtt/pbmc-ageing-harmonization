@@ -28,3 +28,5 @@ def test_cell_type_report_runner_executes_notebook_then_exports_html(tmp_path, m
     assert "--execute" in calls[1][0]
     assert calls[1][1]["env"]["CELL_TYPE_H5AD"] == str(input_path.resolve())
     assert calls[1][1]["env"]["CELL_TYPE_ANALYSIS_H5AD"] == str(analysis_path.resolve())
+    assert "--HTMLExporter.exclude_input=True" in calls[2][0]
+    assert "--HTMLExporter.exclude_output_prompt=True" in calls[2][0]

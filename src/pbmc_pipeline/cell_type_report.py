@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -36,7 +37,23 @@ def generate_cell_type_report(
         materialized_template = Path(temporary_dir) / f"{template_path.stem}.ipynb"
         subprocess.run([sys.executable, "-m", "jupytext", "--to", "notebook", "--output", str(materialized_template), str(template_path.resolve())], check=True, env=env)
         subprocess.run([sys.executable, "-m", "jupyter", "nbconvert", "--execute", "--to", "notebook", "--output", executed.name, "--output-dir", str(output_dir), str(materialized_template)], check=True, env=env)
-    subprocess.run([sys.executable, "-m", "jupyter", "nbconvert", "--to", "html", "--output", html.name, "--output-dir", str(output_dir), str(executed)], check=True, env=env)
+    if executed.is_file():
+        import nbformat
+
+        report_metadata_path = output_dir / "report.json"
+        report_metadata = json.loads(report_metadata_path.read_text()) if report_metadata_path.is_file() else {}
+        notebook = nbformat.read(executed, as_version=4)
+        notebook.metadata["title"] = (
+            f"{report_metadata.get('cell_type', input_path.stem)} | PBMC ageing"
+        )
+        nbformat.write(notebook, executed)
+    subprocess.run([
+        sys.executable, "-m", "jupyter", "nbconvert", "--to", "html",
+        "--HTMLExporter.exclude_input=True",
+        "--HTMLExporter.exclude_input_prompt=True",
+        "--HTMLExporter.exclude_output_prompt=True",
+        "--output", html.name, "--output-dir", str(output_dir), str(executed),
+    ], check=True, env=env)
     return html
 
 

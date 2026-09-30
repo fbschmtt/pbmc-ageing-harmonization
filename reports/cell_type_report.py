@@ -1,13 +1,7 @@
-# %% [markdown]
-# # Per-cell-type residual-variation report
-#
-# These are descriptive single-cell diagnostics. In particular, cell-level age
-# correlations are not independent-sample inference and must be followed by a
-# sample/subject-level analysis for any biological claim.
-
 # %%
 import os
 import warnings
+from html import escape
 from pathlib import Path
 
 # The report runs in a notebook kernel where ipywidgets is intentionally not a
@@ -20,11 +14,12 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 import seaborn as sns
-from IPython.display import Markdown, display
+from IPython.display import HTML, Markdown, display
 from statsmodels.nonparametric.smoothers_lowess import lowess
 import statsmodels.api as sm
 
 sns.set_theme(style="whitegrid")
+plt.rcParams.update({"figure.dpi": 110, "savefig.dpi": 110})
 from pbmc_pipeline.config import read_json
 from pbmc_pipeline.reporting import sample_cell_type_fractions, sample_cluster_fractions
 
@@ -42,8 +37,145 @@ if de_dir:
     if de_metadata_path.is_file():
         de_run_metadata = read_json(de_metadata_path)
 cell_type_name = str(primitive.obs["aifi_l2_majority"].iloc[0])
-display(Markdown(f"## {cell_type_name}\n\n{primitive.n_obs:,} cells × {primitive.n_vars:,} genes"))
-display(pd.Series(report, name="value").to_frame())
+status_label = str(report.get("status", "unknown")).replace("_", " ").title()
+hero_samples = (
+    primitive.obs.groupby(["study", "sample"], observed=True)
+    .agg(age=("age", "first"))
+    .reset_index()
+)
+hero_ages = pd.to_numeric(hero_samples["age"], errors="coerce").dropna()
+hero_age_range = (
+    f"{hero_ages.min():g}–{hero_ages.max():g} years" if not hero_ages.empty else "Not provided"
+)
+summary_metrics = [
+    ("Cells", f"{primitive.n_obs:,}"),
+    ("Studies", f"{hero_samples['study'].nunique():,}"),
+    ("Retained samples", f"{len(hero_samples):,}"),
+    ("Age support", hero_age_range),
+    ("Local clusters", str(report.get("n_clusters", "—"))),
+    ("Analysis status", status_label),
+]
+summary_metrics_html = "".join(
+    f"<div class=\"report-metric\"><dt>{escape(label)}</dt><dd>{escape(value)}</dd></div>"
+    for label, value in summary_metrics
+)
+de_toc_link = (
+    '<a href="#differential-expression">Pseudobulk differential expression</a>'
+    if de_dir else ""
+)
+display(HTML(f"""
+<style>
+:root {{
+  --report-ink: #182230;
+  --report-muted: #5f6b7a;
+  --report-line: #d8e0e8;
+  --report-paper: #ffffff;
+  --report-page: #f5f7fa;
+  --report-accent: #176b87;
+  --report-accent-soft: #e6f3f7;
+}}
+body.jp-Notebook {{
+  background: var(--report-page);
+  color: var(--report-ink);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 17px;
+}}
+main {{ max-width: 1600px; margin: 0 auto; padding: 2rem clamp(1.25rem, 3vw, 2.5rem) 4rem; }}
+.jp-Cell {{ margin: 1.4rem 0; }}
+.jp-Cell-outputWrapper, .jp-OutputArea {{ width: 100%; }}
+.jp-RenderedImage img {{ display: block; max-width: 100%; height: auto; margin: 0 auto; }}
+.jp-RenderedMarkdown h2 {{
+  margin-top: 3rem; padding-bottom: .55rem; border-bottom: 2px solid var(--report-line);
+  color: var(--report-ink); font-size: clamp(1.45rem, 2.7vw, 2rem);
+}}
+.jp-RenderedMarkdown h3 {{ color: var(--report-accent); margin-top: 2.25rem; }}
+.jp-RenderedMarkdown p, .jp-RenderedMarkdown li {{ color: #354152; font-size: 1.04rem; line-height: 1.65; }}
+.jp-RenderedMarkdown blockquote {{
+  margin: 1rem 0; padding: .75rem 1rem; border-left: 4px solid #bd6a29;
+  background: #fff6eb; color: #6e3e18;
+}}
+.report-hero {{
+  margin: 0 0 2.5rem; padding: clamp(1.4rem, 4vw, 2.6rem); border-radius: 18px;
+  background: linear-gradient(135deg, #315c6d, #527990); color: #fff;
+  box-shadow: 0 12px 30px rgba(49, 92, 109, .16);
+}}
+.report-eyebrow {{ margin: 0 0 .45rem; color: #bde7f0; font-size: .76rem; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }}
+.report-hero h1 {{ margin: 0; color: #fff; font-size: clamp(2rem, 5vw, 3.4rem); line-height: 1.08; }}
+.report-subtitle {{ max-width: 48rem; margin: .85rem 0 1.4rem; color: #e2f3f7; line-height: 1.55; }}
+.report-metrics {{ display: flex; flex-wrap: wrap; align-items: flex-start; gap: .55rem; margin: 0; }}
+.report-metric {{ display: flex; align-items: baseline; gap: .55rem; padding: .62rem .78rem; border: 1px solid rgba(255,255,255,.22); border-radius: 10px; background: rgba(255,255,255,.1); }}
+.report-metric dt {{ color: #d6edf2; font-size: .9rem; font-weight: 600; }}
+.report-metric dd {{ margin: 0; color: #fff; font-size: .9rem; font-weight: 650; text-align: right; }}
+.report-toc {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: .75rem; margin-top: 1.5rem; }}
+.report-toc-group {{ padding: .7rem .8rem; border: 1px solid rgba(255,255,255,.23); border-radius: 10px; background: rgba(16, 42, 53, .15); }}
+.report-toc-title {{ margin: 0 0 .38rem; color: #cbeaf1; font-size: .72rem; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }}
+.report-toc-links {{ display: flex; flex-direction: column; gap: .25rem; }}
+.report-hero .report-toc a, .report-hero .report-toc a:visited {{
+  color: #f7fcfd; font-size: .91rem; font-weight: 600; line-height: 1.35; text-decoration: none;
+}}
+.report-hero .report-toc a::before {{ content: "›"; display: inline-block; width: .8rem; color: #bde7f0; }}
+.report-hero .report-toc a:hover {{ color: #fff; text-decoration: underline; text-underline-offset: .16em; }}
+.report-provenance {{ padding: .75rem 1rem; border: 1px solid var(--report-line); border-radius: 10px; background: var(--report-paper); }}
+.report-provenance summary {{ cursor: pointer; color: var(--report-accent); font-weight: 700; }}
+.report-provenance table {{ margin-top: .8rem; }}
+.report-evidence {{ margin: 2.5rem 0 1.25rem; padding: 1.25rem 1.4rem; border: 1px solid #c8dde5; border-radius: 14px; background: #f1f8fa; }}
+.report-evidence h2 {{ margin: 0 0 .45rem; color: var(--report-ink); font-size: 1.45rem; }}
+.report-evidence p {{ margin: 0 0 .85rem; color: #354152; line-height: 1.55; }}
+.report-evidence-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .65rem; }}
+.report-evidence-item {{ padding: .7rem .8rem; border-radius: 9px; background: #fff; border: 1px solid #d7e7ec; }}
+.report-evidence-item dt {{ color: var(--report-muted); font-size: .77rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }}
+.report-evidence-item dd {{ margin: .22rem 0 0; color: var(--report-ink); font-weight: 650; line-height: 1.35; }}
+.jp-RenderedHTMLCommon {{ max-width: 100%; overflow-x: auto; }}
+.jp-RenderedHTMLCommon table {{ border-collapse: collapse; background: var(--report-paper); }}
+.jp-RenderedHTMLCommon th {{ background: #edf3f6; color: #263544; font-weight: 700; }}
+.jp-RenderedHTMLCommon th, .jp-RenderedHTMLCommon td {{ padding: .45rem .65rem; border: 1px solid var(--report-line); vertical-align: top; }}
+@media print {{
+  body.jp-Notebook {{ background: #fff; }} main {{ max-width: none; padding: 0; }}
+  .report-hero {{ box-shadow: none; }}
+}}
+</style>
+<header class=\"report-hero\">
+  <p class=\"report-eyebrow\">PBMC ageing · per-cell-type report</p>
+  <h1>{escape(cell_type_name)}</h1>
+  <p class=\"report-subtitle\">Descriptive sample-level and single-cell diagnostics. Cell-level associations are not independent-sample inference.</p>
+  <dl class=\"report-metrics\">{summary_metrics_html}</dl>
+  <nav class=\"report-toc\" aria-label=\"Report table of contents\">
+    <section class=\"report-toc-group\">
+      <p class=\"report-toc-title\">Study support</p>
+      <div class=\"report-toc-links\"><a href=\"#sample-coverage\">Sample coverage and protocol metadata</a></div>
+    </section>
+    <section class=\"report-toc-group\">
+      <p class=\"report-toc-title\">Fraction analysis</p>
+      <div class=\"report-toc-links\">
+        <a href=\"#sample-fractions\">Sample fractions across age</a>
+        <a href=\"#fraction-model-evidence\">Adjusted fraction-model evidence</a>
+      </div>
+    </section>
+    <section class=\"report-toc-group\">
+      <p class=\"report-toc-title\">Cell-state context</p>
+      <div class=\"report-toc-links\">
+        <a href=\"#global-location\">Global and local embeddings</a>
+        <a href=\"#cluster-composition\">Cluster composition</a>
+        <a href=\"#cluster-markers\">Cluster markers</a>
+      </div>
+    </section>
+    <section class=\"report-toc-group\">
+      <p class=\"report-toc-title\">Technical and gene-level diagnostics</p>
+      <div class=\"report-toc-links\">
+        <a href=\"#pc-study-technology\">PCA by study and protocol</a>
+        <a href=\"#pc-age\">PCA loadings and PC–age</a>
+        {de_toc_link}
+      </div>
+    </section>
+  </nav>
+</header>
+"""))
+provenance = pd.Series(report, name="value").to_frame()
+display(HTML(
+    "<details class=\"report-provenance\"><summary>Analysis provenance</summary>"
+    + provenance.to_html(escape=True)
+    + "</details>"
+))
 if de_run_metadata.get("analysis_mode") == "test_only":
     display(Markdown(
         "> **TEST OUTPUT — NOT FOR BIOLOGICAL INTERPRETATION.** "
@@ -58,8 +190,8 @@ def plot_umap(adata, *, color, title=None, label_clusters=False):
         plot_kwargs["legend_loc"] = "on data"
     sc.pl.umap(adata, **plot_kwargs)
     figure = plt.gcf()
-    figure.set_size_inches(8, 6)
-    figure.set_dpi(90)
+    figure.set_size_inches(9.5, 6.75)
+    figure.set_dpi(110)
     for axis in figure.axes:
         if axis.has_data():
             axis.set_aspect("equal", adjustable="box")
@@ -111,7 +243,7 @@ def plot_study_linear_trends(
     studies = sorted(data["study"].unique())
     n_rows, n_columns = facet_grid_shape(len(studies))
     figure, axes = plt.subplots(
-        n_rows, n_columns, figsize=(4.2 * n_columns, 3.5 * n_rows),
+        n_rows, n_columns, figsize=(4.8 * n_columns, 3.9 * n_rows),
         squeeze=False, sharex=True, sharey=True,
     )
     for axis, study in zip(axes.flat, studies):
@@ -164,7 +296,7 @@ def plot_combined_study_fits(fraction_specs):
         ("LOWESS", lowess_fit),
     ]:
         figure, axes = plt.subplots(
-            1, len(fraction_specs), figsize=(7 * len(fraction_specs), 5.5), squeeze=False,
+            1, len(fraction_specs), figsize=(7.8 * len(fraction_specs), 6.0), squeeze=False,
         )
         for axis, (data, fraction_column, label) in zip(axes.flat, fraction_specs):
             plot_data = data.assign(study=data["study"].astype(str))
@@ -244,7 +376,7 @@ def plot_cluster_fractions(data, *, palette):
     n_columns = min(3, len(clusters))
     n_rows = (len(clusters) + n_columns - 1) // n_columns
     figure, axes = plt.subplots(
-        n_rows, n_columns, figsize=(5 * n_columns, 4 * n_rows), squeeze=False,
+        n_rows, n_columns, figsize=(5.5 * n_columns, 4.4 * n_rows), squeeze=False,
         sharex=True, sharey=True,
     )
     studies = sorted(plot_data["study"].unique())
@@ -324,7 +456,7 @@ def fit_parent_fraction_models(
         normalized = values.astype("string").str.strip().str.lower()
         return normalized.notna() & ~normalized.isin(unavailable)
 
-    for study, subset in data.groupby("study", sort=True):
+    for study, subset in data.groupby("study", sort=True, observed=True):
         eligible = subset.copy()
         selected = []
         for column in candidate_covariates:
@@ -413,12 +545,21 @@ def fit_parent_fraction_models(
                 "ci_high": confidence[index, 1] * effect_scale,
                 "n_samples": len(model_data),
             })
+    coefficient_columns = [
+        "study", "covariate", "term", "contrast", "estimate", "ci_low", "ci_high",
+        "n_samples",
+    ]
     diagnostic_columns = [
         "study", "residual_sd", "binomial_sampling_sd", "n_samples", "mean_fraction",
         "n_clipped_binomial_probabilities", "fraction_clipped_binomial_probabilities",
         "covariates", "model_terms",
     ]
-    return pd.DataFrame(results), pd.DataFrame(residual_diagnostics, columns=diagnostic_columns)
+    # Keep the report-facing schema stable even when no study has enough adult
+    # samples or covariate variation for an estimable model.
+    return (
+        pd.DataFrame(results, columns=coefficient_columns),
+        pd.DataFrame(residual_diagnostics, columns=diagnostic_columns),
+    )
 
 
 def plot_parent_fraction_coefficients(coefficients, residual_diagnostics, *, palette):
@@ -431,7 +572,7 @@ def plot_parent_fraction_coefficients(coefficients, residual_diagnostics, *, pal
     studies = sorted(coefficients["study"].unique())
     residual_label = "residual_sd"
     y_positions = {name: index for index, name in enumerate([*covariate_order, residual_label])}
-    figure, axis = plt.subplots(figsize=(9, max(4.4, 1.15 * (len(covariate_order) + 1))))
+    figure, axis = plt.subplots(figsize=(10, max(4.8, 1.25 * (len(covariate_order) + 1))))
     for study_index, study in enumerate(studies):
         subset = coefficients.loc[coefficients["study"] == study]
         for _, row in subset.iterrows():
@@ -555,7 +696,7 @@ def plot_pca_study_technology_and_introns(adata):
     technology_end_markers = {"3′": "o", "5′": "s", "other": "X"}
     variance_ratio = np.asarray(adata.uns["pca"]["variance_ratio"])
 
-    figure, axes = plt.subplots(2, len(pairs), figsize=(8 * len(pairs), 11), squeeze=False)
+    figure, axes = plt.subplots(2, len(pairs), figsize=(9 * len(pairs), 12), squeeze=False)
     for axis, (x_component, y_component) in zip(axes[0], pairs):
         sns.scatterplot(
             data=score_data,
@@ -643,25 +784,6 @@ def plot_pca_study_technology_and_introns(adata):
     plt.show()
 
 # %% [markdown]
-# ## Contents
-#
-# - [Location on the global embedding](#global-location)
-# - [Sample coverage](#sample-coverage)
-# - [Sample-level fraction across age](#sample-fractions)
-# - [Cluster composition across age](#cluster-composition)
-# - [Cluster markers](#cluster-markers)
-# - [PCA scores by study and technology](#pc-study-technology)
-# - [PC--age correlations](#pc-age)
-
-# %% [markdown]
-# <a id="global-location"></a>
-# ### Location on the global embedding
-
-# %%
-if "X_umap" in primitive.obsm:
-    plot_umap(primitive, color="study", title="Former global UMAP coordinates, restricted to this cell type")
-
-# %% [markdown]
 # <a id="sample-coverage"></a>
 # ## Sample coverage among retained samples
 #
@@ -676,6 +798,7 @@ sample_covariates = (
         age=("age", "first"),
         sex=("sex", "first"),
         technology=("technology", "first"),
+        include_intronic=("include_intronic", "first"),
         disease_status=("disease_status", "first"),
     )
     .reset_index()
@@ -688,6 +811,7 @@ study_coverage = (
         age_max=("age", "max"),
         sex=("sex", lambda values: ", ".join(sorted(values.astype(str).unique()))),
         technology=("technology", lambda values: ", ".join(sorted(values.astype(str).unique()))),
+        include_intronic=("include_intronic", lambda values: ", ".join(sorted(values.astype(str).unique()))),
         disease_status=("disease_status", lambda values: ", ".join(sorted(values.astype(str).unique()))),
     )
     .reset_index()
@@ -765,6 +889,11 @@ plot_combined_study_fits([
     for fractions, fraction_column, _, ylabel in fraction_specs
 ])
 
+# %%
+display(Markdown(
+    f"### 3. Fraction of {cell_type_name} in {parent}: Linear Models, All Covariates"
+))
+
 # %% [markdown]
 # Each study has a separate ordinary least-squares model with one row per
 # eligible sample aged **20 years or older**. The response is this cell type's
@@ -788,9 +917,6 @@ plot_combined_study_fits([
 # scale, those effects may not support a reasonable interpretation.
 
 # %%
-display(Markdown(
-    f"### 3. Fraction of {cell_type_name} in {parent}: Linear Models, All Covariates"
-))
 display(Markdown("**Model sample restriction:** adults aged ≥20 years only."))
 parent_fraction_data = fraction_specs[1][0]
 parent_fraction_column = fraction_specs[1][1]
@@ -811,9 +937,72 @@ fraction_diagnostics_path = output_dir / "fraction_model_diagnostics.tsv"
 fraction_residual_diagnostics.to_csv(fraction_diagnostics_path, sep="\t", index=False)
 display(Markdown("#### Fraction-model residual and sampling diagnostics"))
 display(fraction_residual_diagnostics)
+
+age_effects = fraction_coefficients.loc[fraction_coefficients["covariate"] == "age"]
+n_positive_age_effects = int((age_effects["estimate"] > 0).sum())
+n_negative_age_effects = int((age_effects["estimate"] < 0).sum())
+if age_effects.empty:
+    age_direction = "No estimable age coefficient"
+elif len(age_effects) == 1:
+    age_direction = "1 positive estimate" if n_positive_age_effects else "1 negative estimate"
+elif n_positive_age_effects and n_negative_age_effects:
+    age_direction = f"Mixed: {n_positive_age_effects} positive, {n_negative_age_effects} negative"
+else:
+    age_direction = (
+        f"{n_positive_age_effects} positive estimates"
+        if n_positive_age_effects else f"{n_negative_age_effects} negative estimates"
+    )
+sampling_ratio = (
+    fraction_residual_diagnostics["residual_sd"]
+    / fraction_residual_diagnostics["binomial_sampling_sd"].replace(0, np.nan)
+)
+sampling_ratio = sampling_ratio.replace([np.inf, -np.inf], np.nan).dropna()
+residual_summary = (
+    f"Median {sampling_ratio.median():.1f}× the conditional sampling reference"
+    if not sampling_ratio.empty else "Sampling comparison unavailable"
+)
+model_covariates = sorted({
+    covariate
+    for terms in fraction_residual_diagnostics["covariates"].dropna()
+    for covariate in str(terms).split(";") if covariate
+})
+display(HTML(
+    "<section id=\"fraction-model-evidence\" class=\"report-evidence\">"
+    "<h2>Fraction-model evidence at a glance</h2>"
+    "<p>These are study-specific adult-sample OLS fits, not a pooled effect estimate. "
+    "Use them to assess direction, precision, and the residual diagnostic before interpreting individual coefficients.</p>"
+    "<dl class=\"report-evidence-grid\">"
+    f"<div class=\"report-evidence-item\"><dt>Estimable study models</dt><dd>{len(fraction_residual_diagnostics)}</dd></div>"
+    f"<div class=\"report-evidence-item\"><dt>Age-effect direction</dt><dd>{escape(age_direction)}</dd></div>"
+    f"<div class=\"report-evidence-item\"><dt>Residual check</dt><dd>{escape(residual_summary)}</dd></div>"
+    f"<div class=\"report-evidence-item\"><dt>Covariates represented</dt><dd>{escape(', '.join(model_covariates) or 'None')}</dd></div>"
+    "</dl></section>"
+))
 plot_parent_fraction_coefficients(
     fraction_coefficients, fraction_residual_diagnostics, palette=palette,
 )
+display(Markdown(
+    "_How to read this plot: each colour is a study and intervals are its 95% OLS confidence "
+    "intervals. The filled dot on the residual row is the observed post-model variation; the "
+    "open diamond is the conditional cell-sampling reference. Compare studies for consistency "
+    "and precision, rather than treating their collection as a pooled estimate._"
+))
+
+# %% [markdown]
+# <a id="global-location"></a>
+# ## Location on the global embedding
+#
+# These coordinates are inherited from the cross-study embedding and restricted
+# to the current cell type. They provide context for where the type sits in the
+# global PBMC landscape; this section does not fit a new embedding.
+
+# %%
+if "X_umap" in primitive.obsm:
+    plot_umap(primitive, color="study", title="Former global UMAP coordinates, restricted to this cell type")
+    display(Markdown(
+        "_This is orientation context only: its coordinates come from the global embedding, and "
+        "colours show study membership rather than a tested biological association._"
+    ))
 
 # %%
 if report["status"] != "complete":
@@ -829,6 +1018,10 @@ else:
 # %% [markdown]
 # <a id="cluster-composition"></a>
 # ## Cluster composition
+#
+# The table shows local-cluster cell counts by study. The plots that follow use
+# one study × sample fraction per point, so they describe sample-level cluster
+# composition rather than treating cells as independent observations.
 
 # %%
 if report["status"] == "complete":
@@ -849,6 +1042,10 @@ if report["status"] == "complete":
     studies = sorted(cluster_fractions["study"].unique())
     palette = dict(zip(studies, sns.color_palette("tab10", n_colors=len(studies))))
     plot_cluster_fractions(cluster_fractions, palette=palette)
+    display(Markdown(
+        "_Each point is a sample-level cluster fraction. Differences among coloured study series "
+        "are descriptive and should be read alongside the coverage and protocol context above._"
+    ))
 
 # %% [markdown]
 # <a id="cluster-markers"></a>
@@ -864,7 +1061,7 @@ if report["status"] == "complete":
     clusters = sorted(markers["group"].astype(str).unique())
     n_columns = min(3, len(clusters))
     n_rows = (len(clusters) + n_columns - 1) // n_columns
-    figure, axes = plt.subplots(n_rows, n_columns, figsize=(5 * n_columns, 4 * n_rows), squeeze=False)
+    figure, axes = plt.subplots(n_rows, n_columns, figsize=(5.5 * n_columns, 4.4 * n_rows), squeeze=False)
     for axis, cluster in zip(axes.flat, clusters):
         subset = directional_cluster_genes(markers, cluster=cluster)
         sns.barplot(
@@ -895,10 +1092,18 @@ if report["status"] == "complete":
 # %%
 if report["status"] == "complete":
     plot_pca_study_technology_and_introns(adata)
+    display(Markdown(
+        "_Read these panels as a technical-structure diagnostic: separation by study, technology, "
+        "or intronic alignment can indicate design effects, but is not itself a biological test._"
+    ))
 
 # %% [markdown]
 # <a id="pc-age"></a>
 # ## PCA gene loadings, variance explained, and exploratory PC–age correlations
+#
+# Loadings show which genes contribute most to each native local PC, while the
+# variance plot summarizes their cumulative contribution. PC–age correlations
+# are descriptive cell-level summaries and are not subject-level inference.
 
 # %%
 if report["status"] == "complete":
@@ -917,7 +1122,7 @@ if report["status"] == "complete":
 if report["status"] == "complete":
     variance_ratio = np.asarray(adata.uns["pca"]["variance_ratio"])
     cumulative_variance = np.cumsum(variance_ratio)
-    figure, axis = plt.subplots(figsize=(8, 4))
+    figure, axis = plt.subplots(figsize=(9, 4.5))
     axis.plot(np.arange(1, len(cumulative_variance) + 1), cumulative_variance, marker="o", markersize=3)
     axis.set_xlabel("Principal component")
     axis.set_ylabel("Cumulative variance explained")
@@ -930,7 +1135,7 @@ if report["status"] == "complete":
 if report["status"] == "complete":
     pc_age = pd.read_csv(output_dir / "pc_age_correlations.tsv", sep="\t")
     display(pc_age.reindex(pc_age["spearman_r"].abs().sort_values(ascending=False).index).head(10))
-    plt.figure(figsize=(8, 4))
+    plt.figure(figsize=(9, 4.5))
     sns.barplot(data=pc_age, x="pc", y="spearman_r", color="#4c72b0")
     plt.axhline(0, color="black", linewidth=0.8)
     plt.ylabel("Spearman correlation with age (cells; descriptive)")
@@ -951,7 +1156,11 @@ if de_dir:
     has_per_study = bool(per_study_results)
     has_merged = merged_results is not None
     if has_per_study or has_merged or de_run_metadata:
-        display(Markdown("## Pseudobulk differential expression"))
+        display(Markdown("<a id=\"differential-expression\"></a>\n## Pseudobulk differential expression"))
+        display(Markdown(
+            "Pseudobulk models aggregate counts at the study × sample × cell-type level. "
+            "They provide the sample-level complement to the descriptive single-cell views above."
+        ))
         if de_run_metadata.get("analysis_mode") == "test_only":
             display(Markdown(
                 "> **TEST OUTPUT — NOT FOR BIOLOGICAL INTERPRETATION.** "
@@ -1029,7 +1238,7 @@ if de_dir:
         display(pd.DataFrame(summary_rows))
 
         if has_per_study:
-            figure, axes = plt.subplots(1, 2, figsize=(13, 5))
+            figure, axes = plt.subplots(1, 2, figsize=(14.5, 5.8))
             if recurrence.empty:
                 empty_message = (
                     "No genes were tested in every per-study model"
@@ -1080,7 +1289,7 @@ if de_dir:
                 volcano["association"] = np.where(
                     volcano["padj"] < de_alpha, "FDR significant", "Not significant"
                 )
-                figure, axis = plt.subplots(figsize=(8, 6))
+                figure, axis = plt.subplots(figsize=(9, 6.5))
                 sns.scatterplot(
                     data=volcano, x="log2FoldChange", y="minus_log10_padj",
                     hue="association", hue_order=["Not significant", "FDR significant"],
@@ -1101,3 +1310,8 @@ if de_dir:
                     )
                 figure.tight_layout()
                 plt.show()
+        display(Markdown(
+            "_DE interpretation: the recurrence panels emphasize agreement among available per-study "
+            "models; the merged volcano is a shared-slope, study-adjusted summary and does not by "
+            "itself establish replication across studies._"
+        ))

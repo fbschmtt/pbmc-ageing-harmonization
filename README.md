@@ -369,7 +369,8 @@ native thread policy; the legacy OpenMP/OpenBLAS thread overrides that crashed
 on large production runs have been removed.
 
 Cell-type reports show signed marker log-fold changes (higher and lower genes),
-direct cluster labels on the local UMAP, compact study metadata coverage, and
+direct cluster labels on the local UMAP, compact study metadata coverage
+(including technology and intronic-read inclusion), and
 up to ten local PCA loading panels. They include native local PC1-versus-PC2
 and PC3-versus-PC4 scatterplots, with the standard study palette as colour and
 the reported `technology` field as marker shape. A companion PCA row maps
@@ -377,14 +378,23 @@ intronic-read inclusion to colour and 3′/5′ technology to marker shape. They
 also include cumulative variance explained and descriptive age correlations for
 the first ten PCs. The parent-fraction forest plot reports age effects per
 decade and a per-study residual-SD row with a conditional binomial
-cell-sampling reference. For each donor, the reference uses the fitted
-covariate-model fraction (clipped to the valid probability range) and that
-donor's observed parent-cell count, then refits the same model in each
+cell-sampling reference. For each eligible study × sample row, the reference
+uses the fitted covariate-model fraction (clipped to the valid probability range) and that
+sample's observed parent-cell count, then refits the same model in each
 bootstrap replicate.
 The accompanying `fraction_model_diagnostics.tsv` records each estimable
 study's included covariates and model terms, residual and sampling SDs, sample
 count, mean fraction, count and fraction of clipped sampling probabilities,
 and the configured bootstrap seed and replicate count.
+The reader-facing HTML opens with a compact study/sample/age-support summary
+and a grouped table of contents, followed by a results-first section order. Its
+fraction-model evidence card summarizes the number of estimable studies, the
+count and direction of age estimates, the residual-to-cell-sampling comparison,
+and covariates represented; it is explicitly descriptive rather than a pooled
+biological conclusion. When no study has an estimable model, the same card
+states that condition without failing the report. Short captions distinguish
+technical PCA structure, inherited embeddings, and study-level replication
+evidence from formal inference.
 PCA loading figures use explicit subplot spacing because Scanpy's composite
 figure is not compatible with Matplotlib `tight_layout()`.
 
@@ -408,10 +418,11 @@ the generated template notebooks are intentionally not tracked. The published
 Each report run publishes a self-contained static `report.html`, which can be
 opened directly in a browser or served from a static file host, plus an
 `executed.ipynb` that retains code and outputs for technical reproduction. The
-HTML report is the reader-facing analysis artifact; the notebook is the audit
-artifact. These standalone pages are intentionally separate from any future
-project-level website or custom frontend, which should browse manifests and
-structured report tables rather than parse notebook HTML.
+HTML report hides implementation cells and execution prompts, adds a compact
+summary/navigation layer, and is the reader-facing analysis artifact; the
+notebook is the audit artifact. These standalone pages are intentionally
+separate from any future project-level website or custom frontend, which should
+browse manifests and structured report tables rather than parse notebook HTML.
 
 ## Per-cell-type residual-variation reports
 

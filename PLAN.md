@@ -75,6 +75,10 @@ merge is available.
 - [x] Add an opt-in whole-dataset single-cell merge with a
   shared-gene embedding and experimental merged AIFI-L2 diagnostics.
 - [ ] Review the full production merge artifacts and merged QC reports.
+- [ ] Add one shared cross-study design report, rather than duplicating
+  donor-level covariate/confounding plots in every AIFI-L2 report. It should
+  cover covariate support and correlation across studies, plus high-level
+  AIFI-L1 composition and age-stability summaries.
 - [x] Add the initial Python harmonization Docker image definition.
 - [x] Add an executable QC notebook and self-contained HTML report generation.
 - [x] Replace notebook-based RDS conversion with a one-input/one-output R script.
@@ -173,6 +177,32 @@ make run STUDIES=all MERGE_SINGLE_CELL=true
   CMV IgM field is retained as a qualitative serostatus and is negative for all
   61 workbook records.
 - Decide whether final study files should retain UMAP/PCA artifacts or only labels.
+
+## Planned shared cross-study design and AIFI-L1 report
+
+Create a single reader-facing report from the merged inputs, published beside
+the merge-level QC rather than repeated for every cell type. It should use one
+row per retained study × sample (or biological individual where that distinction
+is material) and make the study design visible before downstream interpretation.
+
+- Summarize availability, within-study variation, and pairwise association of
+  age, sex, BMI, CMV, technology, intronic-read inclusion, and other model
+  covariates. Display missingness and study-level confounding explicitly; do
+  not imply that a cross-study association identifies an independent effect.
+- Add a high-level AIFI-L1 composition section. For each L1 compartment, show
+  study-specific mean sample fractions alongside the underlying sample values,
+  so the potentially large between-study differences in mean composition are
+  immediately visible. Keep biological replication at the sample level rather
+  than cell-weighting the comparison.
+- For each AIFI-L1 compartment, summarize age-dependent variation using the
+  same study-aware sample-level framing: show within-study trends and their
+  uncertainty or a clearly labelled descriptive age model. The working
+  expectation is that these broad L1 fractions are comparatively stable with
+  age, but the report must show the observed effect sizes and precision rather
+  than encode that expectation as a conclusion.
+- Link this global design/AIFI-L1 report from per-cell-type HTML reports when
+  it exists. It is context for interpretation, not a replacement for the
+  adjusted per-type fraction models or pseudobulk DE workflow.
 
 ## Primary analysis: age-associated pseudobulk DE
 

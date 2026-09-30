@@ -72,7 +72,10 @@ merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
   plots the inherited global UMAP and renders visualizations from the completed
   type-specific analysis artifact, fraction-model covariate and noise
   diagnostics, plus optional DE summaries and plots when the matching cell-type
-  slug is present in the DE manifest.
+  slug is present in the DE manifest. Its reader HTML leads with support
+  metrics, a grouped table of contents, and a study-specific fraction-model
+  evidence summary; it places coverage and model evidence before embedding and
+  marker detail.
 - `differential_expression.nf` and `modules/differential_expression.nf`: the
   independent pseudobulk DE workflow: label listing, one in-memory type subset
   and fit per task, then result/manifest collection.
@@ -105,7 +108,7 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/qc/<study>/report.html`
 - `<outdir>/qc/merged/report.html` (one report for both merge branches)
 - `<outdir>/cell_type_analysis/<aifi-l2-type>/analysis.h5ad` (optional derived embeddings and clusters)
-- `<outdir>/cell_type_analysis/<aifi-l2-type>/report.html` (optional self-contained static, reader-facing downstream report)
+- `<outdir>/cell_type_analysis/<aifi-l2-type>/report.html` (optional self-contained static, reader-facing downstream report without implementation-cell inputs)
 - `<outdir>/cell_type_analysis/<aifi-l2-type>/executed.ipynb` (optional executed technical/audit report)
 - `<outdir>/cell_type_analysis/<aifi-l2-type>/fraction_model_diagnostics.tsv` (optional per-study fraction-model covariates, residual SD, and binomial-sampling reference)
 - `<outdir>/cell_type_analysis/cell_type_manifest.json` (optional downstream provenance and completeness contract)
