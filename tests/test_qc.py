@@ -1,9 +1,9 @@
 from pbmc_pipeline.qc import generate_qc_report
 
 
-def test_qc_runner_executes_notebook_then_exports_html(tmp_path, monkeypatch):
+def test_qc_runner_materializes_executes_and_exports_report(tmp_path, monkeypatch):
     root = tmp_path
-    template = root / "reports" / "qc_report.ipynb"
+    template = root / "reports" / "qc_report.py"
     template.parent.mkdir()
     template.write_text("{}")
     input_path = root / "study.h5ad"
@@ -25,7 +25,8 @@ def test_qc_runner_executes_notebook_then_exports_html(tmp_path, monkeypatch):
     )
 
     assert html == root / "output" / "qc" / "study" / "report.html"
-    assert len(calls) == 2
-    assert "--execute" in calls[0][0]
-    assert "html" in calls[1][0]
+    assert len(calls) == 3
+    assert "jupytext" in calls[0][0]
+    assert "--execute" in calls[1][0]
+    assert "html" in calls[2][0]
     assert calls[0][1]["env"]["QC_STUDY"] == "study"

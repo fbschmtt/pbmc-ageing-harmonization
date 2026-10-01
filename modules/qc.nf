@@ -25,6 +25,7 @@ process RENDER_MERGE_QC {
     path merged_inputs
     path merge_reports
     path qc_template
+    path studies_config
 
     output:
     path('merged')
@@ -33,6 +34,7 @@ process RENDER_MERGE_QC {
     """
     mkdir -p merged
     pbmc-merge-qc --project-root ${params.project_dir} --input ${merged_inputs} \\
-      --run-report ${merge_reports} --output-dir merged --template ${qc_template}
+      --run-report ${merge_reports} --output-dir merged --template ${qc_template} \\
+      --studies-config ${studies_config}
     """
 }

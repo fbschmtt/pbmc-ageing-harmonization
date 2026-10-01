@@ -24,8 +24,9 @@
         ]
       },
       "provenance": {
-        "technology": "needs_review",
+        "technology": "obs.assay; values report 10x 5' v2",
         "frozen": "reported_in_legacy",
+        "include_intronic": "obs.intronic_reads_counted",
         "ethnicity": "confirmed_broad_mapping",
         "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use"
       }
@@ -46,6 +47,9 @@
       },
       "provenance": {
         "celltypes": "native_AIFI_labels",
+        "technology": "inferred 10X 3-prime from the source protocol; no assay field is present in obs",
+        "frozen": "inferred from the AIFI source processing workflow",
+        "include_intronic": "not provided in source obs",
         "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use"
       }
     },
@@ -77,7 +81,7 @@
         "aligner": "obs.alignment_software",
         "genome": "obs.reference_genome",
         "include_intronic": "obs.intronic_reads_counted",
-        "frozen": "obs.sample_preservation_method=fresh mapped to no",
+        "frozen": "paper methods state cryopreserved PBMCs were thawed; use frozen despite conflicting obs.sample_preservation_method=fresh in the CELLxGENE object",
         "country": "inferred from the Fachrul26 Indonesian cohort",
         "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use",
         "feature_names": "var.feature_name is used instead of Ensembl var_names"
@@ -150,7 +154,9 @@
         ]
       },
       "provenance": {
-        "sample": "needs_review",
+        "sample": "needs_review: the source H5AD has donor_id and pool_number but no sample or timepoint key; currently donor_id is used for both sample and subject. Confirm one biological collection per donor.",
+        "technology": "obs.assay; values report 10x 3' v2",
+        "frozen": "inferred fresh from source protocol; confirm frozen-state metadata",
         "include_intronic": "inferred",
         "ethnicity": "reported_in_legacy",
         "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use"
@@ -184,6 +190,7 @@
         "sample": "obs.sample_uuid",
         "subject": "obs.donor_id",
         "technology": "obs.assay",
+        "frozen": "explicitly reported as frozen in the paper",
         "genome": "inferred GRCh37 from obs.mapped_reference_annotation=GENCODE 19",
         "feature_names": "var.feature_name is used instead of Ensembl var_names"
       }
@@ -211,7 +218,7 @@
         ]
       },
       "provenance": {
-        "frozen": "needs_review",
+        "frozen": "explicitly reported as frozen in the paper",
         "include_intronic": "inferred_from_cellranger",
         "smoking_status": "paper_exclusion_criterion",
         "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use"
@@ -250,7 +257,7 @@
         "sample_metadata": "join_recovered_from_legacy_wang25_2_create_anndata_notebook",
         "ethnicity": "confirmed",
         "cmv": "qualitative_CMV_IgM_serostatus_all_negative",
-        "frozen": "needs_review",
+        "frozen": "preliminary_fresh_reference_samples; pending author confirmation",
         "include_intronic": "inferred",
         "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use"
       }

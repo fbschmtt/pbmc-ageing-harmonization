@@ -28,7 +28,7 @@ def prepare_cells(source, root):
         "aligner": {"constant": "CRv3.0.2"},
         "genome": {"constant": "GRCh38"},
         "demultiplexing": {"constant": "none"},
-        # inferred: confirm the fresh-cell/frozen-state interpretation against the study protocol.
+        # inferred: public reference samples are described as fresh; author confirmation is pending.
         "frozen": {"constant": "no"},
         # inferred: source processing metadata is used because no per-cell field is present.
         "include_intronic": {"constant": "no"},

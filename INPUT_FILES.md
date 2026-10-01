@@ -20,10 +20,10 @@ before production use. To deliberately replace existing files, pass
 | Study | Required path | Role and source | SHA-256 / expected size |
 |---|---|---|---|
 | AIDA25 | `input_data/aida25/3a8a77a6-f069-479c-a2c1-252feafd0106.h5ad` | [CELLxGENE AIDA Phase 1 Data Freeze v2](https://cellxgene.cziscience.com/collections/ced320a1-29f3-47c1-a735-513c7084d508), raw-count H5AD | 14,266,895,920 bytes expected |
-| AIFI | `input_data/aifi/human_immune_health_atlas_full.h5ad` | [Allen Institute Immune Health Atlas download](https://apps.allenimmunology.org/aifi/resources/imm-health-atlas/downloads/scrna/), H5AD | Not yet recorded |
+| AIFI | `input_data/aifi/human_immune_health_atlas_full.h5ad` | [Allen Institute Immune Health Atlas download](https://apps.allenimmunology.org/aifi/resources/imm-health-atlas/downloads/scrna/), H5AD | 42,826,405,062 bytes expected |
 | Fachrul26 | `input_data/fachrul26/6a322de5-4cc6-43f5-b35d-6f0c246fb297.h5ad` | [CELLxGENE dataset](https://cellxgene.cziscience.com/collections/d1e0e64d-6d2a-4a3e-b7f4-43ed909a9d9c), raw-count H5AD with embedded observation metadata | 3,855,510,491 bytes expected |
-| Nehar-Belaid26 | `input_data/nehar_belaid26/GSE233321_RAW.tar` | [Direct GEO RAW archive](https://ftp.ncbi.nlm.nih.gov/geo/series/GSE233nnn/GSE233321/suppl/GSE233321_RAW.tar); 10x members are read directly from tar | Not yet recorded |
-| Nehar-Belaid26 | `input_data/nehar_belaid26/GSE233321_all_PBMCs.h5ad` | [GEO label H5AD](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE233321); labels transfer only on unique `obs.sample_id` plus normalized barcode-sequence matches | Not yet recorded |
+| Nehar-Belaid26 | `input_data/nehar_belaid26/GSE233321_RAW.tar` | [Direct GEO RAW archive](https://ftp.ncbi.nlm.nih.gov/geo/series/GSE233nnn/GSE233321/suppl/GSE233321_RAW.tar); 10x members are read directly from tar | 48,473,344,000 bytes expected |
+| Nehar-Belaid26 | `input_data/nehar_belaid26/GSE233321_all_PBMCs.h5ad` | [GEO label H5AD](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE233321); labels transfer only on unique `obs.sample_id` plus normalized barcode-sequence matches | 12,465,445,446 bytes expected |
 | OneK1K | `input_data/onek1k/81d84489-bff9-4fb6-b0ee-78348126eada.h5ad` | [CELLxGENE OneK1K dataset](https://cellxgene.cziscience.com/collections/dde06e0f-ab3b-46be-96a2-a8082383c4a1), raw-count H5AD | 4,436,424,475 bytes expected |
 | Perez22 | `input_data/perez22/c55dc602-d168-4d15-acc1-5de4f2f5d551.h5ad` | [CELLxGENE dataset](https://cellxgene.cziscience.com/collections/436154da-bcf1-4130-9c8b-120ff9a888f2), raw-count H5AD with embedded observation metadata | 12,218,105,530 bytes expected |
 | Terekhova23 | `input_data/terekhova23/pbmc_gex_raw_with_var_obs.h5ad` | [Synapse study data](https://www.synapse.org/Synapse:syn49637038); download manually after satisfying any login/access terms | Not yet recorded |
@@ -53,13 +53,13 @@ compact lookup, first place the original file at
 
 ## CellTypist models
 
-Download the models manually from the [Allen Institute Immune Health Atlas
-model page](https://apps.allenimmunology.org/aifi/resources/imm-health-atlas/downloads/models/)
-and place them at the paths below. They are not part of the input downloader:
-the current binary links redirect through a Google-authenticated Allen service,
-and the downloader deliberately does not handle credentials or interactive
-login. Redistribution terms must also be confirmed before publishing the
-binaries. The files are ignored by Git.
+Download the models from the [Allen Institute Immune Health Atlas model
+page](https://apps.allenimmunology.org/aifi/resources/imm-health-atlas/downloads/models/)
+and place them at the paths below. The downloader does not retrieve them
+because the current binary links redirect through a Google-authenticated Allen
+service and require interactive authentication. The binaries are excluded from
+redistribution pending confirmation of their license terms. The files are
+ignored by Git.
 
 | Level | Required path | SHA-256 |
 |---|---|---|

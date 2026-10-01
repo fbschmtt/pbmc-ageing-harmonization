@@ -15,7 +15,6 @@ import pandas as pd
 import scanpy as sc
 import seaborn as sns
 from IPython.display import HTML, Markdown, display
-from statsmodels.nonparametric.smoothers_lowess import lowess
 import statsmodels.api as sm
 
 sns.set_theme(style="whitegrid")
@@ -211,28 +210,6 @@ def facet_grid_shape(n_panels, *, max_columns=4):
     return (n_panels + n_columns - 1) // n_columns, n_columns
 
 
-def linear_fit(data, *, y_column, x_grid):
-    """Return an OLS line on a supplied grid."""
-    x = data["age"].to_numpy(dtype=float)
-    y = data[y_column].to_numpy(dtype=float)
-    design = np.column_stack([np.ones(len(x)), x])
-    coefficients, _, _, _ = np.linalg.lstsq(design, y, rcond=None)
-    return coefficients[0] + coefficients[1] * x_grid
-
-
-def lowess_fit(data, *, y_column, x_grid):
-    """Return a LOWESS curve on a supplied grid."""
-    x = data["age"].to_numpy(dtype=float)
-    y = data[y_column].to_numpy(dtype=float)
-
-    def predict(sample_x, sample_y):
-        curve = lowess(sample_y, sample_x, frac=0.67, it=3, return_sorted=True)
-        unique_x, first_indices = np.unique(curve[:, 0], return_index=True)
-        return np.interp(x_grid, unique_x, curve[first_indices, 1])
-
-    return predict(x, y)
-
-
 def plot_study_linear_trends(
     data, *, fraction_column, title, ylabel, palette, show_fit_legend=True,
 ):
@@ -288,82 +265,100 @@ def plot_study_linear_trends(
 
 
 def plot_combined_study_fits(fraction_specs):
-    """Show separate linear and LOWESS study fits with sample-share-weighted means."""
-    studies = sorted(set().union(*(set(data["study"].astype(str)) for data, _, _ in fraction_specs)))
-    palette = dict(zip(studies, sns.color_palette("tab10", n_colors=len(studies))))
-    for fit_name, fit_function in [
-        ("linear", linear_fit),
-        ("LOWESS", lowess_fit),
-    ]:
-        figure, axes = plt.subplots(
-            1, len(fraction_specs), figsize=(7.8 * len(fraction_specs), 6.0), squeeze=False,
-        )
-        for axis, (data, fraction_column, label) in zip(axes.flat, fraction_specs):
-            plot_data = data.assign(study=data["study"].astype(str))
-            eligible = {
-                study: subset
-                for study, subset in plot_data.groupby("study", sort=True)
-                if has_age_span(subset)
-            }
-            total_n = sum(len(subset) for subset in eligible.values())
-            legend_handles = []
-            if not eligible:
-                axis.text(0.5, 0.5, "Insufficient age variation for fit", transform=axis.transAxes,
-                          ha="center", va="center")
+    """Plot equal-study standardized predictions from study-adjusted linear models."""
+    figure, axes = plt.subplots(
+        1, len(fraction_specs), figsize=(7.8 * len(fraction_specs), 5.5), squeeze=False,
+    )
+    for axis, (data, fraction_column, label) in zip(axes.flat, fraction_specs):
+        model_data = data[["study", "age", fraction_column]].copy()
+        model_data["study"] = model_data["study"].astype(str)
+        model_data["age"] = pd.to_numeric(model_data["age"], errors="coerce")
+        model_data[fraction_column] = pd.to_numeric(model_data[fraction_column], errors="coerce")
+        model_data = model_data.dropna().reset_index(drop=True)
+        study_ranges = model_data.groupby("study", observed=True)["age"].agg(["min", "max"])
+        variable_studies = model_data.groupby("study", observed=True)["age"].nunique()
+        if model_data.empty or not (variable_studies >= 2).any():
+            axis.text(
+                0.5, 0.5, "Insufficient within-study age variation for a shared slope",
+                transform=axis.transAxes, ha="center", va="center",
+            )
+        else:
+            study_terms = pd.get_dummies(
+                model_data["study"], prefix="study", drop_first=True, dtype=float,
+            )
+            design = pd.concat(
+                [model_data[["age"]].astype(float), study_terms], axis=1,
+            )
+            design = sm.add_constant(design, has_constant="add")
+            rank = np.linalg.matrix_rank(design.to_numpy(dtype=float))
+            if len(model_data) <= rank:
+                axis.text(
+                    0.5, 0.5, "Insufficient residual degrees of freedom for interval",
+                    transform=axis.transAxes, ha="center", va="center",
+                )
             else:
-                x_grid = np.linspace(
-                    min(subset["age"].min() for subset in eligible.values()),
-                    max(subset["age"].max() for subset in eligible.values()),
-                    160,
+                study_sample_weights = model_data.groupby(
+                    "study", observed=True,
+                )["study"].transform(lambda values: 1 / len(values))
+                model = sm.WLS(
+                    model_data[fraction_column].to_numpy(dtype=float), design,
+                    weights=study_sample_weights.to_numpy(dtype=float),
+                ).fit(cov_type="HC3")
+                age_grid = np.linspace(model_data["age"].min(), model_data["age"].max(), 160)
+                standardized_design = pd.DataFrame(
+                    0.0, index=np.arange(len(age_grid)), columns=design.columns,
                 )
-                study_fits = []
-                for study, subset in eligible.items():
-                    weight = len(subset) / total_n
-                    local_grid = x_grid[
-                        (x_grid >= subset["age"].min()) & (x_grid <= subset["age"].max())
-                    ]
-                    fitted = fit_function(
-                        subset, y_column=fraction_column, x_grid=local_grid,
+                standardized_design["const"] = 1.0
+                standardized_design["age"] = age_grid
+                for column in study_terms.columns:
+                    study = column.removeprefix("study_")
+                    standardized_design[column] = np.mean(
+                        model_data["study"].to_numpy() == study
                     )
-                    axis.plot(local_grid, fitted, color=palette[study], linewidth=2)
-                    study_fits.append((study, subset, weight))
-                    legend_handles.append(plt.Line2D(
-                        [], [], color=palette[study], linewidth=2,
-                        label=f"{study} (n={len(subset)}, {weight:.0%})",
-                    ))
+                prediction = model.get_prediction(standardized_design).summary_frame()
 
-                weighted_sum = np.zeros(len(x_grid))
-                weight_sum = np.zeros(len(x_grid))
-                for _, subset, weight in study_fits:
-                    supported = (x_grid >= subset["age"].min()) & (x_grid <= subset["age"].max())
-                    fitted = fit_function(
-                        subset, y_column=fraction_column, x_grid=x_grid[supported],
+                overlap_min = study_ranges["min"].max()
+                overlap_max = study_ranges["max"].min()
+                if overlap_min <= overlap_max:
+                    axis.axvspan(
+                        overlap_min, overlap_max, color="#176b87", alpha=0.08,
+                        label="All studies observed",
                     )
-                    weighted_sum[supported] += weight * fitted
-                    weight_sum[supported] += weight
-                supported = weight_sum > 0
-                axis.plot(
-                    x_grid[supported], weighted_sum[supported] / weight_sum[supported],
-                    color="#171717", linewidth=3.2, zorder=5,
+                axis.fill_between(
+                    age_grid,
+                    prediction["mean_ci_lower"].to_numpy(),
+                    prediction["mean_ci_upper"].to_numpy(),
+                    color="#176b87", alpha=0.18, linewidth=0,
+                    label="95% HC3 confidence interval",
                 )
-                legend_handles.append(plt.Line2D(
-                    [], [], color="#171717", linewidth=3.2,
-                    label="Sample-share-weighted mean",
-                ))
-            axis.set_title(label)
-            axis.set_xlabel("Age (years)")
-            axis.set_ylabel(label)
-            if legend_handles:
-                axis.legend(handles=legend_handles, title="Study (n samples, share)",
-                            loc="best", fontsize=8, title_fontsize=8)
-        figure.suptitle(f"Within-study {fit_name} fraction fits", y=0.99)
-        figure.text(
-            0.5, 0.015,
-            "Study share = n / total eligible n; weights renormalize among studies spanning each age. Other schemes may be explored.",
-            ha="center", fontsize=9,
-        )
-        figure.tight_layout(rect=(0, 0.05, 1, 0.93))
-        plt.show()
+                axis.plot(
+                    age_grid, prediction["mean"].to_numpy(),
+                    color="#124e63", linewidth=3,
+                    label="Equal-study adjusted estimate",
+                )
+                support_note = (
+                    "Shading marks the age range observed in every study; outside it, "
+                    "predictions extrapolate for some studies."
+                    if overlap_min <= overlap_max
+                    else "No age range is observed in every study; the standardized curve extrapolates."
+                )
+                axis.text(
+                    0.02, 0.02, support_note, transform=axis.transAxes,
+                    ha="left", va="bottom", fontsize=8, color="#4d5966",
+                )
+                axis.legend(loc="best", fontsize=8)
+        axis.set_title(label)
+        axis.set_xlabel("Age (years)")
+        axis.set_ylabel(label)
+    figure.suptitle("Study-adjusted linear fraction estimates", y=0.98)
+    figure.text(
+        0.5, 0.015,
+        "Weighted least squares with study-specific intercepts and one shared age slope; "
+        "each study has equal total model weight. Intervals use HC3 robust standard errors.",
+        ha="center", fontsize=9,
+    )
+    figure.tight_layout(rect=(0, 0.06, 1, 0.92))
+    plt.show()
 
 
 def plot_cluster_fractions(data, *, palette):
@@ -832,12 +827,14 @@ plt.show()
 # denominator; the right panel uses the manually configured AIFI-L1 parent
 # derived from every cell's merged L2 call, never from a separate L1 classifier.
 # Samples with fewer than the configured denominator-cell cutoff are excluded.
-# Study-specific trends and weighted summaries are descriptive rather than
-# age-effect tests; the summaries do not adjust for study.
-# Facets show within-study linear fits for all samples and for age ≥20. Separate
-# combined figures show unshaded per-study linear or LOWESS fits, plus a mean
-# curve weighted by each study's share of eligible samples. At each age, the
-# mean is renormalized over studies whose observed age range covers it.
+# Facets show descriptive within-study linear fits for all samples and for age
+# ≥20. The combined view is a study-adjusted descriptive fit: one weighted
+# least-squares model with study-specific intercepts and a shared age slope,
+# equal total weight per study, and HC3 confidence intervals. Shading identifies
+# the age interval observed in every study; predictions outside it extrapolate
+# for at least one study. HC3 intervals treat sample rows as independent;
+# repeat samples from the same subject are not clustered, which may understate
+# uncertainty.
 
 # %%
 min_fraction_denominator = pipeline["cell_type_analysis"]["min_fraction_denominator_cells"]
@@ -883,7 +880,7 @@ for index, (fractions, fraction_column, title, ylabel) in enumerate(fraction_spe
         fractions, fraction_column=fraction_column, title=title, ylabel=ylabel, palette=palette,
         show_fit_legend=index == 0,
     )
-display(Markdown(f"### 2. Combined Fitted Fractional Model ({cell_type_name})"))
+display(Markdown(f"### 2. Study-adjusted Linear Fraction Estimate ({cell_type_name})"))
 plot_combined_study_fits([
     (fractions, fraction_column, ylabel)
     for fractions, fraction_column, _, ylabel in fraction_specs

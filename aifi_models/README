@@ -1,9 +1,11 @@
-Download the AIFI CellTypist model binaries manually from
-https://apps.allenimmunology.org/aifi/resources/imm-health-atlas/downloads/models/
-and place them here with the filenames listed in `../INPUT_FILES.md`.
+Download the AIFI CellTypist model binaries from the Allen Institute Immune
+Health Atlas model page and place them here using the filenames listed in
+`../INPUT_FILES.md`:
 
-The pipeline does not download or redistribute these binaries: their current
-download links redirect through a Google-authenticated Allen service, while the
-downloader deliberately does not handle credentials or interactive login.
-Redistribution terms must be confirmed before publishing them. The files used
-for this project were obtained on 2025-06-27.
+https://apps.allenimmunology.org/aifi/resources/imm-health-atlas/downloads/models/
+
+The downloader does not retrieve these binaries because the current links
+redirect through a Google-authenticated Allen service and require interactive
+authentication. The binaries are also excluded from redistribution until their
+license terms have been confirmed. The files used for this project were
+obtained on 2025-06-27.

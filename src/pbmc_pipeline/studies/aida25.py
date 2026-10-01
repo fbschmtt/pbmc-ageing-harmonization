@@ -24,8 +24,7 @@ def prepare_cells(source, root):
         "cmv": {"constant": "not_provided"},
         "ethnicity": {"source": "self_reported_ethnicity", "map": {"European": "caucasian"}, "default": "asian"},
         "ethnicity_fine": {"source": "self_reported_ethnicity", "lower": True},
-        # inferred: study protocol provides the assay family but not a per-cell chemistry field.
-        "technology": {"constant": "10X5'"},
+        "technology": {"source": "assay", "map": {"10x 5' v2": "10X5'v2"}},
         "aligner": {"source": "alignment_software"},
         "genome": {"source": "reference_genome"},
         # inferred: demultiplexing is taken from the reported study workflow.

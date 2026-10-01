@@ -16,8 +16,7 @@ def prepare_cells(source, root):
         "cmv": {"constant": "not_provided"},
         "ethnicity": {"constant": "caucasian"},
         "ethnicity_fine": {"constant": "northern_european"},
-        # inferred: study protocol provides the assay family but not a per-cell chemistry field.
-        "technology": {"constant": "10X3'"},
+        "technology": {"source": "assay", "map": {"10x 3' v2": "10X3'v2"}},
         "aligner": {"constant": "STAR"},
         # inferred: retained from the study's legacy processing configuration.
         "genome": {"constant": "GRCh37"},

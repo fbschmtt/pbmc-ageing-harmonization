@@ -1,12 +1,17 @@
 # PBMC Ageing Harmonization plan
 
-## Goal of the current milestone
+## Current stage
 
-Produce one independently reproducible, validated H5AD file per study. Each file
-must contain raw counts, homogeneous observation metadata, and AIFI L1/L2/L3
-cell-type labels. The workflow also builds study/sample/AIFI-L2 pseudobulks and
-a merged pseudobulk matrix; an opt-in whole-dataset single-cell
-merge is available.
+The production workflow has completed successfully on production inputs, and
+a fresh-clone run completed input acquisition and `make run-all` (confirmed by
+the user). Those runs predate the latest source-metadata corrections. After
+the final manual metadata check, rerun production to publish the corrected
+harmonized metadata and merge-report covariates.
+
+The delivered workflow produces one harmonized H5AD per study with raw counts,
+canonical observation metadata, and AIFI L1/L2/L3 labels. It also builds
+study/sample/AIFI-L2 pseudobulks, a merged pseudobulk matrix, and an opt-in
+whole-dataset single-cell merge.
 
 ## Decisions
 
@@ -63,22 +68,29 @@ merge is available.
   preparation adapters.
 - [x] Recover and document the Wang metadata join and RDS conversion that
   produced the legacy intermediate `2_wang.h5ad`.
-- [ ] Review all `needs_review` provenance entries against publications/source
-  metadata.
+- [ ] Resolve the remaining provenance questions: OneK1K sample identity and
+  Wang25 fresh-status confirmation from the authors.
+- [ ] Complete one final manual per-study metadata check against each paper and
+  its supplements. Verify the harmonized metadata and technical covariates,
+  record paper/source evidence and discrepancies, and keep unresolved values
+  explicitly marked as inferred or pending confirmation.
 - [x] Run the full production pipeline successfully on production datasets,
   including the real Wang25 RDS conversion (confirmed by the user).
-- [ ] Review the production per-study QC reports and confirm their scientific
-  outputs are suitable for downstream analysis.
+- [x] From a fresh clone, acquire inputs and complete `make run-all`
+  successfully (confirmed by the user).
+- [ ] Rerun the production workflow after the final manual metadata check so
+  corrected study metadata reaches the published H5ADs and merge report.
 - [x] Add legacy-compatible per-study sample × AIFI-L2 pseudobulks,
   outer-joined pseudobulk merge with gene-availability flags, a combined merge
   report, and a gene-presence UpSet plot.
 - [x] Add an opt-in whole-dataset single-cell merge with a
   shared-gene embedding and experimental merged AIFI-L2 diagnostics.
-- [ ] Review the full production merge artifacts and merged QC reports.
 - [ ] Add one shared cross-study design report, rather than duplicating
   donor-level covariate/confounding plots in every AIFI-L2 report. It should
-  cover covariate support and correlation across studies, plus high-level
-  AIFI-L1 composition and age-stability summaries.
+  cover age, sex, BMI, and CMV support and correlation across studies, plus
+  high-level AIFI-L1 composition and age-stability summaries. The merge QC
+  report already gives sample-level distributions for technology,
+  intronic-read handling, and frozen status.
 - [x] Add the initial Python harmonization Docker image definition.
 - [x] Add an executable QC notebook and self-contained HTML report generation.
 - [x] Replace notebook-based RDS conversion with a one-input/one-output R script.
@@ -95,7 +107,6 @@ merge is available.
   including preparation, pseudobulk/single-cell merges, and QC.
 - [x] Run the real Wang25 RDS conversion through the successful production
   workflow.
-- [ ] Compare its production H5AD against the prior converted representation.
 - [x] Remove the redundant Docker project mount in `nextflow.config`; Nextflow
   now stages the project inputs without a duplicate Docker mount.
 - [x] Enforce the study and input-source registry structures with tracked JSON
@@ -115,13 +126,15 @@ merge is available.
   fit, planted-marker, and report-artifact assertions in `make run-all-test`
   and `make verify`.
 
-## Local development state
+## Current implementation state
 
 - The scientific dependencies are installed in the ignored `.venv`.
-- All configured studies pass the complete test-data workflow.
-- Ruff passes, 53 Python tests pass, and `nextflow lint` reports no errors for
-  the core, cell-type, and differential-expression workflows (Nextflow 26.04.6;
-  minimum declared version is 25.04).
+- The last recorded complete test-data workflow passed for all configured
+  studies. The later metadata and merge-report changes have not been rerun
+  through that workflow.
+- The last recorded local checks passed Ruff, 53 Python tests, and
+  `nextflow lint` for the core, cell-type, and differential-expression
+  workflows (Nextflow 26.04.6; minimum declared version is 25.04).
 - Revision-tagged Python and R images build successfully.
 - Harmony integration uses the pinned `harmonypy==2.0.2` C++ backend through a
   direct adapter that validates the cells-by-PC output orientation and records
@@ -132,9 +145,9 @@ merge is available.
   by study and shaped by technology, a companion intronic-read/3′--5′ PCA row,
   up to ten PCA loading panels, and a cumulative variance-explained plot.
   Sample-fraction views include within-study linear trends with and without
-  samples under age 20, separate combined linear and LOWESS plots with unshaded
-  per-study fits and sample-share-weighted means, plus adult-only adjusted
-  fraction-model forest plots and published residual/sampling diagnostics.
+  samples under age 20, a combined study-adjusted linear fit with equal study
+  weights and HC3 confidence intervals, plus adult-only adjusted fraction-model
+  forest plots and published residual/sampling diagnostics.
   Local PCA age correlations are limited to the first ten PCs. A focused
   CD14-monocyte run completed both the separate analysis and report-rendering
   tasks.
@@ -145,12 +158,14 @@ merge is available.
   application progress logs are captured in each Nextflow task's `.command.err`.
 - Test fixtures live under ignored `test_data/`; conversion intermediates live
   in Nextflow's ignored `work/` directory. `tests/` contains test code only.
-- A fresh all-study `make verify` passed, including all eight configured test
-  studies, the generated DE fixture, planted age-marker checks, and 21
-  cell-type report artifact checks.
+- The last recorded fresh all-study `make verify` passed, including all eight
+  configured test studies, the generated DE fixture, planted age-marker
+  checks, and 21 cell-type report artifact checks. It predates the latest
+  metadata and merge-report changes.
 - The full production pipeline has since completed successfully on production
-  datasets, including real Wang25 RDS conversion. Production QC and merge
-  artifacts still need explicit review and their run records should be retained.
+  datasets, including real Wang25 RDS conversion.
+- A fresh clone completed input acquisition and `make run-all` successfully.
+  This was confirmed by the user.
 
 ## Expected commands
 
@@ -166,18 +181,23 @@ make verify
 make run STUDIES=all MERGE_SINGLE_CELL=true
 ```
 
-## Known blockers and scientific questions
+## Open provenance questions and follow-up work
 
 - AIDA, Terekhova, and Wang source metadata are local ignored inputs in their
   respective `input_data/<study_id>/` directories. The 424 MB Terekhova
   table has been losslessly reduced for pipeline purposes to a 9.2 MB compressed
   cell-to-tube lookup; its original should be archived externally.
-- OneK1K's sample-per-donor interpretation and intronic-read setting need review.
-- AIDA's technology version and ambiguous Lonza batch assignments need review.
-- Terekhova freezing and demultiplexing descriptions need review.
-- Wang's freezing and intronic-read interpretations need review. Its published
-  CMV IgM field is retained as a qualitative serostatus and is negative for all
-  61 workbook records.
+- OneK1K has no sample or collection-timepoint key in its source H5AD. The
+  adapter currently uses `donor_id` as both `sample` and `subject`; confirm
+  that each donor contributes one biological collection before interpreting
+  the pseudobulk sample count.
+- Wang25 is provisionally marked fresh based on the paper's selection of fresh
+  reference samples; author confirmation is pending.
+- Review inferred intronic-read handling for OneK1K and Wang25, ambiguous AIDA25
+  Lonza batch assignments, and Terekhova23 demultiplexing. Keep unresolved
+  assumptions labelled as inferred.
+- Wang25's published CMV IgM field is retained as qualitative serostatus and is
+  negative for all 61 workbook records.
 - Decide whether final study files should retain UMAP/PCA artifacts or only labels.
 
 ## Planned shared cross-study design and AIFI-L1 report
@@ -188,9 +208,10 @@ row per retained study × sample (or biological individual where that distinctio
 is material) and make the study design visible before downstream interpretation.
 
 - Summarize availability, within-study variation, and pairwise association of
-  age, sex, BMI, CMV, technology, intronic-read inclusion, and other model
-  covariates. Display missingness and study-level confounding explicitly; do
-  not imply that a cross-study association identifies an independent effect.
+  age, sex, BMI, CMV, and other model covariates. Technology, intronic-read
+  inclusion, and frozen status are covered in the merge QC report. Display
+  missingness and study-level confounding explicitly; do not imply that a
+  cross-study association identifies an independent effect.
 - Add a high-level AIFI-L1 composition section. For each L1 compartment, show
   study-specific mean sample fractions alongside the underlying sample values,
   so the potentially large between-study differences in mean composition are
@@ -242,9 +263,10 @@ The first pass includes samples aged at least 20 years with at least 10 cells
 in that sample × cell-type pseudobulk. It also requires complete sex metadata;
 all sample exclusions are recorded. Per-cell-type reports optionally show the
 per-study recurrence of FDR-significant genes and the merged volcano plot when
-those DE results are present. BMI and CMV are not model covariates yet. Later
-analysis will probably add all available covariates, including BMI and CMV,
-to per-study plots. Keep nonlinear age and an age-20 sensitivity analysis as
+those DE results are present. DE models currently use age and sex per study,
+and age, sex, and study in the merged model; BMI and CMV are not included in DE
+yet. The separate cell-type fraction model uses eligible age, sex, BMI, and CMV
+covariates per study. Keep nonlinear age and an age-20 sensitivity analysis as
 future decisions. R DESeq2, edgeR quasi-likelihood, and limma-voom comparisons
 are outside this first implementation.
 
@@ -325,18 +347,19 @@ primary age-DE analysis, not a replacement for it.
 
 ## Recommended next sequence
 
-1. Review the successful production QC, merge, and DE outputs; archive the run
-   manifest, task logs, and execution reports with the production artifacts.
-2. Resolve the scientific `needs_review` entries against source publications
-   and metadata, preserving any remaining inferences explicitly.
+1. Complete a final manual metadata check for every study against its paper and
+   supplements, resolving outstanding provenance questions where possible and
+   preserving any remaining inferences explicitly.
+2. Rerun the production workflow to publish metadata corrections and refreshed
+   merge QC covariate distributions.
 3. Complete the run manifest with input/model checksums and random seeds; record
    immutable Python and R image digests for the production run.
 4. Add opt-in Nextflow execution reports and traces, then record per-task RAM,
    CPU, and elapsed-time baselines from production.
 5. Add targeted synthetic tests for metadata joins, rare labels, and conversion
    edge cases that random smoke-test subsets may omit.
-6. Continue with the exploratory residual-structure analysis only after the
-   production outputs and provenance have been reviewed.
+6. Continue with the exploratory residual-structure analysis after the model
+   and validation design is prespecified.
 7. Polish the existing static HTML reports for reader-facing use (without
    sacrificing the executed notebooks as audit artifacts), then add a static
    manifest-driven report index before considering a custom web frontend.

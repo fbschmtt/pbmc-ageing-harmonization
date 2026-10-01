@@ -14,7 +14,7 @@ from .logging_utils import configure_logging
 
 def generate_merge_qc_report(
     *, root: Path, inputs: list[Path], reports: list[Path], output_dir: Path,
-    template_path: Path | None = None,
+    template_path: Path | None = None, studies_config_path: Path | None = None,
 ) -> Path:
     reports_by_stem = {report_path.stem: report_path for report_path in reports}
     if len(reports_by_stem) != len(reports):
@@ -42,6 +42,7 @@ def generate_merge_qc_report(
     env.update({
         "QC_PSEUDOBULK_H5AD": str(pseudo_input),
         "QC_PSEUDOBULK_REPORT": str(pseudo_report),
+        "QC_STUDIES_CONFIG": str((studies_config_path or root / "config" / "studies.json").resolve()),
         "MPLCONFIGDIR": str((root / ".cache" / "matplotlib").resolve()),
     })
     if "single_cell_merge" in by_kind:
@@ -73,10 +74,12 @@ def main() -> None:
     parser.add_argument("--run-report", type=Path, nargs="+", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--template", type=Path)
+    parser.add_argument("--studies-config", type=Path)
     parser.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
     args = parser.parse_args()
     configure_logging(args.log_level)
     print(generate_merge_qc_report(
         root=args.project_root.resolve(), inputs=args.input, reports=args.run_report,
         output_dir=args.output_dir, template_path=args.template,
+        studies_config_path=args.studies_config,
     ))

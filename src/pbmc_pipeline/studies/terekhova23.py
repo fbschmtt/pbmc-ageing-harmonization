@@ -35,7 +35,6 @@ def prepare_cells(source, root):
         "aligner": {"constant": "CRv7.0.0"},
         "genome": {"constant": "GRCh38"},
         "demultiplexing": {"constant": "genetic"},
-        # inferred: confirm the frozen-state interpretation against the study protocol.
         "frozen": {"constant": "yes"},
         # inferred: source processing metadata is used because no per-cell field is present.
         "include_intronic": {"constant": "yes"},

@@ -91,8 +91,8 @@ merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
 - `reports/merge_qc_report.py`: Jupytext source for the generated merge
   notebook. Report runners materialize these Python sources in a temporary
   location immediately before execution; generated templates are not tracked.
-- `reports/qc_report.ipynb`: the separately maintained study-QC template
-  rendered to self-contained HTML reports.
+- `reports/qc_report.py`: the Jupytext source for the study-QC notebook.
+  The runner materializes it in a temporary location before execution.
 
 ## Outputs
 
@@ -241,9 +241,10 @@ report rendering.
 `MERGE_SINGLE_CELL=true` enables the optional single-cell branch.
 The current Nextflow profiles leave CPU and time requests unspecified except
 for one CPU per parallel cell-type DE task; they do not set per-process memory
-limits. The full production pipeline has completed successfully, but resource
-reports/traces are not yet part of the tracked run artifacts; record measured
-peak RAM before sizing a different runner or adding resource directives.
+limits. The full production pipeline and a fresh-clone input acquisition plus
+`make run-all` have completed successfully. Resource reports/traces are not yet
+part of the tracked run artifacts; record measured peak RAM before sizing a
+different runner or adding resource directives.
 
 The cell-type fraction model uses adults only and independently fits each
 study with eligible age, sex, BMI, and CMV covariates. Age effects are reported

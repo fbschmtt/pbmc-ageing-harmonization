@@ -42,7 +42,7 @@ def prepare_cells(source, root):
         # inferred: GENCODE 19 implies the GRCh37-era reference assembly.
         "genome": {"constant": "GRCh37"},
         "demultiplexing": {"constant": "not_provided"},
-        "frozen": {"constant": "not_provided"},
+        "frozen": {"constant": "yes"},
         "include_intronic": {"constant": "not_provided"},
         "smoking_status": {"constant": "not_provided"},
         "disease_status": {"source": DISEASE_STATUS_COLUMN},

@@ -27,14 +27,16 @@ inputs, run:
 make download-inputs STUDIES=all
 ```
 
-> **Large downloads.** This can download multi-gigabyte source files. It does
-> not download sources requiring a login, portal access, or browser challenge;
-> the workflow skips studies whose inputs remain unavailable.
+> **Large downloads.** Some source files are multi-gigabyte. The downloader
+> handles configured public URLs only; sources requiring authentication or a
+> browser session must be acquired separately. Workflows skip studies with
+> unavailable inputs.
 
-The only manual download needed for this quick start is the three
-[AIFI CellTypist models](aifi_models/README). The AIDA25, Terekhova23, and
-Wang25 manual dataset files are optional: `STUDIES=all` skips each study whose
-inputs are incomplete and records the decision in `output/run_manifest.json`.
+The three [AIFI CellTypist models](aifi_models/README) must be downloaded
+separately. Their links require interactive Allen authentication, which the
+project downloader does not support. AIDA25, Terekhova23, and Wang25 also have
+manual-only inputs; `STUDIES=all` skips studies with incomplete inputs and
+records the decision in `output/run_manifest.json`.
 
 After the required AIFI models and the inputs for the studies you want to
 include are in their configured paths, run:
@@ -60,7 +62,7 @@ make test-data
 make run-all-test
 ```
 
-By default this requests every configured study, including Nehar-Belaid26, and
+By default this requests every configured study and
 skips any unavailable fixture. It includes the positive synthetic-DE check and
 standard cell-type reports. Use an explicit `STUDIES=<list>` to narrow a run.
 Existing fixtures are preserved; use `TEST_DATA_OVERWRITE=true` only when they
@@ -69,11 +71,11 @@ need refreshing.
 ## Setup details
 
 Input acquisition is a separate, strictly opt-in step: `make install`, tests,
-and workflow runs never download data. Follow [Download inputs](#download-inputs)
-for the explicit commands and use `INPUT_FILES.md` for exact paths and
-checksums. The three AIFI models require an interactive Allen login. Other
-manual sources are optional additions for their respective studies; an
-all-studies workflow skips a study when one of its inputs is unavailable.
+and workflow runs never download data. Use [Download inputs](#download-inputs)
+for acquisition commands and `INPUT_FILES.md` for paths and checksums. The
+AIFI models require interactive Allen authentication. Other manual sources are
+study-specific; an all-studies workflow skips a study when any required input
+is unavailable.
 
 For production, `make run STUDIES=all` analyses every study whose expression
 input and declared preparation dependencies are present. It skips unavailable
@@ -92,12 +94,14 @@ conversion.
 
 ## Current status
 
-The complete `make verify` workflow passes with all eight configured test
-studies. It validates preparation, RDS conversion, harmonization, QC,
-pseudobulk and single-cell merges, positive synthetic DE fits, and 21
-cell-type reports. The full production workflow has also completed with the
-real Wang25 RDS. Scientific review of the production QC, merge, and DE outputs
-remains separate from this software validation.
+The last recorded `make verify` passed with all eight configured test studies.
+It validated preparation, RDS conversion, harmonization, QC, pseudobulk and
+single-cell merges, positive synthetic DE fits, and 21 cell-type reports. The
+full production workflow has completed with the real Wang25 RDS, and a
+fresh-clone run completed input acquisition and `make run-all`. Those runs
+predate the latest metadata corrections; rerun production after the final
+manual metadata check. Remaining provenance and follow-up work is listed in
+[PLAN.md](PLAN.md).
 
 ## Data flow
 
@@ -234,16 +238,16 @@ pseudobulks. `batch_single_cell` is a technical library, run, pool, or well and
 never defines a pseudobulk. Missing string metadata is written as
 `not_provided`; missing numeric metadata is `NaN`.
 
-| Study | Subject | Sample | Sampling timepoint | Technical batch | Notes |
-|---|---|---|---|---|---|
-| AIDA25 | `donor_id` | country-qualified donor ID | not provided | supplementary experimental batch | Lonza material replicated across sites remains intentionally split until downstream exclusion. BMI uses the supplementary donor metadata. |
-| AIFI | specimen GUID prefix | specimen GUID | `sample.visitName` | `well_id` | A specimen GUID may span multiple wells; pseudobulk combines those technical partitions. |
-| OneK1K | `donor_id` | `donor_id` | not provided | `pool_number` | No separate sampling-timepoint identifier is available. |
-| Terekhova23 | `Donor_id` | `Tube_id` | workbook visit | barcode-derived batch | Each tube maps to one donor and visit; a tube may span technical batches. |
-| Wang25 | `Sample ID` | `Sample ID` | not provided | not provided | No separate donor, timepoint, or technical-batch identifier has yet been recovered. |
-| Nehar-Belaid26 | Supplementary Data 1a `IDs` | Supplementary Data 1a `Names` | not provided | Supplementary Data 1a `runs_10x` | Reads the supplied GEO raw 10x tar directly (without extraction); `JB` subject IDs parsed from member names join to Supplementary Data 1a `IDs`, which supplies sample IDs and donor metadata. Published labels transfer only on a unique sample ID plus normalized barcode-sequence match. |
-| Fachrul26 | `donor_id` | `sample_id` | not provided | `library_id` | Uses embedded H5AD metadata; `feature_name` supplies gene symbols. |
-| Perez22 | `donor_id` | `sample_uuid` | not provided | `library_uuid` | Uses embedded H5AD metadata; `feature_name` supplies gene symbols. `obs.disease` is normalized and only `normal`/healthy cells are retained; embedded SLE cells are excluded before harmonization. |
+| Study | Reference DOI | Subject | Sample | Sampling timepoint | Technical batch | Notes |
+|---|---|---|---|---|---|---|
+| AIDA25 | [10.1016/j.cell.2025.02.017](https://doi.org/10.1016/j.cell.2025.02.017) | `donor_id` | country-qualified donor ID | not provided | supplementary experimental batch | Source `obs.assay` reports 10x 5′ v2. Lonza material replicated across sites remains intentionally split until downstream exclusion. BMI uses the supplementary donor metadata. |
+| AIFI | [10.1038/s41586-025-09686-5](https://doi.org/10.1038/s41586-025-09686-5) | specimen GUID prefix | specimen GUID | `sample.visitName` | `well_id` | A specimen GUID may span multiple wells; pseudobulk combines those technical partitions. The source H5AD has no assay field. |
+| OneK1K | [10.1126/science.abf3041](https://doi.org/10.1126/science.abf3041) | `donor_id` | `donor_id` | not provided | `pool_number` | No separate specimen or timepoint key is present in the source H5AD; the sample-per-donor assumption remains under review. |
+| Terekhova23 | [10.1016/j.immuni.2023.10.013](https://doi.org/10.1016/j.immuni.2023.10.013) | `Donor_id` | `Tube_id` | workbook visit | barcode-derived batch | Each tube maps to one donor and visit; a tube may span technical batches. The paper explicitly reports frozen input material. |
+| Wang25 | [10.1038/s41590-024-02059-6](https://doi.org/10.1038/s41590-024-02059-6) | `Sample ID` | `Sample ID` | not provided | not provided | No separate donor, timepoint, or technical-batch identifier has yet been recovered. Samples are provisionally treated as fresh based on the public reference-sample selection; author confirmation is pending. |
+| Nehar-Belaid26 | [10.1038/s41467-026-73729-2](https://doi.org/10.1038/s41467-026-73729-2) | Supplementary Data 1a `IDs` | Supplementary Data 1a `Names` | not provided | Supplementary Data 1a `runs_10x` | Reads the supplied GEO raw 10x tar directly (without extraction); `JB` subject IDs parsed from member names join to Supplementary Data 1a `IDs`, which supplies sample IDs and donor metadata. Published labels transfer only on a unique sample ID plus normalized barcode-sequence match. |
+| Fachrul26 | [10.64898/2026.02.15.704933](https://doi.org/10.64898/2026.02.15.704933) | `donor_id` | `sample_id` | not provided | `library_id` | Paper methods state PBMCs were cryopreserved and thawed; this takes precedence over the conflicting CELLxGENE `obs.sample_preservation_method=fresh`. |
+| Perez22 | [10.1126/science.abf1970](https://doi.org/10.1126/science.abf1970) | `donor_id` | `sample_uuid` | not provided | `library_uuid` | Paper reports frozen input material. Uses embedded H5AD metadata; `feature_name` supplies gene symbols. `obs.disease` is normalized and only `normal`/healthy cells are retained; embedded SLE cells are excluded before harmonization. |
 
 `tests/` contains only automated test code. Reproducible local intermediates
 are collected under `cache/` for RDS-to-H5AD conversions. Downsampled smoke-test
@@ -257,14 +261,19 @@ fixtures are generated under the ignored `test_data/` directory.
 > warns about pending artifacts and their recorded size where available. A
 > selected study can require multi-gigabyte source files.
 
-Choose the study or studies you want to acquire. The best-effort command
-downloads only registered public URLs, never authenticates or scrapes portals,
-and records outcomes in ignored `input_data/download_manifest.json`:
+Specify the studies to acquire. The best-effort command downloads configured
+public URLs without portal authentication or scraping and records outcomes in
+ignored `input_data/download_manifest.json`:
 
 ```bash
 make download-inputs STUDIES=aifi
 make download-inputs STUDIES=nehar_belaid26
 ```
+
+The downloader prints each artifact's position in the run and its associated
+study name. During a transfer it also shows bytes downloaded, transfer rate,
+and percentage when the source reports a size or the manifest records one;
+otherwise it reports downloaded bytes and rate.
 
 `make download-inputs-strict STUDIES=fachrul26` is the explicit acquisition
 preflight. It exits nonzero for a failed download, a size/checksum mismatch, or
@@ -273,19 +282,18 @@ is an acquisition preflight, not a routine test, and never runs as part of
 analysis commands. Existing files are left unchanged unless
 `DOWNLOAD_FORCE=true` is supplied deliberately.
 
-The manifest covers the public direct sources and reports manual-only sources
-with their instructions instead of treating them as pipeline failures. The
-Synapse expression objects require portal access; the AIDA publisher attachment
-rejects unauthenticated programmatic requests; and the AIFI model downloads
-require interactive authentication. The current local files at some production
-paths are test-scale subsets. The downloader verifies recorded SHA-256 values
-and CELLxGENE byte sizes, but third-party availability and access conditions
-can change; verify an acquired file before production analysis. See
-`config/input_sources.json` and [INPUT_FILES.md](INPUT_FILES.md).
+The manifest records manual-only sources and their acquisition instructions.
+Synapse expression objects require portal access, the AIDA publisher
+attachment rejects unauthenticated programmatic requests, and AIFI model links
+require interactive Allen authentication. The downloader does not implement
+these access flows. Some files currently present at production paths are
+test-scale subsets. Recorded SHA-256 values and CELLxGENE byte sizes are
+verified; confirm that acquired files are suitable for production analysis.
+See `config/input_sources.json` and [INPUT_FILES.md](INPUT_FILES.md).
 
 ## QC reports
 
-Passing `--qc` executes the tracked `reports/qc_report.ipynb` template after each
+Passing `--qc` executes the tracked `reports/qc_report.py` template after each
 harmonized H5AD is written. Each study gets a separate directory:
 
 ```text
@@ -372,12 +380,17 @@ create it only through `make run-all` or when explicitly enabled:
 make run STUDIES=all MERGE_SINGLE_CELL=true
 ```
 
-The merge and cell-type report templates are maintained as Jupytext Python
-sources (`reports/merge_qc_report.py` and `reports/cell_type_report.py`). Their
-report runners materialize a temporary notebook immediately before execution;
-the generated template notebooks are intentionally not tracked. The published
-`executed.ipynb` is instead the executed report artifact. The separate
-`reports/qc_report.ipynb` study-QC template remains hand-maintained.
+Study-QC, merge-QC, and cell-type report templates are maintained as Jupytext
+Python sources (`reports/qc_report.py`, `reports/merge_qc_report.py`, and
+`reports/cell_type_report.py`). Their report runners materialize a temporary
+notebook immediately before execution; the generated template notebooks are
+intentionally not tracked. The published `executed.ipynb` is the executed
+report artifact.
+
+The merge QC report summarizes sample-level technology, intronic-read
+inclusion, and frozen-status distributions with provenance status. OneK1K's
+sample counts use `donor_id` until its biological collection identity is
+confirmed.
 
 ### Report artifacts and web delivery
 
@@ -432,14 +445,14 @@ linear fits using all samples and using samples aged at least 20 years; points
 are colored by study, with solid black and dashed gray fit lines. Their fit
 legend appears once.
 
-The combined fraction views are split into linear and LOWESS figures. Each
-shows unshaded per-study curves and a sample-share-weighted mean curve. A
-study's displayed share is its eligible sample count divided by the total
-eligible samples across studies. At each age, the mean is renormalized across
-studies whose observed age range includes that age. The LOWESS figure averages
-the individual study LOWESS curves rather than fitting one curve to all pooled
-samples. These are descriptive trends, not age-effect tests; large studies can
-dominate the weighted mean, and other weighting schemes may be explored later.
+The combined view fits a weighted least-squares model with study-specific
+intercepts and a shared age slope. Each study receives equal total weight; the
+plot shows the prediction averaged equally across studies, with a 95% HC3
+confidence interval. Shading marks the age range observed in every study;
+predictions outside that range extrapolate for at least one study. This is a
+study-adjusted descriptive summary, separate from the per-study fraction models.
+The HC3 interval treats sample rows as independent; repeat samples from the same
+subject are not clustered, which may understate uncertainty.
 
 ```bash
 make run-cell-type-analysis
@@ -626,10 +639,9 @@ with `make run-test`. It uses the explicitly labeled test mode described above.
 Use `make run-de-synthetic-test` to exercise successful PyDESeq2 fits with the
 production sample-inclusion filters enabled.
 
-This first pass models age and sex, plus study in the merged model. BMI and CMV
-are retained metadata fields but are not model covariates yet. Later work will
-probably add all available covariates, including BMI and CMV, to per-study
-plots.
+The current DE models use age and sex per study, and age, sex, and study in the
+merged model. BMI and CMV are not included in DE yet. The separate cell-type
+fraction model uses eligible age, sex, BMI, and CMV covariates per study.
 
 ## Further reading
 

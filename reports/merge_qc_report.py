@@ -53,6 +53,68 @@ def show_study_coverage(adata):
     display(pd.DataFrame({"observations": study_sizes, "samples": adata.obs.groupby("study", observed=True)["sample"].nunique(), "subjects": adata.obs.groupby("study", observed=True)["subject"].nunique()}))
 
 
+def show_technical_covariates(adata):
+    covariates = ["technology", "include_intronic", "frozen"]
+    available = [column for column in covariates if column in adata.obs]
+    if not available:
+        return
+
+    metadata = adata.obs[["study", "sample", *available]].copy()
+    metadata["study"] = metadata["study"].astype(str)
+    metadata["sample"] = metadata["sample"].astype(str)
+    study_config_path = Path(os.environ["QC_STUDIES_CONFIG"])
+    study_config = json.loads(study_config_path.read_text()).get("studies", {})
+    rows = []
+    for column in available:
+        values = metadata[["study", "sample", column]].copy()
+        values[column] = values[column].astype("string").fillna("not_provided").astype(str)
+        values = values.drop_duplicates()
+        sample_counts = values.groupby(["study", column], observed=True)["sample"].nunique()
+        total_samples = values.groupby("study", observed=True)["sample"].nunique()
+        multiple_values = values.groupby(["study", "sample"], observed=True)[column].nunique()
+        multiple_values = multiple_values.gt(1).groupby(level="study", observed=True).sum()
+        for (study, value), count in sample_counts.items():
+            provenance = study_config.get(study, {}).get("provenance", {}).get(column, "")
+            normalized = str(provenance).lower()
+            if "needs_review" in normalized:
+                evidence = "needs review"
+            elif (
+                "pending_author" in normalized
+                or "pending confirmation" in normalized
+                or "pending author" in normalized
+            ):
+                evidence = "pending confirmation"
+            elif "inferred" in normalized:
+                evidence = "inferred"
+            elif provenance:
+                evidence = "documented"
+            else:
+                evidence = "not recorded"
+            denominator = int(total_samples.loc[study])
+            rows.append({
+                "covariate": column,
+                "study": study,
+                "value": value,
+                "samples": int(count),
+                "study samples": denominator,
+                "percent": round(100 * int(count) / denominator, 1) if denominator else 0.0,
+                "samples with multiple values": int(multiple_values.get(study, 0)),
+                "evidence": evidence,
+            })
+
+    display(Markdown("### Technical covariates across studies"))
+    display(Markdown(
+        "Counts use distinct configured study × sample units from the merged "
+        "pseudobulks. A sample with multiple values is counted in each matching "
+        "row; `Heterogeneous During Bulk` denotes mixed values within a sample × "
+        "AIFI-L2 aggregate. Evidence status summarizes `config/studies.json`. "
+        "OneK1K currently uses `donor_id` as its sample key; that assumption is "
+        "flagged there for review."
+    ))
+    summary = pd.DataFrame(rows)
+    display(summary.sort_values(["covariate", "study", "value"]).reset_index(drop=True))
+
+
 # %% [markdown]
 # ## Pseudobulk merge
 
@@ -60,6 +122,7 @@ def show_study_coverage(adata):
 pseudobulk, pseudobulk_report, pseudobulk_path = load_merge("PSEUDOBULK")
 show_summary(pseudobulk, pseudobulk_report, pseudobulk_path, "Pseudobulk merge")
 show_study_coverage(pseudobulk)
+show_technical_covariates(pseudobulk)
 
 # %% [markdown]
 # ### AIFI L2 composition by cell

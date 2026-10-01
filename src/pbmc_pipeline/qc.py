@@ -5,6 +5,7 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -22,17 +23,17 @@ def generate_qc_report(
     study: str,
     template_path: Path | None = None,
 ) -> Path:
-    """Execute the QC notebook and return the generated HTML path."""
+    """Execute the QC template and return the generated HTML path."""
     input_path = input_path.resolve()
     run_report_path = run_report_path.resolve()
     output_dir = output_dir.resolve()
-    template = (template_path or root / "reports" / "qc_report.ipynb").resolve()
+    template = (template_path or root / "reports" / "qc_report.py").resolve()
     if not input_path.exists():
         raise FileNotFoundError(f"QC input does not exist: {input_path}")
     if not run_report_path.exists():
         raise FileNotFoundError(f"Run report does not exist: {run_report_path}")
     if not template.exists():
-        raise FileNotFoundError(f"QC notebook template does not exist: {template}")
+        raise FileNotFoundError(f"QC report template does not exist: {template}")
     total_started = time.perf_counter()
     LOGGER.info("study=%s step=qc_start input=%s", study, input_path)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -47,21 +48,42 @@ def generate_qc_report(
             "MPLCONFIGDIR": str((root / ".cache" / "matplotlib").resolve()),
         }
     )
-    execute_command = [
-        sys.executable,
-        "-m",
-        "jupyter",
-        "nbconvert",
-        "--execute",
-        "--to",
-        "notebook",
-        "--ExecutePreprocessor.timeout=-1",
-        f"--output={executed.name}",
-        f"--output-dir={output_dir}",
-        str(template),
-    ]
     started = time.perf_counter()
-    subprocess.run(execute_command, cwd=root, env=env, check=True)
+    with tempfile.TemporaryDirectory(prefix="pbmc-study-qc-notebook-") as temporary_dir:
+        materialized_template = Path(temporary_dir) / f"{template.stem}.ipynb"
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "jupytext",
+                "--to",
+                "notebook",
+                "--output",
+                str(materialized_template),
+                str(template),
+            ],
+            cwd=root,
+            env=env,
+            check=True,
+        )
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "jupyter",
+                "nbconvert",
+                "--execute",
+                "--to",
+                "notebook",
+                "--ExecutePreprocessor.timeout=-1",
+                f"--output={executed.name}",
+                f"--output-dir={output_dir}",
+                str(materialized_template),
+            ],
+            cwd=root,
+            env=env,
+            check=True,
+        )
     LOGGER.info(
         "study=%s step=execute_qc_notebook duration_seconds=%.2f path=%s",
         study, time.perf_counter() - started, executed,
@@ -97,7 +119,7 @@ def main() -> None:
     parser.add_argument("--run-report", type=Path, required=True, help="Harmonization JSON report")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--study", required=True)
-    parser.add_argument("--template", type=Path, help="Override the QC notebook template")
+    parser.add_argument("--template", type=Path, help="Override the QC report template")
     parser.add_argument(
         "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO",
         help="Progress-log severity written to standard error (default: INFO)",

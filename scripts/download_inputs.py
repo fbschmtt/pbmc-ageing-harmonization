@@ -12,6 +12,7 @@ import json
 import shutil
 import sys
 import tarfile
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -27,12 +28,39 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def download(url: str, destination: Path) -> None:
+def download(url: str, destination: Path, expected_size: int | None = None) -> None:
     partial = destination.with_name(destination.name + ".part")
     destination.parent.mkdir(parents=True, exist_ok=True)
     request = urllib.request.Request(url, headers={"User-Agent": "pbmc-ageing-pipeline/0.1"})
     with urllib.request.urlopen(request) as response, partial.open("wb") as handle:
-        shutil.copyfileobj(response, handle)
+        content_length = response.headers.get("Content-Length")
+        total = int(content_length) if content_length and content_length.isdigit() else expected_size
+        copied = 0
+        reported = 0
+        started = time.monotonic()
+        terminal = sys.stderr.isatty()
+        step = max((total or 0) // 20, 10 * 1024 * 1024) if total else 100 * 1024 * 1024
+
+        def report(force: bool = False) -> None:
+            nonlocal reported
+            if not force and copied - reported < step:
+                return
+            reported = copied
+            rate = format_size(int(copied / max(time.monotonic() - started, 0.001))) + "/s"
+            if total:
+                percent = min(copied * 100 // total, 100)
+                message = f"      {percent:3d}%  {format_size(copied)} / {format_size(total)}  {rate}"
+            else:
+                message = f"      {format_size(copied)} downloaded  {rate}"
+            print(message, end="\r" if terminal else "\n", file=sys.stderr, flush=True)
+
+        while block := response.read(1024 * 1024):
+            handle.write(block)
+            copied += len(block)
+            report()
+        report(force=True)
+        if terminal:
+            print(file=sys.stderr, flush=True)
     partial.replace(destination)
 
 
@@ -75,16 +103,16 @@ def warn_about_pending_downloads(artifacts: list[dict], root: Path, force: bool)
     known_size = sum(item.get("expected_size_bytes") or 0 for item in pending)
     unknown_sizes = sum(item.get("expected_size_bytes") is None for item in pending)
     size_summary = (
-        f"recorded output sizes total at least {format_size(known_size)}"
+        f"known sizes total at least {format_size(known_size)}"
         if known_size
-        else "no recorded output sizes are available"
+        else "no expected sizes recorded"
     )
     if unknown_sizes:
-        size_summary += f"; {unknown_sizes} artifact(s) have no recorded size"
+        unknown_ids = [item["id"] for item in pending if item.get("expected_size_bytes") is None]
+        size_summary += f"; size unavailable for: {', '.join(unknown_ids)}"
     print(
-        "WARNING: input acquisition is strictly opt-in. This command will download "
-        f"{len(pending)} configured artifact(s); {size_summary}. Source files may be large. "
-        "No install, test, or workflow command invokes this downloader.",
+        f"Input downloads: {len(pending)} pending; {size_summary}. "
+        "Downloads run only through explicit Make targets.",
         file=sys.stderr,
     )
 
@@ -113,7 +141,16 @@ def main() -> None:
     artifacts = selected_artifacts(document, studies)
     warn_about_pending_downloads(artifacts, root, args.force)
     records = []
-    for item in artifacts:
+    study_order = list(dict.fromkeys(
+        study for item in artifacts for study in item["studies"] if study in studies
+    ))
+    for overall_index, item in enumerate(artifacts, start=1):
+        associated_studies = [study for study in study_order if study in item["studies"]]
+        print(
+            f"\n[{overall_index}/{len(artifacts)}] {item['id']} "
+            f"(study: {', '.join(associated_studies)})",
+            flush=True,
+        )
         destination = root / item["path"]
         record = {"id": item["id"], "path": item["path"], "timestamp_utc": datetime.now(timezone.utc).isoformat()}
         if destination.exists() and not args.force:
@@ -130,11 +167,11 @@ def main() -> None:
             try:
                 if item.get("archive_member"):
                     archive = destination.with_name(destination.name + ".download")
-                    download(item["url"], archive)
+                    download(item["url"], archive, item.get("expected_size_bytes"))
                     extract(archive, item["archive_member"], destination)
                     archive.unlink()
                 else:
-                    download(item["url"], destination)
+                    download(item["url"], destination, item.get("expected_size_bytes"))
                 record["status"] = "downloaded"
             except (OSError, ValueError, tarfile.TarError, urllib.error.URLError, zipfile.BadZipFile) as error:
                 record.update({"status": "failed", "error": str(error), "source_page": item.get("source_page")})
@@ -152,9 +189,20 @@ def main() -> None:
                 record["status"] = "size_mismatch"
                 record["expected_size_bytes"] = expected_size
         records.append(record)
-        print(f"{record['status']:>17}  {item['id']}  {destination}")
+        observed_size = record.get("observed_size_bytes")
+        expected_size = item.get("expected_size_bytes")
+        size_parts = []
+        if observed_size is not None:
+            size_parts.append(f"actual {format_size(observed_size)}")
+        if expected_size is not None:
+            size_parts.append(f"expected {format_size(expected_size)}")
+        size_text = ", ".join(size_parts) if size_parts else "size unavailable"
+        print(
+            f"{record['status']:>17}  {item['id']}  {size_text}  {destination}",
+            flush=True,
+        )
         if record["status"] == "manual":
-            print(f"  obtain manually: {record.get('manual_url')}\n  {record.get('note', '')}")
+            print(f"  source: {record.get('manual_url')}\n  reason: {record.get('note', '')}")
 
     report_path = root / "input_data/download_manifest.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)

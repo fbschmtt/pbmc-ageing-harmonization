@@ -21,7 +21,9 @@ def prepare_cells(source, root):
         "aligner": {"source": "alignment_software"},
         "genome": {"source": "reference_genome"},
         "demultiplexing": {"constant": "not_provided"},
-        "frozen": {"source": "sample_preservation_method", "map": {"fresh": "no"}, "default": "not_provided"},
+        # Paper methods: cryopreserved PBMCs were thawed. CELLxGENE obs conflicts
+        # and says sample_preservation_method="fresh"; preserve both facts in provenance.
+        "frozen": {"constant": "yes"},
         "include_intronic": {"source": "intronic_reads_counted", "lower": True},
         "smoking_status": {"constant": "not_provided"},
         "disease_status": {"constant": "healthy"},

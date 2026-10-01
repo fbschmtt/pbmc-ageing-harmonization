@@ -23,6 +23,7 @@ def test_onek_adapter_materializes_exactly_one_canonical_row_per_cell(tmp_path):
         {
             "cell_type": ["T cell", "B cell"], "donor_id": ["d1", "d2"],
             "age": [40, 50], "sex": ["Female", "Male"], "pool_number": [1, 2],
+            "assay": ["10x 3' v2", "10x 3' v2"],
         }, index=["cell_a", "cell_b"],
     )
     expression = tmp_path / "source.h5ad"
@@ -41,6 +42,7 @@ def test_onek_adapter_materializes_exactly_one_canonical_row_per_cell(tmp_path):
     assert prepared.index.tolist() == ["cell_a", "cell_b"]
     assert prepared["sample"].tolist() == ["d1", "d2"]
     assert prepared["batch_single_cell"].tolist() == ["onek1k_1", "onek1k_2"]
+    assert prepared["technology"].tolist() == ["10X3'v2", "10X3'v2"]
     assert prepared["study"].tolist() == ["onek1k", "onek1k"]
     source_obs = pd.read_csv(source_obs_output, index_col="cell_id")
     assert source_obs.index.tolist() == ["cell_a", "cell_b"]
@@ -67,7 +69,7 @@ def test_fachrul_adapter_uses_embedded_metadata():
     assert prepared.loc["cell_a", "sample"] == "sample_1"
     assert prepared.loc["cell_a", "age"] == 54.0
     assert prepared.loc["cell_a", "technology"] == "10X5'v2"
-    assert prepared.loc["cell_a", "frozen"] == "no"
+    assert prepared.loc["cell_a", "frozen"] == "yes"
     assert prepared.loc["cell_a", "batch_single_cell"] == "fachrul26_library_1"
 
 

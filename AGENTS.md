@@ -2,8 +2,6 @@
 
 ## Environments and dependencies
 
-- Nextflow is expected to be available on `PATH`. Do not encode that
-  fallback in repository scripts, Make targets, or user-facing documentation.
 - Keep dependency installs local to this repository. Use the existing `.venv`
   for Python development dependencies (for example,
   `.venv/bin/python -m pip install -e '.[dev,qc]'`); do not install Python or
