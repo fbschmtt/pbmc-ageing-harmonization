@@ -24,14 +24,14 @@ def gene_presence_indicators(var: pd.DataFrame) -> pd.DataFrame:
     return indicators
 
 
-def aifi_l2_concordance(obs: pd.DataFrame) -> pd.DataFrame:
-    """Cross-tab per-study AIFI-L2 labels against experimental merged labels."""
-    required = {"aifi_l2_majority", "experimental_aifi_l2_majority"}
+def aifi_l2_concordance(obs: pd.DataFrame, prediction_column: str) -> pd.DataFrame:
+    """Cross-tab per-study AIFI-L2 labels against one benchmark prediction."""
+    required = {"aifi_l2_majority", prediction_column}
     if not required.issubset(obs):
         return pd.DataFrame()
     return pd.crosstab(
         obs["aifi_l2_majority"].astype(str),
-        obs["experimental_aifi_l2_majority"].astype(str),
+        obs[prediction_column].astype(str),
         normalize="index",
     )
 

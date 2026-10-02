@@ -65,7 +65,7 @@ def create_synthetic_pseudobulk(
                 if study in {studies[0], studies[2]} and sample_index == 1:
                     bmi = np.nan
                 cmv = str(cmv_values[sample_index]) if study == studies[0] else pd.NA
-                if study == studies[0] and sample_index == 0:
+                if study == studies[0] and sample_index == 1:
                     cmv = pd.NA
                 mean = baseline.copy() * (1.0 + 0.08 * cell_type_index)
                 age_effect = np.array([gene in age_genes for gene in genes])

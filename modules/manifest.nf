@@ -6,6 +6,8 @@ process WRITE_RUN_MANIFEST {
     path artifacts
     path reports
     path pipeline_config
+    path inputs
+    val input_labels
     val requested_studies
     val selected_studies
     val skipped_studies
@@ -15,7 +17,8 @@ process WRITE_RUN_MANIFEST {
 
     script:
     """
-    pbmc-manifest --config ${pipeline_config} --artifact ${artifacts} --report ${reports} \\
+    pbmc-manifest --config ${pipeline_config} --artifact ${artifacts} --report ${reports} --input ${inputs} \\
+      --input-labels '${input_labels}' \\
       --requested-studies '${requested_studies}' --studies '${selected_studies}' --skipped-studies '${skipped_studies}' \\
       --pipeline-revision '${params.pipeline_revision}' \\
       --python-image '${params.python_image}' --r-image '${params.r_image}' --output run_manifest.json

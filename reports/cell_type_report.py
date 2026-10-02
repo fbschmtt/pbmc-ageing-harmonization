@@ -163,7 +163,7 @@ main {{ max-width: 1600px; margin: 0 auto; padding: 2rem clamp(1.25rem, 3vw, 2.5
     <section class=\"report-toc-group\">
       <p class=\"report-toc-title\">Cell-state context</p>
       <div class=\"report-toc-links\">
-        <a href=\"#global-location\">Global and local embeddings</a>
+        <a href=\"#local-embedding\">Local embedding</a>
         <a href=\"#cluster-composition\">Cluster composition</a>
         <a href=\"#cluster-markers\">Cluster markers</a>
       </div>
@@ -1018,20 +1018,8 @@ display(Markdown(
 ))
 
 # %% [markdown]
-# <a id="global-location"></a>
-# ## Location on the global embedding
-#
-# These coordinates are inherited from the cross-study embedding and restricted
-# to the current cell type. They provide context for where the type sits in the
-# global PBMC landscape; this section does not fit a new embedding.
-
-# %%
-if "X_umap" in primitive.obsm:
-    plot_umap(primitive, color="study", title="Former global UMAP coordinates, restricted to this cell type")
-    display(Markdown(
-        "_This is orientation context only: its coordinates come from the global embedding, and "
-        "colours show study membership rather than a tested biological association._"
-    ))
+# <a id="local-embedding"></a>
+# ## Local embedding and clusters
 
 # %%
 if report["status"] != "complete":
@@ -1309,6 +1297,18 @@ if de_dir:
                     "covariate": covariate,
                     "contrast": contrast,
                     "study": study,
+                    "design": (
+                        study_results["design"].iloc[0]
+                        if "design" in study_results else "—"
+                    ),
+                    "complete-case samples": (
+                        int(study_results["n_samples_model"].iloc[0])
+                        if "n_samples_model" in study_results else "—"
+                    ),
+                    "excluded for missing design values": (
+                        int(study_results["n_samples_excluded_missing_design_covariates"].iloc[0])
+                        if "n_samples_excluded_missing_design_covariates" in study_results else "—"
+                    ),
                     "significant genes": total_significant,
                     "significant genes in study intersection": int(in_intersection),
                     "significant genes outside intersection": outside_intersection,
@@ -1335,10 +1335,13 @@ if de_dir:
                 }
             )
         if not intersection_diagnostics.empty:
+            display(Markdown("### Per-study gene-intersection diagnostic"))
             display(Markdown(
-                "For each covariate, each study's significant genes are compared with the "
-                "intersection of genes tested by all available per-study fits for that "
-                "covariate. The table reports the count and fraction outside the intersection."
+                "This table shows how much restricting a cross-study comparison to genes tested "
+                "by every available study would remove from each study's significant-gene list. "
+                "It is a gene-universe sensitivity check, not a replication result. Each row uses "
+                "the displayed single-study design and complete-case sample count; age, sex, BMI, "
+                "and CMV coefficients from the same study therefore come from that one maximal model."
             ))
             display(intersection_diagnostics.assign(
                 **{"outside intersection (%)": intersection_diagnostics[
@@ -1352,21 +1355,31 @@ if de_dir:
         ]
         combined_covariate_summary = []
         for covariate, results in combined_results_by_covariate.items():
-            padj = pd.to_numeric(results["padj"], errors="coerce")
             fit_record = next(
                 (model for model in combined_fit_records
                  if covariate in model.get("results_by_covariate", {})),
                 {},
             )
-            combined_covariate_summary.append({
-                "covariate": covariate,
-                "design": fit_record.get("design", "—"),
-                "FDR-significant genes": int((padj < de_alpha).sum()),
-                "studies used": ", ".join(fit_record.get("studies", [])),
-                "samples used": fit_record.get("n_samples", "—"),
-            })
+            for contrast, contrast_results in results.groupby("contrast", sort=True, observed=True):
+                padj = pd.to_numeric(contrast_results["padj"], errors="coerce")
+                combined_covariate_summary.append({
+                    "covariate": covariate,
+                    "contrast": contrast,
+                    "design": fit_record.get("design", "—"),
+                    "FDR-significant genes": int((padj < de_alpha).sum()),
+                    "studies used": ", ".join(fit_record.get("studies", [])),
+                    "complete-case samples used": fit_record.get("n_samples", "—"),
+                    "excluded for missing design values": fit_record.get(
+                        "n_samples_excluded_missing_design_covariates", "—"
+                    ),
+                })
         if combined_covariate_summary:
             display(Markdown("### Combined covariate models"))
+            display(Markdown(
+                "Each model estimates its named covariate effect using all studies with recorded "
+                "values for that covariate. It adjusts for age and sex, includes a study term when "
+                "multiple studies contribute, and uses complete cases for its displayed design."
+            ))
             display(pd.DataFrame(combined_covariate_summary))
 
         per_study_covariate_summary = []
@@ -1388,7 +1401,12 @@ if de_dir:
                     "covariate": covariate,
                     "contrast": contrast,
                     "design": fit_record.get("design", "—"),
-                    "samples used": sum(sample_counts.values()) if sample_counts else "—",
+                    "complete-case samples used": (
+                        sum(sample_counts.values()) if sample_counts else "—"
+                    ),
+                    "excluded for missing design values": fit_record.get(
+                        "n_samples_excluded_missing_design_covariates", "—"
+                    ),
                     "genes tested": subset["gene"].nunique(),
                     "FDR-significant genes": int(
                         (pd.to_numeric(subset["padj"], errors="coerce") < de_alpha).sum()
@@ -1396,18 +1414,90 @@ if de_dir:
                 })
         if per_study_covariate_summary:
             display(Markdown("### Per-study covariate models"))
+            display(Markdown(
+                "Each study is fitted once with its maximal available design. Every coefficient for "
+                "that study comes from the same complete-case sample set and formula."
+            ))
             display(pd.DataFrame(per_study_covariate_summary))
 
         display(Markdown(
             f"PyDESeq2 covariate effects; FDR threshold **{de_alpha:g}**. "
-            "Age and sex share the study-adjusted model. BMI and CMV use separate "
-            "models adjusted for age and sex, with study adjustment when multiple "
-            "studies contribute. Missing covariate values are excluded from that "
-            "covariate's fit. Categorical effects use female as the sex reference "
-            "and no CMV (negative where that is the source label) as the CMV reference."
+            "Per-study fits use one maximal available model. Combined fits target one covariate "
+            "at a time, adjust for age and sex, and add study adjustment when multiple studies "
+            "contribute. Missing values exclude a sample only from models whose design includes "
+            "that variable. Categorical effects use female as the sex reference and no CMV "
+            "(negative where that is the source label) as the CMV reference."
         ))
         if summary_rows:
             display(pd.DataFrame(summary_rows))
+
+        age_diagnostics_path = de_dir / "age_model_diagnostics.csv"
+        age_combined_results = combined_results_by_covariate.get("age")
+        if age_diagnostics_path.is_file() and age_combined_results is not None:
+            age_diagnostics = pd.read_csv(age_diagnostics_path)
+            expected_columns = {
+                "study", "age", "sex", "counts_in_age_gene_intersection",
+                "genes_in_age_intersection",
+            }
+            if expected_columns.issubset(age_diagnostics):
+                display(Markdown("### Shared age-model diagnostics"))
+                display(Markdown(
+                    "This single figure checks study/age support, the relation between age and "
+                    "the raw pseudobulk counts used in the shared age gene intersection, and "
+                    "the unadjusted age-model p-value calibration. It is descriptive: it does "
+                    "not diagnose a specific gene or replace model checks."
+                ))
+                figure, axes = plt.subplots(1, 3, figsize=(17, 4.8))
+                sns.stripplot(
+                    data=age_diagnostics, x="study", y="age", hue="sex", dodge=True,
+                    jitter=0.18, alpha=0.8, ax=axes[0],
+                )
+                axes[0].set_xlabel("Study")
+                axes[0].set_ylabel("Age (years)")
+                axes[0].set_title("Age support by study")
+                axes[0].tick_params(axis="x", rotation=45)
+                axes[0].legend(title="Sex", fontsize=8, title_fontsize=8)
+
+                plot_samples = age_diagnostics.loc[
+                    age_diagnostics["counts_in_age_gene_intersection"] > 0
+                ].copy()
+                plot_samples["log10_counts"] = np.log10(
+                    plot_samples["counts_in_age_gene_intersection"]
+                )
+                sns.scatterplot(
+                    data=plot_samples, x="age", y="log10_counts", hue="study", style="sex",
+                    s=42, alpha=0.85, ax=axes[1],
+                )
+                axes[1].set_xlabel("Age (years)")
+                axes[1].set_ylabel("log10 raw counts in age gene intersection")
+                axes[1].set_title("Age and pseudobulk depth")
+                axes[1].legend(fontsize=7, title_fontsize=8)
+
+                pvalue_source = (
+                    age_combined_results["pvalue"]
+                    if "pvalue" in age_combined_results else pd.Series(dtype=float)
+                )
+                pvalues = pd.to_numeric(pvalue_source, errors="coerce")
+                pvalues = pvalues.loc[(pvalues > 0) & (pvalues <= 1)].sort_values().to_numpy()
+                if len(pvalues):
+                    expected = (np.arange(1, len(pvalues) + 1) - 0.5) / len(pvalues)
+                    axes[2].scatter(
+                        -np.log10(expected), -np.log10(pvalues), s=9, alpha=0.65,
+                        color="#4c72b0", linewidths=0,
+                    )
+                    maximum = max(-np.log10(expected).max(), -np.log10(pvalues).max())
+                    axes[2].plot([0, maximum], [0, maximum], color="#555555", linestyle="--")
+                    axes[2].set_xlabel("Expected −log10(p)")
+                    axes[2].set_ylabel("Observed −log10(p)")
+                    axes[2].set_title("Age-model p-value QQ plot")
+                else:
+                    axes[2].text(
+                        0.5, 0.5, "No finite unadjusted p-values", ha="center", va="center",
+                        transform=axes[2].transAxes,
+                    )
+                    axes[2].set_axis_off()
+                figure.tight_layout()
+                plt.show()
 
         if has_age_per_study:
             figure, axes = plt.subplots(1, 2, figsize=(14.5, 5.8))
@@ -1515,10 +1605,10 @@ if de_dir:
                 axis.set_xlabel(f"{covariate.upper()} effect ({effect_label})")
                 axis.set_ylabel("−log10(adjusted p-value)")
                 if len(studies_used) > 1:
-                    title = f"Combined study-adjusted {covariate.upper()} association"
+                    title = f"Combined study-adjusted {covariate.upper()} association: {contrast}"
                 else:
                     study_name = studies_used[0] if studies_used else "single study"
-                    title = f"{covariate.upper()} association in {study_name}"
+                    title = f"{covariate.upper()} association in {study_name}: {contrast}"
                 axis.set_title(title)
                 labels = volcano.loc[volcano["padj"] < de_alpha].nsmallest(12, "padj")
                 for _, row in labels.iterrows():

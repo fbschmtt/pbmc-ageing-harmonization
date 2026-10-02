@@ -21,6 +21,14 @@ def main() -> None:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--artifact", type=Path, nargs="+", required=True)
     parser.add_argument("--report", type=Path, nargs="+", required=True)
+    parser.add_argument(
+        "--input", type=Path, nargs="+", required=True,
+        help="Selected source inputs, metadata dependencies, and annotation models to hash",
+    )
+    parser.add_argument(
+        "--input-labels", required=True,
+        help="Tab-separated source paths corresponding to the staged --input files",
+    )
     parser.add_argument("--requested-studies", required=True)
     parser.add_argument("--studies", required=True)
     parser.add_argument("--skipped-studies", default="")
@@ -29,6 +37,9 @@ def main() -> None:
     parser.add_argument("--r-image", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    input_labels = args.input_labels.split("\t")
+    if len(input_labels) != len(args.input):
+        parser.error("--input-labels must provide one source path for every --input file")
     manifest = {
         "schema_version": 1,
         "created_utc": datetime.now(timezone.utc).isoformat(),
@@ -38,6 +49,10 @@ def main() -> None:
         "pipeline_revision": args.pipeline_revision,
         "images": {"python": args.python_image, "r_conversion": args.r_image},
         "configuration": {"path": str(args.config), "sha256": _sha256(args.config)},
+        "inputs": [
+            {"path": label, "sha256": _sha256(path)}
+            for label, path in zip(input_labels, args.input, strict=True)
+        ],
         "artifacts": [{"path": str(path), "sha256": _sha256(path)} for path in args.artifact],
         "reports": [{"path": str(path), "sha256": _sha256(path)} for path in args.report],
     }

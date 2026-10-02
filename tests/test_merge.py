@@ -8,7 +8,6 @@ from scipy import sparse
 
 from pbmc_pipeline.harmonize import _compute_embedding, _predict_celltypist
 from pbmc_pipeline.merge import (
-    _add_single_cell_qc_metrics,
     _match_csr_index_dtypes,
     _shared_gene_names,
     merge_pseudobulks,
@@ -114,18 +113,6 @@ def test_shared_gene_names_preserves_first_study_order():
     first = ad.AnnData(X=np.ones((1, 3)), var=pd.DataFrame(index=["C", "A", "B"]))
     second = ad.AnnData(X=np.ones((1, 2)), var=pd.DataFrame(index=["B", "C"]))
     assert _shared_gene_names([first, second]).tolist() == ["C", "B"]
-
-
-def test_single_cell_qc_metrics_use_raw_counts_and_mt_prefix():
-    adata = ad.AnnData(
-        X=sparse.csr_matrix([[3, 1, 6], [0, 0, 0]]),
-        var=pd.DataFrame(index=["MT-CO1", "mt-nd1", "MS4A1"]),
-    )
-
-    _add_single_cell_qc_metrics(adata)
-
-    assert adata.obs["UMIs_per_cell"].tolist() == [10, 0]
-    assert adata.obs["percent_mito"].tolist() == [40.0, 0.0]
 
 
 def test_matching_csr_index_dtypes_unblocks_scanpy_normalization():

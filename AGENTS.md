@@ -40,11 +40,12 @@
 - Use `make run-de-synthetic-test` for positive DE model coverage with production
   inclusion filters. Then use `make run-cell-type-analysis-test` to check that
   synthetic DE artifacts reach the ordinary cell-type reports.
-- `make run-all-test` runs the fresh core test once, generates and fits the
-  synthetic DE fixture, then renders all cell-type reports from that merge with
-  matching synthetic DE results. `make verify` adds local static checks before
-  calling `make run-all-test`. Do not reintroduce a core-workflow prerequisite
-  on `run-cell-type-analysis-test`.
+- `make run-all-test` runs the fresh core test once, then runs and checks the
+  integration benchmark and its report, generates and fits the synthetic DE
+  fixture, and renders all cell-type reports from that merge with matching
+  synthetic DE results. `make verify` adds local static checks before calling
+  `make run-all-test`. Do not reintroduce a core-workflow prerequisite on
+  `run-cell-type-analysis-test`.
 - When adding a required CLI argument or published output, find every invocation
   with `rg` (Make, Nextflow, tests, and docs) and run the smallest public Make
   target that exercises the changed contract.

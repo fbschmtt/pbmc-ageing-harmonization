@@ -177,6 +177,9 @@ def harmonize_study(
         feature_symbols=feature_name_metrics["n_feature_symbols"],
         feature_ids=feature_name_metrics["n_feature_ids"],
     )
+    started = time.perf_counter()
+    _add_raw_qc_metrics(adata)
+    _log_step(study_id, "raw_qc_metrics", started)
     annotation = study["annotation"]
     if annotation["method"] == "celltypist" and not validate_only:
         _annotate_celltypist(adata, annotation, pipeline, root, study_id)
@@ -240,6 +243,24 @@ def harmonize_study(
         _log_step(study_id, "write_h5ad", started, path=output_path)
     _log_step(study_id, "complete", total_started, status=report["status"])
     return report
+
+
+def _add_raw_qc_metrics(adata) -> None:
+    """Add per-cell QC metrics from the retained raw count matrix."""
+    counts = adata.X
+    adata.obs["total_counts"] = np.asarray(counts.sum(axis=1)).ravel()
+    if hasattr(counts, "tocsr"):
+        adata.obs["n_genes_by_counts"] = np.diff(counts.tocsr().indptr)
+    else:
+        adata.obs["n_genes_by_counts"] = np.count_nonzero(counts, axis=1)
+    mitochondrial = adata.var_names.str.upper().str.startswith("MT-")
+    mitochondrial_counts = np.asarray(counts[:, mitochondrial].sum(axis=1)).ravel()
+    adata.obs["percent_mito"] = np.divide(
+        mitochondrial_counts * 100,
+        adata.obs["total_counts"].to_numpy(),
+        out=np.zeros(adata.n_obs, dtype=float),
+        where=adata.obs["total_counts"].to_numpy() != 0,
+    )
 
 
 def _normalize_nullable_strings_for_h5ad(adata) -> None:
@@ -508,3 +529,41 @@ def _compute_embedding(
             **integration_details, "batch_key": batch_key, "adjusted_basis": harmony_basis,
         },
     }
+
+
+def _clear_neighbor_graph(adata) -> None:
+    """Release graph matrices once their CellTypist or UMAP consumer is done."""
+    for key in ("distances", "connectivities"):
+        if key in adata.obsp:
+            del adata.obsp[key]
+    adata.uns.pop("neighbors", None)
+
+
+def _compute_neighbors_and_umap(
+    adata, pipeline: dict, study_id: str, *, use_rep: str, compute_umap: bool = True
+) -> None:
+    """Install a graph and optional UMAP derived from an existing representation."""
+    import scanpy as sc
+
+    neighbors = dict(pipeline["processing"]["neighbors"])
+    effective_n_pcs = min(neighbors["n_pcs"], adata.obsm[use_rep].shape[1])
+    neighbors["n_pcs"] = effective_n_pcs
+    started = time.perf_counter()
+    sc.pp.neighbors(
+        adata,
+        **neighbors,
+        use_rep=use_rep,
+        random_state=pipeline["processing"]["random_seed"],
+    )
+    _log_step(
+        study_id,
+        "neighbors",
+        started,
+        n_neighbors=neighbors["n_neighbors"],
+        n_pcs=effective_n_pcs,
+        use_rep=use_rep,
+    )
+    if compute_umap:
+        started = time.perf_counter()
+        sc.tl.umap(adata, random_state=pipeline["processing"]["random_seed"])
+        _log_step(study_id, "umap", started, use_rep=use_rep)

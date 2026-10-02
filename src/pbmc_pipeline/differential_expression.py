@@ -135,6 +135,24 @@ def _has_covariate_variation(metadata: pd.DataFrame, covariate: str) -> bool:
     return values.nunique() >= 2
 
 
+def _maximal_per_study_covariates(metadata: pd.DataFrame, optional_covariates: list[str]) -> list[str]:
+    """Select every varying covariate for one study's single DE design."""
+    candidates = ["age", "sex", *optional_covariates]
+    return [
+        covariate for covariate in candidates
+        if covariate in metadata and _has_covariate_variation(metadata, covariate)
+    ]
+
+
+def _design_with_covariates(base_design: str, covariates: list[str]) -> str:
+    """Append selected optional covariates once, preserving configured term order."""
+    configured_terms = [
+        term.strip() for term in base_design.removeprefix("~").split("+") if term.strip()
+    ]
+    optional_terms = [term for term in covariates if term not in configured_terms]
+    return "~ " + " + ".join([*configured_terms, *optional_terms])
+
+
 def _fit_covariate_model(
     counts: np.ndarray,
     genes: pd.Index,
@@ -253,15 +271,24 @@ def _run_model(
         if column.strip() and column.strip() != "study"
     ]
     has_study_term = "study" in design
+    n_samples_before_complete_case_filter = len(metadata)
     valid = pd.Series(True, index=metadata.index)
+    missing_by_covariate = {}
     for column in design_covariates:
         if column in {"age", "bmi"}:
             values = pd.to_numeric(metadata[column], errors="coerce")
-            valid &= values.notna() & np.isfinite(values)
+            observed = values.notna() & np.isfinite(values)
         else:
             values = metadata[column].astype("string").str.strip().str.lower()
-            valid &= values.notna() & ~values.isin(_UNKNOWN)
+            observed = values.notna() & ~values.isin(_UNKNOWN)
+        missing_by_covariate[column] = int((~observed).sum())
+        valid &= observed
     metadata = metadata.loc[valid].copy()
+    details.update({
+        "n_samples_before_complete_case_filter": n_samples_before_complete_case_filter,
+        "n_samples_excluded_missing_design_covariates": int((~valid).sum()),
+        "missing_values_by_design_covariate": missing_by_covariate,
+    })
     for covariate in covariates:
         if not _has_covariate_variation(metadata, covariate):
             details["reason"] = f"{covariate} has fewer than two observed values"
@@ -374,6 +401,10 @@ def _run_model(
         )
         result["studies_included"] = ";".join(studies)
         result["study_sample_counts"] = json.dumps(study_sample_counts, sort_keys=True)
+        result["design"] = design
+        result["n_samples_model"] = len(metadata)
+        result["n_samples_before_complete_case_filter"] = n_samples_before_complete_case_filter
+        result["n_samples_excluded_missing_design_covariates"] = int((~valid).sum())
         if model_name == "per_study":
             if covariate == "age":
                 destination = cell_type_dir / "per_study" / f"{_slug(study or 'unknown-study')}.csv"
@@ -406,6 +437,32 @@ def _run_model(
         }
     )
     return details
+
+
+def _write_age_model_diagnostics(
+    *, adata, obs: pd.DataFrame, metadata: pd.DataFrame, cell_type: str, output_dir: Path
+) -> Path | None:
+    """Write the sample-level inputs needed for one shared-age-fit diagnostic figure."""
+    if metadata.empty:
+        return None
+    studies = sorted(metadata["study"].astype(str).unique())
+    var_mask = _availability_mask(adata.var, studies, context=f"{cell_type}/merged diagnostics")
+    genes = adata.var_names[var_mask]
+    if len(genes) == 0:
+        return None
+    row_positions = obs.index.get_indexer(metadata.index)
+    col_positions = adata.var_names.get_indexer(genes)
+    counts = _matrix_to_counts(
+        adata.X[row_positions, :][:, col_positions], context=f"{cell_type}/merged diagnostics"
+    )
+    diagnostics = metadata[["study", "sample", "age", "sex", "n_cells"]].copy()
+    diagnostics.insert(0, "pseudobulk_id", diagnostics.index.astype(str))
+    diagnostics["counts_in_age_gene_intersection"] = counts.sum(axis=1, dtype=np.int64)
+    diagnostics["genes_in_age_intersection"] = len(genes)
+    destination = output_dir / _slug(cell_type) / "age_model_diagnostics.csv"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    diagnostics.to_csv(destination, index=False)
+    return destination
 
 
 def _load_pseudobulk(input_path: Path, pipeline: dict):
@@ -464,7 +521,7 @@ def _run_cell_type_differential_expression(
     test_mode: bool,
     synthetic_test_data: bool,
 ) -> dict:
-    """Fit age, sex, and available optional-covariate models for one subset."""
+    """Fit one maximal per-study model and covariate-specific combined models."""
     slug = _slug(cell_type)
     selected = labels == cell_type
     type_adata = adata[selected.to_numpy(), :]
@@ -481,13 +538,19 @@ def _run_cell_type_differential_expression(
         "excluded_samples": excluded_samples,
         "models": [],
     }
+    diagnostics_path = _write_age_model_diagnostics(
+        adata=type_adata,
+        obs=type_obs,
+        metadata=metadata,
+        cell_type=cell_type,
+        output_dir=output_dir,
+    )
+    if diagnostics_path is not None:
+        item["age_model_diagnostics"] = str(diagnostics_path.relative_to(output_dir))
     optional_covariates = spec.get("optional_covariates", ["bmi", "cmv"])
     for study in sorted(metadata["study"].astype(str).unique()):
         study_metadata = metadata.loc[metadata["study"].astype(str) == study].copy()
-        core_covariates = [
-            covariate for covariate in ("age", "sex")
-            if _has_covariate_variation(study_metadata, covariate)
-        ] or ["age", "sex"]
+        covariates = _maximal_per_study_covariates(study_metadata, optional_covariates)
         item["models"].append(
             _run_model(
                 adata=type_adata,
@@ -496,8 +559,8 @@ def _run_cell_type_differential_expression(
                 cell_type=cell_type,
                 model_name="per_study",
                 study=study,
-                design=spec["per_study_design"],
-                covariates=core_covariates,
+                design=_design_with_covariates(spec["per_study_design"], covariates),
+                covariates=covariates,
                 alpha=spec["alpha"],
                 cpus=cpus,
                 output_dir=output_dir,
@@ -505,26 +568,6 @@ def _run_cell_type_differential_expression(
                 synthetic_test_data=synthetic_test_data,
             )
         )
-        for covariate in optional_covariates:
-            if covariate not in study_metadata:
-                continue
-            item["models"].append(
-                _run_model(
-                    adata=type_adata,
-                    obs=type_obs,
-                    metadata=study_metadata,
-                    cell_type=cell_type,
-                    model_name="per_study",
-                    study=study,
-                    design=f"{spec['per_study_design']} + {covariate}",
-                    covariates=[covariate],
-                    alpha=spec["alpha"],
-                    cpus=cpus,
-                    output_dir=output_dir,
-                    test_mode=test_mode,
-                    synthetic_test_data=synthetic_test_data,
-                )
-            )
     core_covariates = [
         covariate for covariate in ("age", "sex")
         if _has_covariate_variation(metadata, covariate)
@@ -644,9 +687,19 @@ def _write_differential_expression_manifest(
             "minimum_cells_filter_enabled": not test_mode,
         },
         "models": {
-            "per_study": spec["per_study_design"],
+            "per_study": (
+                "One maximal complete-case design per study: the configured age/sex terms "
+                "plus every configured optional covariate with at least two observed values."
+            ),
             "merged": spec["merged_design"],
-            "covariate_adjustment": "Age and sex are included for BMI and CMV models.",
+            "combined": (
+                "One combined model per target covariate, adjusted for age and sex; it uses "
+                "all complete-case samples from studies with recorded target values."
+            ),
+            "missing_values": (
+                "A model excludes only samples missing a term in that model's design; exclusion "
+                "counts are recorded with each fit."
+            ),
         },
         "effect_scales": {
             "age": "log2 fold change per one-year increase",

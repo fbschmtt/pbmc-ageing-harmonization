@@ -17,7 +17,6 @@ def main() -> None:
     parser.add_argument("--report-output", type=Path, required=True)
     parser.add_argument("--project-root", type=Path, default=Path.cwd())
     parser.add_argument("--config", type=Path, default=Path("config/pipeline.json"))
-    parser.add_argument("--aifi-l2-model", type=Path, help="Staged AIFI L2 model for single-cell merge")
     parser.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
     args = parser.parse_args()
     configure_logging(args.log_level)
@@ -30,8 +29,5 @@ def main() -> None:
     elif args.mode == "pseudobulk-merge":
         report = merge_pseudobulks(args.input, args.output, args.report_output, pipeline)
     else:
-        if args.aifi_l2_model is None:
-            parser.error("single-cell-merge requires --aifi-l2-model")
-        pipeline["models"]["aifi_l2"] = str(args.aifi_l2_model.resolve())
-        report = merge_single_cells(args.input, args.output, args.report_output, pipeline, root)
+        report = merge_single_cells(args.input, args.output, args.report_output, pipeline)
     print(json.dumps({"kind": report["kind"], "status": report["status"], "output": str(args.output)}))

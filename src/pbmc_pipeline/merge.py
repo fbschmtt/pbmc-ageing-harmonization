@@ -16,11 +16,7 @@ import pandas as pd
 from scipy import sparse
 
 from .config import config_digest
-from .harmonize import (
-    _annotate_celltypist,
-    _normalize_nullable_strings_for_h5ad,
-    _predict_celltypist,
-)
+from .harmonize import _normalize_nullable_strings_for_h5ad
 
 LOGGER = logging.getLogger(__name__)
 
@@ -262,9 +258,9 @@ def _link_h5ad_for_merge(source: Path, destination: Path) -> None:
 
 
 def merge_single_cells(
-    input_paths: Iterable[Path], output_path: Path, report_path: Path, pipeline: dict, root: Path
+    input_paths: Iterable[Path], output_path: Path, report_path: Path, pipeline: dict
 ) -> dict:
-    """Inner-join genes and compute experimental merged AIFI-L2 predictions.
+    """Inner-join genes and write a raw-count cross-study cell object.
 
     Expression matrices are concatenated on disk to avoid retaining all source
     matrices alongside the merged matrix in memory.
@@ -371,8 +367,8 @@ def merge_single_cells(
             part.file.close()
     if merged.n_vars == 0:
         raise ValueError("Studies have no shared genes for single-cell merge")
-    # Per-study embeddings are not used: the merged embedding below is
-    # recomputed from counts. Drop them before allocating the global versions.
+    # Per-study embeddings are not part of the raw merged artifact. Global
+    # integration diagnostics are computed by the separate benchmark workflow.
     merged.obsm.clear()
     # The shipped configuration uses an inner join.  Keep provenance available
     # if a caller explicitly opts into an outer join, where fill_value=0 creates
@@ -382,80 +378,9 @@ def merge_single_cells(
         _annotate_gene_availability(merged, parts)
         _log_step(study_id, "gene_availability", started)
     del parts
-    started = _start_step(study_id, "qc_metrics", cells=merged.n_obs, genes=merged.n_vars)
-    _add_single_cell_qc_metrics(merged)
-    _log_step(study_id, "qc_metrics", started)
-    integration = spec["integration"]
-    # Keep each study's own L2 annotation as the downstream ground truth. The
-    # merged prediction is diagnostic only and must never overwrite it.
-    merged.obs["aifi_l2_study_majority"] = merged.obs["aifi_l2_majority"].astype(str)
-    embedding_genes = merged.var_names if spec["gene_join"] == "inner" else shared_genes
-    # CellTypist detects ``obsp['connectivities']`` and uses it for its
-    # over-clustering/majority-voting stage. The helper therefore installs the
-    # Harmony-derived graph before CellTypist is invoked.
-    started = _start_step(study_id, "harmony_celltypist")
-    embedding = _annotate_celltypist(
-        merged,
-        {"method": "celltypist", "levels": [spec["annotation_level"]]},
-        pipeline,
-        root,
-        "merged_single_cell",
-        embedding_batch_key=integration["batch_key"],
-        embedding_genes=embedding_genes,
-        harmony_basis=integration["adjusted_basis"],
-        label_prefix="experimental_",
-        restore_counts=False,
-        compute_umap=False,
-    )
-    _log_step(study_id, "harmony_celltypist", started)
-    # The Harmony-graph prediction is experimental. Repeat the same diagnostic
-    # with an unintegrated-PC graph, then restore Harmony's graph/UMAP as the
-    # primary embedding stored in the merged artifact.
-    _clear_neighbor_graph(merged)
-    # The Harmony/CellTypist pass already left X normalized and log1p
-    # transformed, so reuse it for the unintegrated-PC prediction.
-    _compute_neighbors_and_umap(
-        merged, pipeline, "merged_single_cell", use_rep="X_pca", compute_umap=False
-    )
-    _predict_celltypist(
-        merged,
-        {"method": "celltypist", "levels": [spec["annotation_level"]]},
-        pipeline,
-        root,
-        "merged_single_cell",
-        label_suffix="_unintegrated",
-        label_prefix="experimental_",
-    )
-    # The unintegrated graph has served its prediction pass. Remove it before
-    # rebuilding the final Harmony graph to avoid holding both full graphs.
-    _clear_neighbor_graph(merged)
-    # Release normalized counts before reading the raw checkpoint back. The
-    # backed read materializes only X, not the old per-study embeddings.
-    started = _start_step(study_id, "restore_raw_counts")
-    merged.X = None
-    backed_counts = ad.read_h5ad(concat_path, backed="r")
-    try:
-        backed_matrix = backed_counts.X
-        raw_counts = (
-            backed_matrix.to_memory()
-            if hasattr(backed_matrix, "to_memory")
-            else np.asarray(backed_matrix)
-        )
-    finally:
-        backed_counts.file.close()
-    merged.X = raw_counts
-    del raw_counts, backed_matrix, backed_counts
-    _log_step(study_id, "restore_raw_counts", started)
-    started = _start_step(study_id, "final_harmony_graph_umap")
-    _compute_neighbors_and_umap(
-        merged, pipeline, "merged_single_cell", use_rep=integration["adjusted_basis"]
-    )
-    _log_step(study_id, "final_harmony_graph_umap", started)
     merged.uns["pipeline_provenance"] = _merge_provenance(
         "single_cell_merge", paths, pipeline, gene_join=spec["gene_join"]
     )
-    # The raw-count checkpoint has been restored for the published artifact.
-    merged.uns["embedding"] = embedding
     _normalize_nullable_strings_for_h5ad(merged)
     started = _start_step(study_id, "write_merged_h5ad", output=output_path)
     merged.write_h5ad(output_path, compression=pipeline["processing"]["output_compression"])
@@ -463,64 +388,14 @@ def merge_single_cells(
     started = _start_step(study_id, "write_merge_report", output=report_path)
     report = _merge_report("single_cell_merge", merged, paths, pipeline)
     report["gene_join_accounting"] = gene_join_accounting
-    report.update({"embedding": embedding})
+    report["integration_benchmark"] = {
+        "status": "not_run",
+        "message": "Run the separate integration benchmark workflow to compute global embeddings and diagnostic CellTypist labels.",
+    }
     _write_report(report_path, report)
     _log_step(study_id, "write_merge_report", started)
     concat_temp.cleanup()
     return report
-
-
-def _clear_neighbor_graph(adata) -> None:
-    """Release graph matrices once their CellTypist/UMAP consumer is done."""
-    for key in ("distances", "connectivities"):
-        if key in adata.obsp:
-            del adata.obsp[key]
-    adata.uns.pop("neighbors", None)
-
-
-def _add_single_cell_qc_metrics(adata) -> None:
-    """Add raw-count depth and mitochondrial fraction for merged-cell QC."""
-    counts = adata.X
-    total_counts = np.asarray(counts.sum(axis=1)).ravel()
-    mitochondrial = adata.var_names.str.upper().str.startswith("MT-")
-    mito_counts = np.asarray(counts[:, mitochondrial].sum(axis=1)).ravel()
-    adata.obs["UMIs_per_cell"] = total_counts
-    adata.obs["percent_mito"] = np.divide(
-        mito_counts * 100,
-        total_counts,
-        out=np.zeros(adata.n_obs, dtype=float),
-        where=total_counts != 0,
-    )
-
-
-def _compute_neighbors_and_umap(
-    adata, pipeline: dict, study_id: str, *, use_rep: str, compute_umap: bool = True
-) -> None:
-    """Install a graph and UMAP derived from one existing PCA representation."""
-    import scanpy as sc
-
-    neighbors = pipeline["processing"]["neighbors"]
-    neighbor_args = dict(neighbors)
-    effective_n_pcs = min(neighbor_args["n_pcs"], adata.obsm[use_rep].shape[1])
-    neighbor_args["n_pcs"] = effective_n_pcs
-    started = _start_step(study_id, "neighbors", use_rep=use_rep)
-    sc.pp.neighbors(
-        adata,
-        **neighbor_args,
-        use_rep=use_rep,
-        random_state=pipeline["processing"]["random_seed"],
-    )
-    LOGGER.info(
-        "study=%s step=neighbors duration_seconds=%.2f n_neighbors=%s n_pcs=%s use_rep=%s",
-        study_id, time.perf_counter() - started, neighbors["n_neighbors"], effective_n_pcs, use_rep,
-    )
-    if compute_umap:
-        started = _start_step(study_id, "umap", use_rep=use_rep)
-        sc.tl.umap(adata, random_state=pipeline["processing"]["random_seed"])
-        LOGGER.info(
-            "study=%s step=umap duration_seconds=%.2f use_rep=%s",
-            study_id, time.perf_counter() - started, use_rep,
-        )
 
 
 def _distribution(values: pd.Series) -> dict[str, float]:

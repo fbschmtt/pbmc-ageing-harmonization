@@ -50,7 +50,6 @@ process MERGE_SINGLE_CELLS {
     input:
     path studies
     path merge_config
-    path aifi_l2_model
 
     output:
     tuple val('single_cell_merged'), path('single_cell_merged.h5ad'), path('single_cell_merged.json'), emit: merged
@@ -58,7 +57,7 @@ process MERGE_SINGLE_CELLS {
     script:
     """
     pbmc-merge --project-root . --config ${merge_config} --mode single-cell-merge \\
-      --aifi-l2-model ${aifi_l2_model} --input ${studies} --output single_cell_merged.h5ad \\
+      --input ${studies} --output single_cell_merged.h5ad \\
       --report-output single_cell_merged.json
     """
 }

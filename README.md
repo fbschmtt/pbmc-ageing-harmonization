@@ -3,7 +3,8 @@
 Configuration-driven processing of PBMC ageing scRNA-seq studies. It produces
 one harmonized H5AD per study, per-study sample × AIFI-L2 pseudobulks, and a
 cross-study pseudobulk matrix. An explicitly enabled pathway also
-creates a jointly embedded, freshly AIFI-L2-annotated single-cell merge.
+creates a raw-count cross-study single-cell merge. A separate, opt-in
+integration benchmark creates global embeddings and diagnostic annotations.
 
 Study-specific inputs and adapter dependencies live in `config/studies.json`;
 the tracked `config/studies.schema.json` and
@@ -62,14 +63,13 @@ make test-data
 make run-all-test
 ```
 
-By default this requests every configured study and
-skips any unavailable fixture. It runs the core pipeline on available downsampled
-real-data fixtures, then uses a separate generated pseudobulk fixture for
-positive DE fits, and finally renders reports from the core test merge with
-those synthetic DE results. Use an explicit `STUDIES=<list>` to narrow the core
-run.
-Existing fixtures are preserved; use `TEST_DATA_OVERWRITE=true` only when they
-need refreshing.
+By default this requests every configured study and skips unavailable fixtures.
+It runs the core pipeline on available downsampled real-data fixtures, then the
+integration benchmark and report checker, then a generated pseudobulk fixture
+for positive DE fits and reports. The benchmark artifact retains labels and UMAP
+coordinates without raw counts or neighbour graphs. Use `STUDIES=<list>` to
+narrow the core run. Existing fixtures are preserved; use
+`TEST_DATA_OVERWRITE=true` only to refresh them.
 
 ## Setup details
 
@@ -97,14 +97,9 @@ conversion.
 
 ## Current status
 
-The last recorded `make verify` passed with all eight configured test studies.
-It validated preparation, RDS conversion, harmonization, QC, pseudobulk and
-single-cell merges, positive synthetic DE fits, and 21 cell-type reports. The
-full production workflow has completed with the real Wang25 RDS, and a
-fresh-clone run completed input acquisition and `make run-all`. Those runs
-predate the latest metadata corrections; rerun production after the final
-manual metadata check. Remaining provenance and follow-up work is listed in
-[PLAN.md](PLAN.md).
+Production and a fresh-clone `make run-all` completed successfully before the
+latest metadata corrections. The remaining manual metadata review and required
+production rerun are tracked in [PLAN.md](PLAN.md).
 
 ## Data flow
 
@@ -134,6 +129,10 @@ input_data/ expression objects + metadata
                 │
                 ├── optional: output/merged/single_cell_merged.h5ad
                 └──> output/qc/merged/{executed.ipynb,report.html}
+
+optional global integration benchmark
+  single_cell_merged.h5ad ──> output/integration_benchmark/
+                                └──> labels-and-UMAP-only H5AD + JSON + report.html
 
 optional downstream cell-type workflow
   single_cell_merged.h5ad ──> split once by per-study AIFI-L2
@@ -170,9 +169,9 @@ metadata schema.
 
 `aifi_l2_majority` is the retained per-study AIFI-L2 annotation and the sole
 canonical label for pseudobulk grouping, cell-type splitting, and composition
-denominators. The optional whole-dataset merge produces only diagnostic
-`experimental_aifi_l2_*` labels; those must not replace per-study L2 in any
-downstream analysis.
+denominators. The optional integration benchmark produces diagnostic
+`benchmark_*_aifi_l2_majority` labels; those must not replace per-study L2 in
+any downstream analysis.
 
 ## Add a study
 
@@ -279,6 +278,11 @@ The downloader prints each artifact's position in the run and its associated
 study name. During a transfer it also shows bytes downloaded, transfer rate,
 and percentage when the source reports a size or the manifest records one;
 otherwise it reports downloaded bytes and rate.
+Interrupted direct downloads retain a compatible `.part` file and transfer
+metadata. The downloader makes up to three attempts with delay and resume
+messages, and resumes with HTTP byte ranges only when the source confirms that
+the saved partial is compatible. A final size and checksum check is still
+required before publishing the requested file.
 
 `make download-inputs-strict STUDIES=fachrul26` is the explicit acquisition
 preflight. In addition to failed downloads and size/checksum mismatches, it
@@ -325,22 +329,17 @@ pbmc-qc \
 ```
 
 The merge workflow renders one combined document at `output/qc/merged/`. It
-starts with pseudobulk composition and a gene-presence UpSet plot; if the
-single-cell branch is enabled it appends its embedding, depth checks, UMAPs of
-log(UMIs per cell) and mitochondrial percentage (capped at 15%), and the matrix
-comparing experimental merged AIFI L2 calls to each cell's per-study label.
-The report also accounts for raw counts retained or discarded by each
-gene-symbol join. The pseudobulk outer union retains all input counts; the
-technical-covariate plots show the number of studies for each technology,
-intronic-count, and frozen-status value. The optional single-cell inner
-intersection includes a per-study bar chart of the fraction of counts discarded,
-alongside a table with count totals and the gene symbol with the largest loss per
-study.
+covers pseudobulk composition, gene presence, join accounting, and technical
+covariates. The pseudobulk outer union retains all input counts. For the
+single-cell shared-gene intersection, it shows each study's discarded-count
+fraction, totals, and gene with the greatest lost count. Global UMAPs and
+benchmark AIFI-L2 comparisons belong to the separate integration benchmark.
 The merged artifact retains per-study labels in `aifi_l2_majority` for all
-downstream grouping and splitting. Diagnostic re-annotations are stored in
-`experimental_aifi_l2_majority` (Harmony graph) and
-`experimental_aifi_l2_unintegrated_majority` (unintegrated PCA graph); the QC
-report shows their UMAPs and label-concordance heatmaps.
+downstream grouping and splitting. Run `make run-integration-benchmark` after
+the core workflow to create a small diagnostic H5AD with global UMAP coordinates
+and CellTypist labels from the Harmony and unintegrated-PCA graphs. It does not
+duplicate the merged raw count matrix. Its `report.html` contains the global
+UMAPs and per-study-versus-benchmark AIFI-L2 concordance matrices.
 `output/run_manifest.json` records requested, selected, and skipped studies,
 image references, configuration checksum, and checksums of the merged
 deliverables.
@@ -370,6 +369,7 @@ which validation to run.
 | Cell-type splitting or shared analysis | `make run-test`, then `make run-cell-type-analysis-test` | Use `make run-all-test` when the complete ordered test workflow is needed. |
 | Positive pseudobulk DE fitting | `make run-test`, then `make run-de-synthetic-test` and `make check-synthetic-de-results` | Follow with `make run-cell-type-analysis-test` when checking that DE results reach reports. |
 | Core workflow for one or a few studies | `make run-test STUDIES=<list>` | Omit `STUDIES` to request all configured studies. |
+| Global integration/annotation diagnostics | `make run-integration-benchmark[-test]` | Run after an existing single-cell merge; `make run-all-test` also exercises its test form. |
 | Ordered Docker integration test | `make run-all-test` | Use `make verify` when local lint, unit, and documentation checks are also needed. |
 | Markdown documentation or Make target names | `make docs-check` | Also run the target described by changed commands. |
 | Broad cross-cutting or release validation | `make verify` | This is deliberately non-resumed and includes all studies by default. |
@@ -395,12 +395,17 @@ create it only through `make run-all` or when explicitly enabled:
 make run STUDIES=all MERGE_SINGLE_CELL=true
 ```
 
-Study-QC, merge-QC, and cell-type report templates are maintained as Jupytext
-Python sources (`reports/qc_report.py`, `reports/merge_qc_report.py`, and
-`reports/cell_type_report.py`). Their report runners materialize a temporary
-notebook immediately before execution; the generated template notebooks are
-intentionally not tracked. The published `executed.ipynb` is the executed
-report artifact.
+To benchmark the global Harmony and unintegrated-PCA label/UMAP variants without
+rerunning that merge:
+
+```bash
+make run-integration-benchmark
+```
+
+Study-QC, merge-QC, integration-benchmark, and cell-type report templates are
+Jupytext Python sources under `reports/`. Their runners materialize a temporary
+notebook immediately before execution; generated templates are not tracked.
+The published `executed.ipynb` is the audit artifact.
 
 The merge QC report summarizes sample-level technology, intronic-read
 inclusion, and frozen-status distributions with provenance status. OneK1K's
@@ -422,7 +427,7 @@ browse manifests and structured report tables rather than parse notebook HTML.
 
 The optional downstream workflow loads a completed merged single-cell H5AD once
 and splits it by the retained per-study `aifi_l2_majority` call. Experimental
-merged labels are never used for this split. For each type, `ANALYSE_CELL_TYPE`
+benchmark labels are never used for this split. For each type, `ANALYSE_CELL_TYPE`
 creates the type-specific PCA/UMAP/Leiden embedding, marker tables, PC--age
 correlation table, and `analysis.h5ad`. `RENDER_CELL_TYPE_REPORT` then loads
 that analysis artifact plus the primitive raw-count H5AD to create the executed
@@ -495,6 +500,19 @@ make render-cell-type-test CELL_TYPE=cd14-monocyte
 make render-cell-type-reports
 make render-cell-type-reports-test
 ```
+
+To deliberately discard published production outputs while preserving the
+ignored `output/test` fixture outputs, use one of:
+
+```bash
+make clean-core-output      # all production outputs, including stale downstream analysis
+make clean-analysis-output  # differential expression and cell-type outputs
+```
+
+These are separate because re-running DE or report analyses normally reuses a
+compute-heavy production merge. A core cleanup also removes downstream outputs
+that no longer match a future merge. Neither target removes Nextflow's cache; use
+`make clean-work` only when that cache itself should be discarded.
 
 The targeted test command deliberately does not build a core test merge or all
 reports; it requires the corresponding split to already exist. It runs the
@@ -582,6 +600,9 @@ uses the intersection of genes available across its included studies, so
 study-absent genes' synthetic outer-join zeros are excluded. The parallel
 type-fitting task is configured for one CPU, which is passed directly to
 PyDESeq2; all other CPU, time, and memory requests use the executor defaults.
+Each cell type also renders one shared-age diagnostic figure: study-specific
+age support, age against raw pseudobulk depth in the tested gene intersection,
+and a QQ plot of unadjusted age-model p-values.
 
 Samples must be age 20 or older and have at least 10 cells in that
 sample × cell-type pseudobulk. Samples with missing/unknown sex metadata or
@@ -640,13 +661,12 @@ make run-de-synthetic-test
 make run-cell-type-analysis-test
 ```
 
-`make run-all-test` is the complete ordered Docker test. Its core and cell-type
-analysis stages use available downsampled real-data fixtures; its positive DE
-stage uses the separate synthetic pseudobulk. The final reports combine the
-real test merge/splits with those synthetic DE results to check the handoff and
-plots. `make verify` runs this same target after linting, unit tests, Nextflow
-lint, and documentation checks. Pass `STUDIES=<list>` to narrow the core test
-inputs; it does not change the synthetic DE fixture.
+`make run-all-test` is the complete ordered Docker test. It runs the core and
+integration benchmark on available downsampled real-data fixtures, then fits
+the separate synthetic pseudobulk DE fixture and renders reports from the real
+merge/splits with those DE results. `make verify` runs it after linting, unit
+tests, Nextflow lint, and documentation checks. `STUDIES=<list>` narrows only
+the core test inputs.
 
 The generated input stays under `output/test/synthetic_de/`. DE outputs use the
 standard `output/test/differential_expression/` directory, and the ordinary
@@ -675,14 +695,16 @@ with `make run-test`. It uses the explicitly labeled test mode described above.
 Use `make run-de-synthetic-test` to exercise successful PyDESeq2 fits with the
 production sample-inclusion filters enabled.
 
-DE fits estimate age and sex together per study and in a study-adjusted combined
-model. BMI and CMV are fitted separately when metadata support them, adjusting
-for age and sex; missing values are excluded from the relevant fit. A single-
-study optional-covariate fit omits the study term and still produces its
-volcano plot. CMV negative/positive values are harmonized to no/yes. Combined
-volcano plots list the studies and samples that contributed. Cell-type fraction
-forest plots label categorical contrasts explicitly: male versus female, and
-yes CMV versus no CMV.
+Each study has one maximal DE model: age and sex plus every optional covariate
+with at least two observed values. All coefficients for that study therefore
+come from one formula and complete-case sample set. A missing BMI or CMV value
+excludes that pseudobulk only from models containing that term; one missing
+value removes one row. Combined models target one covariate at a time, using
+all complete-case samples from studies that recorded it and adjusting for age,
+sex, and study when more than one study contributes. A single-study combined
+fit omits the redundant study term. CMV negative/positive values are harmonized
+to no/yes. Categorical volcano plots and summaries name their comparison
+groups, including male versus female and yes CMV versus no CMV.
 
 ## Further reading
 

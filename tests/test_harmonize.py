@@ -67,6 +67,9 @@ def test_harmonized_output_keeps_only_selected_counts_in_x(tmp_path):
     assert np.array_equal(result.X, counts)
     assert result.raw is None
     assert list(result.layers) == []
+    assert result.obs["total_counts"].tolist() == [3, 7]
+    assert result.obs["n_genes_by_counts"].tolist() == [2, 2]
+    assert result.obs["percent_mito"].tolist() == [0.0, 0.0]
 
 
 def test_feature_repair_clears_stale_gene_id_index_name_before_write(tmp_path):

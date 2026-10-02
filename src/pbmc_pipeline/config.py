@@ -72,15 +72,45 @@ def validate_configuration(
         raise ConfigurationError("merge.single_cell.gene_join currently supports only 'inner'")
     if single_cell.get("annotation_level") != "l2":
         raise ConfigurationError("merge.single_cell.annotation_level must be 'l2'")
-    integration = single_cell.get("integration", {})
-    if integration.get("method") != "harmony":
-        raise ConfigurationError("merge.single_cell.integration.method must be 'harmony'")
-    if not isinstance(integration.get("batch_key"), str) or not integration["batch_key"]:
-        raise ConfigurationError("merge.single_cell.integration.batch_key must be a non-empty string")
-    if integration.get("adjusted_basis") != "X_pca_harmony":
-        raise ConfigurationError(
-            "merge.single_cell.integration.adjusted_basis must be 'X_pca_harmony'"
-        )
+    benchmark = pipeline.get("integration_benchmark", {})
+    if benchmark.get("annotation_level") != "l2":
+        raise ConfigurationError("integration_benchmark.annotation_level must be 'l2'")
+    methods = benchmark.get("methods")
+    if not isinstance(methods, list) or not methods:
+        raise ConfigurationError("integration_benchmark.methods must be a non-empty list")
+    names = [method.get("name") for method in methods if isinstance(method, dict)]
+    if len(names) != len(methods) or len(set(names)) != len(names) or not all(
+        isinstance(name, str) and name for name in names
+    ):
+        raise ConfigurationError("integration_benchmark.methods must have unique non-empty names")
+    if not all(isinstance(method, dict) for method in methods):
+        raise ConfigurationError("integration_benchmark.methods entries must be objects")
+    if methods[0].get("method") != "harmony":
+        raise ConfigurationError("integration_benchmark.methods must start with the Harmony method")
+    harmony_methods = 0
+    for method in methods:
+        method_type = method.get("method")
+        if method_type == "harmony":
+            harmony_methods += 1
+            if method.get("batch_key") != "study":
+                raise ConfigurationError(
+                    "integration_benchmark Harmony methods must use batch_key 'study'"
+                )
+            if method.get("adjusted_basis") != "X_pca_harmony":
+                raise ConfigurationError(
+                    "integration_benchmark Harmony methods must use adjusted_basis 'X_pca_harmony'"
+                )
+        elif method_type == "none":
+            if method.get("basis") != "X_pca":
+                raise ConfigurationError(
+                    "integration_benchmark unintegrated methods must use basis 'X_pca'"
+                )
+        else:
+            raise ConfigurationError(
+                "integration_benchmark method must be 'harmony' or 'none'"
+            )
+    if harmony_methods != 1:
+        raise ConfigurationError("integration_benchmark.methods must contain exactly one Harmony method")
     cell_type_analysis = pipeline.get("cell_type_analysis", {})
     if cell_type_analysis:
         if not isinstance(cell_type_analysis.get("analysis_version"), int) or cell_type_analysis["analysis_version"] < 1:

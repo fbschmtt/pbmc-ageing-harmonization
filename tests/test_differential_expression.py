@@ -4,12 +4,16 @@ import json
 from pathlib import Path
 
 import anndata as ad
+import numpy as np
 import pandas as pd
 
 from pbmc_pipeline.config import read_json
 from pbmc_pipeline.differential_expression import (
+    _design_with_covariates,
+    _maximal_per_study_covariates,
     _prepare_metadata,
     _run_model,
+    _write_age_model_diagnostics,
     combine_cell_type_differential_expression,
     list_pseudobulk_cell_types,
 )
@@ -79,9 +83,21 @@ def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None
     assert first.uns["synthetic_test_data"]["not_biological_evidence"] is True
 
 
-def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_path) -> None:
-    import numpy as np
+def test_per_study_design_uses_all_varying_covariates_once() -> None:
+    metadata = pd.DataFrame({
+        "age": [30, 40, 50, 60, 70],
+        "sex": ["female", "male", "female", "male", "female"],
+        "bmi": [22.0, 24.0, np.nan, 28.0, 30.0],
+        "cmv": ["no", "yes", pd.NA, "yes", "no"],
+    })
 
+    covariates = _maximal_per_study_covariates(metadata, ["bmi", "cmv"])
+
+    assert covariates == ["age", "sex", "bmi", "cmv"]
+    assert _design_with_covariates("~ age + sex", covariates) == "~ age + sex + bmi + cmv"
+
+
+def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_path) -> None:
     import pbmc_pipeline.differential_expression as de
 
     index = [f"sample_{number}" for number in range(8)]
@@ -91,7 +107,7 @@ def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_
             "sample": index,
             "age": [24, 31, 38, 45, 52, 60, 68, 76],
             "sex": ["female", "male"] * 4,
-            "cmv": ["no", "yes"] * 4,
+            "cmv": ["no", "yes", "no", pd.NA, "no", "yes", "no", "yes"],
             "n_cells": [20] * 8,
         },
         index=index,
@@ -102,6 +118,7 @@ def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_
 
     def fake_fit(counts, genes, metadata, **kwargs):
         captured["design"] = kwargs["design"]
+        captured["metadata_index"] = metadata.index.tolist()
         return {
             "cmv": pd.DataFrame({
                 "gene": ["G1", "G2"],
@@ -130,9 +147,47 @@ def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_
 
     assert result["status"] == "complete"
     assert result["studies"] == ["aifi"]
-    assert result["study_sample_counts"] == {"aifi": 8}
+    assert result["study_sample_counts"] == {"aifi": 7}
     assert result["design"] == "~ age + sex + cmv"
     assert captured["design"] == "~ age + sex + cmv"
+    assert captured["metadata_index"] == [index[position] for position in (0, 1, 2, 4, 5, 6, 7)]
+    assert result["n_samples_before_complete_case_filter"] == 8
+    assert result["n_samples_excluded_missing_design_covariates"] == 1
+    assert result["missing_values_by_design_covariate"] == {"age": 0, "sex": 0, "cmv": 1}
+
+
+def test_age_model_diagnostics_record_the_shared_gene_universe_and_raw_counts(tmp_path) -> None:
+    obs = pd.DataFrame(
+        {
+            "study": ["one", "two"],
+            "sample": ["one_sample", "two_sample"],
+            "age": [30.0, 60.0],
+            "sex": ["female", "male"],
+            "n_cells": [20, 25],
+        },
+        index=["one::one_sample::T", "two::two_sample::T"],
+    )
+    adata = ad.AnnData(
+        X=np.array([[2, 3, 5], [7, 11, 13]], dtype=np.int64),
+        obs=obs,
+        var=pd.DataFrame(
+            {"available_in_one": [True, True, False], "available_in_two": [True, False, True]},
+            index=["shared", "one_only", "two_only"],
+        ),
+    )
+
+    output = _write_age_model_diagnostics(
+        adata=adata,
+        obs=obs,
+        metadata=obs.copy(),
+        cell_type="T",
+        output_dir=tmp_path,
+    )
+
+    assert output == tmp_path / "t" / "age_model_diagnostics.csv"
+    diagnostics = pd.read_csv(output)
+    assert diagnostics["genes_in_age_intersection"].tolist() == [1, 1]
+    assert diagnostics["counts_in_age_gene_intersection"].tolist() == [2, 7]
 
 
 def test_synthetic_fixture_requires_production_cell_cutoff(tmp_path) -> None:

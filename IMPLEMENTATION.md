@@ -25,11 +25,11 @@ sample × AIFI-L2 pseudobulk per study
         ▼
 outer-gene merged pseudobulk ─┐
                               ├─ one combined merge QC report
-optional: all harmonized cells → shared-gene embedding → AIFI-L2 ─┘
+optional: all harmonized cells → raw joined single-cell H5AD
+                                      ├─ integration benchmark → labels, UMAP, report
+                                      └─ cell-type split → per-type analysis and reports
 
-separate downstream workflow:
-merged single-cell H5AD → one split task → one analysis task per AIFI-L2 type
-                                      → one notebook/HTML render task per analysed type
+The core merge writes no global normalization, embedding, graph, or prediction.
 ```
 
 ## Components
@@ -68,9 +68,15 @@ merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
   existing merged single-cell H5AD, loads it once to split by retained per-study AIFI-L2,
   then fans out separate per-type analysis and lightweight report-rendering tasks.
 - `modules/cell_type_analysis.nf`: the split, analysis, and report-rendering processes.
+- `integration_benchmark.nf` and `modules/integration_benchmark.nf`: the
+  optional global-integration task and its report-rendering task, both reading
+  an existing raw merged single-cell H5AD.
+- `src/pbmc_pipeline/integration_benchmark.py` and
+  `reports/integration_benchmark_report.py`: benchmark fitting and its
+  reader-facing notebook source.
 - `reports/cell_type_report.py`: Jupytext source for the per-type notebook. It
-  plots the inherited global UMAP and renders visualizations from the completed
-  type-specific analysis artifact, fraction-model covariate and noise
+  renders visualizations from the completed type-specific analysis artifact,
+  fraction-model covariate and noise
   diagnostics, plus optional DE summaries and plots when the matching cell-type
   slug is present in the DE manifest. Its reader HTML leads with support
   metrics, a grouped table of contents, and a study-specific fraction-model
@@ -105,18 +111,27 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/prepared/<study>.prepare.json`
 - `<outdir>/pseudobulk/<study>.pseudobulk.h5ad`
 - `<outdir>/merged/pseudobulk_merged.h5ad`
+- `<outdir>/merged/single_cell_merged.h5ad` (optional raw-count joined matrix)
 - `<outdir>/reports/*.json`
 - `<outdir>/qc/<study>/report.html`
 - `<outdir>/qc/merged/report.html` (one report for both merge branches)
+- `<outdir>/integration_benchmark/integration_benchmark.h5ad` (optional thin
+  diagnostic artifact with labels and UMAP coordinates)
+- `<outdir>/integration_benchmark/integration_benchmark.json` (optional method
+  and input provenance)
+- `<outdir>/integration_benchmark/{executed.ipynb,report.html}` (optional
+  benchmark report)
 - `<outdir>/cell_type_analysis/<aifi-l2-type>/analysis.h5ad` (optional derived embeddings and clusters)
 - `<outdir>/cell_type_analysis/<aifi-l2-type>/report.html` (optional self-contained static, reader-facing downstream report without implementation-cell inputs)
 - `<outdir>/cell_type_analysis/<aifi-l2-type>/executed.ipynb` (optional executed technical/audit report)
 - `<outdir>/cell_type_analysis/<aifi-l2-type>/fraction_model_diagnostics.tsv` (optional per-study fraction-model covariates, residual SD, and binomial-sampling reference)
 - `<outdir>/cell_type_analysis/cell_type_manifest.json` (optional downstream provenance and completeness contract)
 - `<outdir>/differential_expression/<cell-type-slug>/...csv` (per-study and combined covariate results)
+- `<outdir>/differential_expression/<cell-type-slug>/age_model_diagnostics.csv` (sample support and raw-count inputs for the shared age-model diagnostic figure)
 - `<outdir>/differential_expression/<cell-type-slug>/cell_type_result.json` (per-task fit record collected into the root manifest)
 - `<outdir>/differential_expression/differential_expression.json` (DE status and cell-type result index)
 - `<outdir>/run_manifest.json` (requested, selected, and skipped studies;
+  hashes of selected source inputs, metadata dependencies, and annotation models;
   selected studies are the complete requested set for explicit study lists)
 
 ### Harmonized expression contract
@@ -134,27 +149,30 @@ use `available_in_<study>`, `n_studies_with_gene`,
 synthetic zeros from observed zero counts.
 
 The optional `--merge_single_cell` branch additionally writes
-`merged/single_cell_merged.h5ad`. It is disabled by default because the merged
-matrix must ultimately fit in memory for normalization and integration. Before
-that step, an on-disk concat streams the source matrices into a temporary H5AD,
-avoiding a peak that holds all source matrices plus a second full concat in
-memory. It preserves per-study predictions in
-`obs['aifi_l2_majority']` for downstream grouping and splitting, with a
-redundant `obs['aifi_l2_study_majority']` comparison alias.
-Its embedding uses only the gene intersection across studies: it selects HVGs
-from that intersection, scales only those selected genes, runs PCA, applies
-Harmony over `obs['study']`, and builds the neighbor graph/UMAP from
-`X_pca_harmony`. Experimental majority-voting results from the Harmony-derived
-and unintegrated graphs are retained in `experimental_aifi_l2_majority` and
-`experimental_aifi_l2_unintegrated_majority`; neither replaces per-study L2.
-The saved graph and UMAP remain Harmony-based.
+`merged/single_cell_merged.h5ad`. It is disabled by default because the joined
+matrix is large. An on-disk concat streams source matrices into a temporary
+H5AD, then writes the raw joined counts and metadata. Per-cell QC fields
+(`total_counts`, `n_genes_by_counts`, and `percent_mito`) are computed during
+harmonization and carried through the join. The merge does not normalize the
+full matrix, construct a global graph, or run another CellTypist prediction.
+
+`make run-integration-benchmark` is a separate optional workflow over that
+merged H5AD. It selects HVGs from the shared genes, runs PCA, applies Harmony
+over `obs['study']`, and uses the resulting graph both for Harmony CellTypist
+majority voting and UMAP. It then constructs one unintegrated PCA graph for the
+comparison prediction. The published benchmark H5AD contains only metadata,
+diagnostic labels, and UMAP coordinates, so it does not duplicate the raw
+matrix. Its `benchmark_*_aifi_l2_majority` columns are diagnostic; the retained
+per-study `obs['aifi_l2_majority']` remains the downstream label.
+The accompanying integration-benchmark notebook renders the global UMAPs and
+the AIFI-L2 concordance matrices formerly shown by merge QC.
 
 ### Cell-type analysis contract
 
 `make run-cell-type-analysis` consumes the existing
 `<outdir>/merged/single_cell_merged.h5ad`; it does not trigger the core merge.
-The internal split task retains raw counts, canonical metadata, and only the inherited
-global UMAP. It computes `n_cells_in_sample` and
+The internal split task retains raw counts and canonical metadata. It computes
+`n_cells_in_sample` and
 `n_cells_in_sample_l1_parent` before splitting, so the reports need no auxiliary
 inputs for their sample-level composition plots. The analysis task, rather than
 the report notebook, computes the type-specific PCA/neighbours/UMAP/clusters.
@@ -194,10 +212,18 @@ matching result directory or a no-DE flag and publishes only beneath
 `cell_type_analysis/`. DE results publish only beneath
 `differential_expression/`.
 
+Each study is fitted once with its maximal available design: age and sex plus
+each optional covariate with at least two observed values. Its coefficients use
+one complete-case sample set. Combined fits target one covariate at a time and
+include all complete-case samples from studies that recorded it, with age, sex,
+and a study term when multiple studies contribute. Fit metadata and CSVs record
+the formula, complete-case sample count, and exclusions for missing design
+values.
+
 The configured `l2_parent_l1` mapping is an inferred taxonomy with recorded
 provenance, rather than the independent `aifi_l1_majority` predictions. It is
-applied only to retained per-study L2 labels; the experimental merged L2 calls
-are not used in this hierarchy. Validate the mapping against the AIFI atlas
+applied only to retained per-study L2 labels; diagnostic benchmark L2 calls are
+not used in this hierarchy. Validate the mapping against the AIFI atlas
 before using within-L1 fractions for inference.
 
 ## Running and verification
@@ -229,12 +255,11 @@ and analysis artifact without recomputing local analysis. `make docs-check`
 validates local Markdown links and documented Make targets without adding a
 documentation-tool dependency.
 `make verify` runs linting, unit tests, Nextflow lint, cached image builds, and
-non-resumed core and downstream Docker test workflows across all configured
-studies by default. Its ordered integration sequence generates synthetic
-pseudobulk data for positive DE fits, checks the completed models and planted
-age markers, renders all cell-type reports from the fresh core test merge, and
-checks that the matching reports contain the warning, marker results, and
-rendered DE plots. Reserve it for cross-cutting or release-level validation;
+non-resumed Docker workflows across all configured studies by default. After
+the core merge it runs and checks the integration benchmark report, then
+generates synthetic pseudobulk data for positive DE fits, checks the completed
+models and planted markers, and renders all cell-type reports from the fresh
+core test merge. Reserve it for cross-cutting or release-level validation;
 pass `STUDIES=<list>` for a narrower verification. The synthetic fixture has
 only two cell types, so other reports exercise the ordinary no-DE path. It is
 workflow coverage rather than a realistic model of study balance or biological

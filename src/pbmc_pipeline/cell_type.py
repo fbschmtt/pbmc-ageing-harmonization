@@ -41,12 +41,7 @@ def split_cell_types(input_path: Path, output_dir: Path, manifest_path: Path, pi
             raise ValueError(f"Cell-type labels produce the same output name: {label!r} -> {slug!r}")
         used_slugs.add(slug)
         subset = adata[labels == label].copy()
-        # Retain only the global UMAP coordinates: the report uses them before
-        # calculating the type-specific embedding.
-        global_umap = subset.obsm.get("X_umap")
         subset.obsm.clear()
-        if global_umap is not None:
-            subset.obsm["X_umap"] = global_umap
         subset.obsp.clear()
         subset.uns = {
             "pipeline_provenance": {

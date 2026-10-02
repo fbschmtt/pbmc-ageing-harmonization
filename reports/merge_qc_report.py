@@ -199,35 +199,7 @@ else:
     show_study_coverage(single_cell)
     show_gene_join_accounting(single_cell_report, "Single-cell gene join")
 
-    display(Markdown("### AIFI L2 label concordance"))
-    label_columns = [
-        ("Per-study L2 (downstream ground truth)", "aifi_l2_majority"),
-        ("Experimental Harmony graph", "experimental_aifi_l2_majority"),
-        ("Experimental unintegrated PCA graph", "experimental_aifi_l2_unintegrated_majority"),
-    ]
-    available_labels = [item for item in label_columns if item[1] in single_cell.obs]
-    if len(available_labels) < 2:
-        display(Markdown("_Fewer than two AIFI L2 label sets were available for comparison._"))
-    else:
-        comparisons = [
-            (available_labels[left], available_labels[right])
-            for left in range(len(available_labels))
-            for right in range(left + 1, len(available_labels))
-        ]
-        fig, axes = plt.subplots(1, len(comparisons), figsize=(7 * len(comparisons), 6), squeeze=False)
-        for axis, ((left_name, left_column), (right_name, right_column)) in zip(axes.flat, comparisons):
-            concordance = pd.crosstab(
-                single_cell.obs[left_column].astype(str),
-                single_cell.obs[right_column].astype(str),
-                normalize="index",
-            )
-            sns.heatmap(concordance, cmap="viridis", vmin=0, annot=concordance.shape[0] <= 15, fmt=".2f", ax=axis)
-            axis.set_title(f"{left_name} vs {right_name}")
-            axis.set_xlabel(right_name)
-            axis.set_ylabel(left_name)
-        fig.tight_layout()
-        plt.show()
-    display(Markdown("### Embedding and depth"))
+    display(Markdown("### Depth"))
     values = single_cell.X
     totals = np.asarray(values.sum(axis=1)).ravel()
     detected = np.diff(values.tocsr().indptr) if sparse.issparse(values) else np.count_nonzero(values, axis=1)
@@ -238,38 +210,8 @@ else:
         axis.tick_params(axis="x", rotation=45)
     plt.tight_layout()
     plt.show()
-    umap_colors = ["study", "aifi_l2_majority"]
-    if "experimental_aifi_l2_majority" in single_cell.obs:
-        umap_colors.append("experimental_aifi_l2_majority")
-    if "experimental_aifi_l2_unintegrated_majority" in single_cell.obs:
-        umap_colors.append("experimental_aifi_l2_unintegrated_majority")
-    for color in umap_colors:
-        sc.pl.umap(
-            single_cell,
-            color=color,
-            size=max(2, 120000 / single_cell.n_obs),
-            legend_loc="right margin",
-            show=False,
-        )
-        figure = plt.gcf()
-        figure.set_size_inches(12, 7)
-        figure.tight_layout()
-        plt.show()
-
-    display(Markdown("### Single-cell QC UMAPs"))
-    single_cell.obs["log_UMIs_per_cell"] = np.log1p(single_cell.obs["UMIs_per_cell"])
-    for color, kwargs in [
-        ("log_UMIs_per_cell", {}),
-        ("percent_mito", {"vmin": 0, "vmax": 15}),
-    ]:
-        sc.pl.umap(
-            single_cell,
-            color=color,
-            size=max(2, 120000 / single_cell.n_obs),
-            show=False,
-            **kwargs,
-        )
-        figure = plt.gcf()
-        figure.set_size_inches(10, 7)
-        figure.tight_layout()
-        plt.show()
+    display(Markdown(
+        "_The core merge intentionally stores raw counts, metadata, and QC only. "
+        "Run `make run-integration-benchmark` for global UMAP and diagnostic "
+        "CellTypist comparisons._"
+    ))

@@ -27,13 +27,24 @@
     "single_cell": {
       "enabled": false,
       "gene_join": "inner",
-      "annotation_level": "l2",
-      "integration": {
+      "annotation_level": "l2"
+    }
+  },
+  "integration_benchmark": {
+    "annotation_level": "l2",
+    "methods": [
+      {
+        "name": "harmony",
         "method": "harmony",
         "batch_key": "study",
         "adjusted_basis": "X_pca_harmony"
+      },
+      {
+        "name": "unintegrated_pca",
+        "method": "none",
+        "basis": "X_pca"
       }
-    }
+    ]
   },
   "cell_type_analysis": {
     "analysis_version": 4,

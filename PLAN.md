@@ -83,8 +83,14 @@ whole-dataset single-cell merge.
 - [x] Add legacy-compatible per-study sample × AIFI-L2 pseudobulks,
   outer-joined pseudobulk merge with gene-availability flags, a combined merge
   report, and a gene-presence UpSet plot.
-- [x] Add an opt-in whole-dataset single-cell merge with a
-  shared-gene embedding and experimental merged AIFI-L2 diagnostics.
+- [x] Add an opt-in raw-count whole-dataset single-cell merge, with global
+  Harmony and AIFI-L2 diagnostics in a separate benchmark task.
+- [x] Move global UMAPs and benchmark AIFI-L2 concordance matrices from the
+  merge QC notebook into the integration-benchmark report.
+- [x] Include the integration benchmark and report artifact check in the
+  ordered test workflow after the fresh core merge.
+- [ ] Extend the integration benchmark beyond Harmony and unintegrated PCA once
+  comparison methods and quantitative acceptance criteria are specified.
 - [ ] Add one shared cross-study design report, rather than duplicating
   donor-level covariate/confounding plots in every AIFI-L2 report. It should
   cover age, sex, BMI, and CMV support and correlation across studies, plus
@@ -128,44 +134,21 @@ whole-dataset single-cell merge.
 
 ## Current implementation state
 
-- The scientific dependencies are installed in the ignored `.venv`.
-- The last recorded complete test-data workflow passed for all configured
-  studies. The later metadata and merge-report changes have not been rerun
-  through that workflow.
-- The last recorded local checks passed Ruff, 53 Python tests, and
-  `nextflow lint` for the core, cell-type, and differential-expression
-  workflows (Nextflow 26.04.6; minimum declared version is 25.04).
-- Revision-tagged Python and R images build successfully.
-- Harmony integration uses the pinned `harmonypy==2.0.2` C++ backend through a
-  direct adapter that validates the cells-by-PC output orientation and records
-  the implementation version in embedding provenance. Legacy OpenMP/OpenBLAS
-  overrides were removed after the backend upgrade.
-- Cell-type reports now use signed marker contrasts, direct UMAP cluster labels,
-  a compact study-coverage representation, PC1/2 and PC3/4 score plots coloured
-  by study and shaped by technology, a companion intronic-read/3′--5′ PCA row,
-  up to ten PCA loading panels, and a cumulative variance-explained plot.
-  Sample-fraction views include within-study linear trends with and without
-  samples under age 20, a combined study-adjusted linear fit with equal study
-  weights and HC3 confidence intervals, plus adult-only adjusted fraction-model
-  forest plots and published residual/sampling diagnostics.
-  Local PCA age correlations are limited to the first ten PCs. A focused
-  CD14-monocyte run completed both the separate analysis and report-rendering
-  tasks.
-- A fresh `docker,test` Wang25 Nextflow run published its H5AD, JSON run report,
-  executed QC notebook, and HTML report under an ignored temporary output
-  directory.
-- The AIFI Docker test run exercised harmonization and QC; timestamped
-  application progress logs are captured in each Nextflow task's `.command.err`.
-- Test fixtures live under ignored `test_data/`; conversion intermediates live
-  in Nextflow's ignored `work/` directory. `tests/` contains test code only.
-- The last recorded fresh all-study `make verify` passed, including all eight
-  configured test studies, the generated DE fixture, planted age-marker
-  checks, and 21 cell-type report artifact checks. It predates the latest
-  metadata and merge-report changes.
-- The full production pipeline has since completed successfully on production
-  datasets, including real Wang25 RDS conversion.
-- A fresh clone completed input acquisition and `make run-all` successfully.
-  This was confirmed by the user.
+- The ignored `.venv` supplies local checks; revision-tagged Python and R
+  images supply workflows.
+- The ordered test workflow runs a fresh real-fixture core merge, integration
+  benchmark and report check, synthetic positive DE fit, and cell-type reports.
+  Fixtures live under ignored `test_data/`; Nextflow intermediates live in
+  ignored `work/`.
+- The core single-cell merge preserves only raw counts, canonical metadata, and
+  harmonization-stage QC fields. Global normalization, Harmony, graphs, UMAP,
+  and benchmark labels are computed only by the optional integration workflow.
+- Harmony uses the pinned `harmonypy==2.0.2` backend and records embedding
+  provenance. Cell-type reports and DE results are separate workflow outputs;
+  their detailed contracts are in `IMPLEMENTATION.md` and `README.md`.
+- Production, including Wang25 RDS conversion, and fresh-clone input acquisition
+  plus `make run-all` completed successfully. Both predate the final metadata
+  corrections and require the planned production rerun.
 
 ## Expected commands
 
@@ -313,9 +296,10 @@ primary age-DE analysis, not a replacement for it.
 1. **Memory remains deployment-specific.** The full production run succeeded,
    but this repository does not yet retain a task-level RAM/CPU profile for it.
    Harmonization and QC load a full study object; single-cell merge streams the
-   concat to disk, then loads the merged matrix into RAM for normalization and
-   integration. Record production peak usage before changing resource requests
-   or sizing a different runner.
+   concat to disk, then loads the joined raw matrix to write its artifact. The
+   optional integration benchmark owns full-matrix normalization and integration.
+   Record production peak usage before changing resource requests or sizing a
+   different runner.
 2. **Keep study transformation code explicit.** `studies.json` now selects a
    preparation adapter and declares only its auxiliary inputs. Each adapter
    materializes exactly one canonical metadata row per retained expression cell
@@ -340,9 +324,9 @@ primary age-DE analysis, not a replacement for it.
    record package artifact hashes in addition to version pins.
 6. **Complete run provenance.** `run_manifest.json` records the Git revision,
    image references, configuration checksum, selected studies, and hashes of
-   artifacts and reports. Add the input and CellTypist model checksums, random
-   seeds, and production image digests so the successful run can be reproduced
-   and audited.
+   source inputs, metadata dependencies, annotation models, artifacts, and
+   reports. Add random seeds and production image digests so the successful run
+   can be reproduced and audited.
 7. **Atomic writes are low priority inside Nextflow.** Failed processes remain in
    isolated work directories and outputs are published only after success. A
    temporary-write/validate/rename helper remains useful for large H5AD files
@@ -356,6 +340,10 @@ primary age-DE analysis, not a replacement for it.
    phase timings. Add in-process memory sampling only if task-level metrics do
    not explain its peaks. Keep these measurements observational rather than
    making noisy resource estimates CI pass/fail criteria.
+10. **Keep report computation separate from presentation.** Cell-type and
+    integration reports already use workflow artifacts and tested helpers where
+    practical. Extract further reusable data preparation and diagnostics when a
+    second report needs them; leave Jupytext sources as reader-facing layouts.
 
 ## Recommended next sequence
 

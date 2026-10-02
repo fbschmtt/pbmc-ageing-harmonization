@@ -41,9 +41,9 @@ def test_gene_presence_indicators_uses_merge_provenance_columns():
 def test_aifi_l2_concordance_normalizes_per_study_label():
     obs = pd.DataFrame({
         "aifi_l2_majority": ["T", "T", "B"],
-        "experimental_aifi_l2_majority": ["T", "B", "B"],
+        "benchmark_harmony_aifi_l2_majority": ["T", "B", "B"],
     })
-    matrix = aifi_l2_concordance(obs)
+    matrix = aifi_l2_concordance(obs, "benchmark_harmony_aifi_l2_majority")
     assert matrix.loc["T", "T"] == 0.5
     assert matrix.loc["B", "B"] == 1.0
 

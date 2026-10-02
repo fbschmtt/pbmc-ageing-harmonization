@@ -16,7 +16,7 @@ PIPELINE = {
 }
 
 
-def test_split_cell_types_writes_raw_count_partitions_with_global_umap(tmp_path):
+def test_split_cell_types_writes_raw_count_partitions_without_global_embedding(tmp_path):
     source = ad.AnnData(
         X=sparse.csr_matrix([[1, 0], [2, 3], [4, 5]]),
         obs=pd.DataFrame(
@@ -40,7 +40,7 @@ def test_split_cell_types_writes_raw_count_partitions_with_global_umap(tmp_path)
     ]
     split = ad.read_h5ad(tmp_path / "cells" / "memory-b-cell.h5ad")
     assert split.obs_names.tolist() == ["a", "b"]
-    assert set(split.obsm) == {"X_umap"}
+    assert not split.obsm
     assert split.X.toarray().tolist() == [[1, 0], [2, 3]]
     assert split.obs["n_cells_in_sample"].tolist() == [2, 2]
     assert split.obs["n_cells_in_sample_l1_parent"].tolist() == [2, 2]

@@ -22,6 +22,7 @@ workflow {
 
     def direct_inputs = []
     def conversion_inputs = []
+    def provenance_inputs = []
     def selected = []
     def skipped = []
     def dependencies = [
@@ -53,9 +54,15 @@ workflow {
             } else {
                 direct_inputs << tuple(study_id, file(root.resolve(input), checkIfExists: true))
             }
+            provenance_inputs << root.resolve(source as String)
+            provenance_inputs.addAll(study_dependencies.collect { path -> root.resolve(path as String) })
             dependencies.addAll(study_dependencies.collect { path -> root.resolve(path as String) })
             if (study.annotation.method == 'celltypist') {
-                study.annotation.levels.each { level -> dependencies << root.resolve(pipeline.models["aifi_${level}"] as String) }
+                study.annotation.levels.each { level ->
+                    def model = root.resolve(pipeline.models["aifi_${level}"] as String)
+                    dependencies << model
+                    provenance_inputs << model
+                }
             }
         }
     }
@@ -68,6 +75,12 @@ workflow {
     }
 
     def dependency_ch = channel.value(dependencies.unique().collect { dependency -> file(dependency, checkIfExists: true) })
+    def provenance_inputs_ch = channel.value(
+        provenance_inputs.unique().collect { input -> file(input, checkIfExists: true) }
+    )
+    def provenance_input_labels = provenance_inputs.unique().collect { input ->
+        root.relativize(input).toString()
+    }.join('\t')
     def merge_config_ch = channel.value(file(root.resolve('config/pipeline.json'), checkIfExists: true))
     def expression_ch = channel.fromList(direct_inputs).mix(CONVERT_RDS(channel.fromList(conversion_inputs)))
 
@@ -78,14 +91,15 @@ workflow {
 
     def merged_outputs = MERGE_PSEUDOBULKS.out.merged
     if (params.merge_single_cell || pipeline.merge.single_cell.enabled) {
-        def aifi_l2_model_ch = channel.value(file(root.resolve(pipeline.models.aifi_l2 as String), checkIfExists: true))
-        MERGE_SINGLE_CELLS(HARMONIZE.out.harmonized.map { _study_id, expression, _report -> expression }.collect(), merge_config_ch, aifi_l2_model_ch)
+        MERGE_SINGLE_CELLS(HARMONIZE.out.harmonized.map { _study_id, expression, _report -> expression }.collect(), merge_config_ch)
         merged_outputs = merged_outputs.mix(MERGE_SINGLE_CELLS.out.merged)
     }
     WRITE_RUN_MANIFEST(
         merged_outputs.map { _name, expression, _report -> expression }.collect(),
         merged_outputs.map { _name, _expression, report -> report }.collect(),
         merge_config_ch,
+        provenance_inputs_ch,
+        provenance_input_labels,
         requested.join(','),
         selected.join(','),
         skipped.join(','),

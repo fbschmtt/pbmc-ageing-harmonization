@@ -43,9 +43,11 @@ def check_results(outdir: Path) -> None:
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("status") != "complete":
         raise SystemExit(f"Expected complete synthetic DE run; got {manifest.get('status')!r}")
-    if manifest.get("models_completed") != 18 or manifest.get("models_failed") != 0:
+    expected_per_cell_type = 3 + 1 + len(covariate_studies)
+    expected_completed = expected_per_cell_type * len(cell_types)
+    if manifest.get("models_completed") != expected_completed or manifest.get("models_failed") != 0:
         raise SystemExit(
-            "Expected eighteen completed fits and zero failed fits; got "
+            f"Expected {expected_completed} completed fits and zero failed fits; got "
             f"{manifest.get('models_completed')} completed, {manifest.get('models_failed')} failed"
         )
     if not manifest.get("synthetic_test_data") or manifest.get("test_mode"):
@@ -62,9 +64,11 @@ def check_results(outdir: Path) -> None:
             raise SystemExit(f"Missing DE manifest record for {cell_type!r}")
         models = record.get("models", [])
         completed = [model for model in models if model.get("status") == "complete"]
-        if len(completed) != 9 or any(model.get("status") == "failed" for model in models):
+        if len(completed) != expected_per_cell_type or any(
+            model.get("status") == "failed" for model in models
+        ):
             raise SystemExit(
-                f"Expected nine completed and zero failed models for {cell_type!r}; "
+                f"Expected {expected_per_cell_type} completed and zero failed models for {cell_type!r}; "
                 f"got {len(completed)} complete, "
                 f"{sum(model.get('status') == 'failed' for model in models)} failed"
             )
@@ -136,6 +140,27 @@ def check_results(outdir: Path) -> None:
                     f"Per-study {covariate} fits for {cell_type!r} used "
                     f"{completed_studies}, expected {studies}"
                 )
+        per_study_models = [model for model in models if model.get("model") == "per_study"]
+        expected_optional_by_study = {
+            study: sorted(
+                covariate for covariate, studies in covariate_studies.items() if study in studies
+            )
+            for study in sorted({
+                study for studies in covariate_studies.values() for study in studies
+            } | {"synthetic_study_b"})
+        }
+        for study, optional_covariates in expected_optional_by_study.items():
+            matching = [model for model in per_study_models if model.get("study") == study]
+            if len(matching) != 1 or matching[0].get("status") != "complete":
+                raise SystemExit(
+                    f"Expected one completed maximal per-study model for {study!r}, got {matching}"
+                )
+            expected_covariates = ["age", "sex", *optional_covariates]
+            if matching[0].get("covariates") != expected_covariates:
+                raise SystemExit(
+                    f"Per-study model for {study!r} used {matching[0].get('covariates')}, "
+                    f"expected {expected_covariates}"
+                )
     print(
         "Synthetic DE check passed: age, sex, BMI, and CMV markers were detected; "
         "covariate study selection, complete-case counts, and single-study CMV fit matched."
@@ -150,7 +175,9 @@ def check_reports(outdir: Path) -> None:
         if not report_path.is_file():
             raise SystemExit(f"Missing standard cell-type report: {report_path}")
         html = report_path.read_text(errors="replace").lower()
-        required = ["synthetic test data", "differential expression"]
+        required = [
+            "synthetic test data", "differential expression", "shared age-model diagnostics",
+        ]
         missing = [item for item in required if item.lower() not in html]
         section_heading = re.search(
             r'<h2\b[^>]*id="pseudobulk-differential-expression"[^>]*>', html
@@ -165,7 +192,7 @@ def check_reports(outdir: Path) -> None:
             # The age recurrence panel and one volcano per covariate are rendered
             # as images. Gene labels inside those plots are rasterized, so their
             # names are checked against the DE result CSVs in check_results().
-            expected_plots = 1 + len(expected_genes)
+            expected_plots = 2 + len(expected_genes)
             if de_section.count("<img") < expected_plots:
                 missing.append(
                     f"{expected_plots} DE plot images; found {de_section.count('<img')}"

@@ -36,6 +36,8 @@ pbmc-cell-type = "pbmc_pipeline.cell_type:main"
 pbmc-cell-type-report = "pbmc_pipeline.cell_type_report:main"
 pbmc-cell-type-manifest = "pbmc_pipeline.cell_type_manifest:main"
 pbmc-differential-expression = "pbmc_pipeline.differential_expression:main"
+pbmc-integration-benchmark = "pbmc_pipeline.integration_benchmark:main"
+pbmc-integration-benchmark-report = "pbmc_pipeline.integration_benchmark_qc:main"
 pbmc-manifest = "pbmc_pipeline.manifest:main"
 
 [tool.setuptools.packages.find]

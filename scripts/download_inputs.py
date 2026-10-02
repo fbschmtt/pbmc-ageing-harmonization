@@ -20,6 +20,13 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+_MAX_DOWNLOAD_ATTEMPTS = 3
+_RETRY_DELAYS_SECONDS = (2, 5)
+
+
+class _RetryableDownloadError(OSError):
+    """A transient transfer failure for which a byte-range retry is useful."""
+
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -29,74 +36,217 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _partial_metadata_path(partial: Path) -> Path:
+    return partial.with_name(partial.name + ".json")
+
+
+def _load_partial_metadata(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _discard_partial(partial: Path) -> None:
+    partial.unlink(missing_ok=True)
+    _partial_metadata_path(partial).unlink(missing_ok=True)
+
+
+def _partial_matches_request(
+    metadata: dict | None, *, url: str, expected_size: int | None,
+    expected_sha256: str | None,
+) -> bool:
+    return metadata == {
+        "url": url,
+        "expected_size_bytes": expected_size,
+        "expected_sha256": expected_sha256,
+    } or (
+        isinstance(metadata, dict)
+        and metadata.get("url") == url
+        and metadata.get("expected_size_bytes") == expected_size
+        and metadata.get("expected_sha256") == expected_sha256
+    )
+
+
+def _write_partial_metadata(
+    path: Path, *, url: str, expected_size: int | None, expected_sha256: str | None,
+    response,
+) -> None:
+    path.write_text(json.dumps({
+        "url": url,
+        "expected_size_bytes": expected_size,
+        "expected_sha256": expected_sha256,
+        "etag": response.headers.get("ETag"),
+        "last_modified": response.headers.get("Last-Modified"),
+    }, indent=2) + "\n")
+
+
+def _response_matches_partial(metadata: dict, response) -> bool:
+    for key, header in (("etag", "ETag"), ("last_modified", "Last-Modified")):
+        previous, current = metadata.get(key), response.headers.get(header)
+        if previous is not None and current is not None and previous != current:
+            return False
+    return True
+
+
+def _retryable_error(error: Exception) -> bool:
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code in {408, 429} or error.code >= 500
+    return isinstance(error, (http.client.HTTPException, OSError, urllib.error.URLError))
+
+
+def _report_progress(
+    *, copied: int, reported: int, resume_from: int, total: int | None, started: float,
+    terminal: bool, step: int, force: bool,
+) -> int:
+    if not force and copied - reported < step:
+        return reported
+    rate = format_size(int((copied - resume_from) / max(time.monotonic() - started, 0.001))) + "/s"
+    if total:
+        percent = min(copied * 100 // total, 100)
+        message = f"      {percent:3d}%  {format_size(copied)} / {format_size(total)}  {rate}"
+    else:
+        message = f"      {format_size(copied)} downloaded  {rate}"
+    print(message, end="\r" if terminal else "\n", file=sys.stderr, flush=True)
+    return copied
+
+
 def download(
     url: str,
     destination: Path,
     expected_size: int | None = None,
     expected_sha256: str | None = None,
-) -> None:
+) -> dict:
     partial = destination.with_name(destination.name + ".part")
+    partial_metadata_path = _partial_metadata_path(partial)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    request = urllib.request.Request(url, headers={"User-Agent": "pbmc-ageing-pipeline/0.1"})
-    try:
-        with urllib.request.urlopen(request) as response:
-            content_length_header = response.headers.get("Content-Length")
-            content_length = (
-                int(content_length_header)
-                if content_length_header and content_length_header.isdigit()
-                else None
+    metadata = _load_partial_metadata(partial_metadata_path)
+    if partial.exists() and not _partial_matches_request(
+        metadata, url=url, expected_size=expected_size, expected_sha256=expected_sha256,
+    ):
+        print("      Discarding partial download with incompatible or missing metadata.", file=sys.stderr)
+        _discard_partial(partial)
+        metadata = None
+
+    for attempt in range(1, _MAX_DOWNLOAD_ATTEMPTS + 1):
+        resume_from = partial.stat().st_size if partial.exists() else 0
+        if expected_size is not None and resume_from > expected_size:
+            _discard_partial(partial)
+            metadata = None
+            resume_from = 0
+        if expected_size is not None and resume_from == expected_size:
+            if expected_sha256 is not None and sha256(partial) != expected_sha256:
+                _discard_partial(partial)
+                metadata = None
+                continue
+            partial.replace(destination)
+            partial_metadata_path.unlink(missing_ok=True)
+            return {"attempts": attempt - 1, "resumed_from_bytes": resume_from}
+        headers = {"User-Agent": "pbmc-ageing-pipeline/0.1"}
+        if resume_from:
+            headers["Range"] = f"bytes={resume_from}-"
+            print(
+                f"      Resuming at {format_size(resume_from)} (attempt {attempt}/{_MAX_DOWNLOAD_ATTEMPTS}).",
+                file=sys.stderr,
             )
-            if (
-                expected_size is not None
-                and content_length is not None
-                and content_length != expected_size
-            ):
-                raise ValueError(
-                    f"server Content-Length {content_length} differs from expected size {expected_size}"
+        request = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(request) as response:
+                status = response.getcode()
+                content_range = response.headers.get("Content-Range", "")
+                if resume_from and (
+                    status != 206 or not content_range.startswith(f"bytes {resume_from}-")
+                ):
+                    print(
+                        "      Server did not accept a compatible byte-range request; restarting download.",
+                        file=sys.stderr,
+                    )
+                    _discard_partial(partial)
+                    return download(url, destination, expected_size, expected_sha256)
+                if resume_from and metadata is not None and not _response_matches_partial(metadata, response):
+                    print(
+                        "      Source validators changed since the partial download; restarting download.",
+                        file=sys.stderr,
+                    )
+                    _discard_partial(partial)
+                    return download(url, destination, expected_size, expected_sha256)
+                content_length_header = response.headers.get("Content-Length")
+                content_length = (
+                    int(content_length_header)
+                    if content_length_header and content_length_header.isdigit()
+                    else None
                 )
-            total = content_length if content_length is not None else expected_size
-            copied = 0
-            reported = 0
-            started = time.monotonic()
-            terminal = sys.stderr.isatty()
-            step = max((total or 0) // 20, 10 * 1024 * 1024) if total else 100 * 1024 * 1024
-
-            def report(force: bool = False) -> None:
-                nonlocal reported
-                if not force and copied - reported < step:
-                    return
+                total = resume_from + content_length if content_length is not None else expected_size
+                if expected_size is not None and total is not None and total != expected_size:
+                    raise ValueError(
+                        f"server advertised {total} bytes; expected size is {expected_size}"
+                    )
+                _write_partial_metadata(
+                    partial_metadata_path,
+                    url=url,
+                    expected_size=expected_size,
+                    expected_sha256=expected_sha256,
+                    response=response,
+                )
+                copied = resume_from
                 reported = copied
-                rate = format_size(int(copied / max(time.monotonic() - started, 0.001))) + "/s"
-                if total:
-                    percent = min(copied * 100 // total, 100)
-                    message = f"      {percent:3d}%  {format_size(copied)} / {format_size(total)}  {rate}"
-                else:
-                    message = f"      {format_size(copied)} downloaded  {rate}"
-                print(message, end="\r" if terminal else "\n", file=sys.stderr, flush=True)
+                started = time.monotonic()
+                terminal = sys.stderr.isatty()
+                step = max((total or 0) // 20, 10 * 1024 * 1024) if total else 100 * 1024 * 1024
 
-            with partial.open("wb") as handle:
-                while block := response.read(1024 * 1024):
-                    handle.write(block)
-                    copied += len(block)
-                    report()
-            report(force=True)
-            if terminal:
-                print(file=sys.stderr, flush=True)
-
-        if content_length is not None and copied != content_length:
-            raise ValueError(f"download ended at {copied} bytes; server advertised {content_length}")
-        if expected_size is not None and copied != expected_size:
-            raise ValueError(f"download ended at {copied} bytes; expected {expected_size}")
-        if expected_sha256 is not None:
-            observed_sha256 = sha256(partial)
-            if observed_sha256 != expected_sha256:
-                raise ValueError(
-                    f"download checksum {observed_sha256} differs from expected {expected_sha256}"
+                with partial.open("ab" if resume_from else "wb") as handle:
+                    while block := response.read(1024 * 1024):
+                        handle.write(block)
+                        copied += len(block)
+                        reported = _report_progress(
+                            copied=copied, reported=reported, resume_from=resume_from,
+                            total=total, started=started, terminal=terminal, step=step, force=False,
+                        )
+                _report_progress(
+                    copied=copied, reported=reported, resume_from=resume_from,
+                    total=total, started=started, terminal=terminal, step=step, force=True,
                 )
-        partial.replace(destination)
-    except BaseException:
-        partial.unlink(missing_ok=True)
-        raise
+                if terminal:
+                    print(file=sys.stderr, flush=True)
+            if content_length is not None and copied != total:
+                raise _RetryableDownloadError(
+                    f"download ended at {copied} bytes; server advertised {total}"
+                )
+            if expected_size is not None and copied != expected_size:
+                raise _RetryableDownloadError(
+                    f"download ended at {copied} bytes; expected {expected_size}"
+                )
+            if expected_sha256 is not None:
+                observed_sha256 = sha256(partial)
+                if observed_sha256 != expected_sha256:
+                    _discard_partial(partial)
+                    raise ValueError(
+                        f"download checksum {observed_sha256} differs from expected {expected_sha256}"
+                    )
+            partial.replace(destination)
+            partial_metadata_path.unlink(missing_ok=True)
+            return {"attempts": attempt, "resumed_from_bytes": resume_from}
+        except Exception as error:  # Keep only transient transport failures retryable.
+            if not _retryable_error(error):
+                raise
+            preserved = partial.stat().st_size if partial.exists() else 0
+            metadata = _load_partial_metadata(partial_metadata_path)
+            if attempt == _MAX_DOWNLOAD_ATTEMPTS:
+                print(
+                    f"      Download failed after {attempt} attempts; preserving {format_size(preserved)} "
+                    "for a future resume.",
+                    file=sys.stderr,
+                )
+                raise
+            delay = _RETRY_DELAYS_SECONDS[attempt - 1]
+            print(
+                f"      Attempt {attempt}/{_MAX_DOWNLOAD_ATTEMPTS} failed after "
+                f"{format_size(preserved)}: {error}. Retrying in {delay}s; the next attempt "
+                "will resume if the server supports HTTP Range.",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 def extract(archive: Path, member: str, destination: Path) -> None:
@@ -202,17 +352,17 @@ def main() -> None:
             try:
                 if item.get("archive_member"):
                     archive = destination.with_name(destination.name + ".download")
-                    download(
+                    transfer = download(
                         item["url"], archive, item.get("expected_size_bytes"), item.get("sha256")
                     )
                     extract(archive, item["archive_member"], destination)
                     archive.unlink()
                 else:
-                    download(
+                    transfer = download(
                         item["url"], destination, item.get("expected_size_bytes"),
                         item.get("sha256"),
                     )
-                record["status"] = "downloaded"
+                record.update({"status": "downloaded", "transfer": transfer})
             except (
                 OSError, ValueError, http.client.HTTPException, tarfile.TarError,
                 urllib.error.URLError, zipfile.BadZipFile,

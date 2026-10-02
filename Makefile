@@ -19,6 +19,7 @@ TEST_DATA_OVERWRITE ?= false
 VALIDATE_OUTDIR ?= output/validation
 MERGE_SINGLE_CELL ?= false
 MERGED_INPUT ?= $(OUTDIR)/merged/single_cell_merged.h5ad
+INTEGRATION_BENCHMARK_INPUT ?= $(MERGED_INPUT)
 CELL_TYPE ?= cd14-monocyte
 CELL_TYPE_INPUT ?= $(OUTDIR)/cell_type_splits/$(CELL_TYPE).h5ad
 CELL_TYPE_ANALYSIS_INPUT ?= $(OUTDIR)/cell_type_analysis/$(CELL_TYPE)
@@ -48,11 +49,12 @@ MERGE_ARGS = $(if $(filter true 1 yes,$(MERGE_SINGLE_CELL)),--merge_single_cell,
 	run-cell-type-analysis run-cell-type-analysis-test \
 	run-cell-type run-cell-type-test render-cell-type render-cell-type-test \
 	render-cell-type-reports render-cell-type-reports-test \
+	run-integration-benchmark run-integration-benchmark-test check-integration-benchmark-prerequisites check-integration-benchmark-test \
 	run-de run-de-test run-de-synthetic-test \
 	check-synthetic-de-results check-synthetic-de-reports check-de-prerequisites \
 	check-cell-type-prerequisites check-cell-type-analysis-test-prerequisites check-cell-type-test-prerequisites \
 	check-cell-type-render-prerequisites check-cell-type-test-render-prerequisites \
-	check-cell-type-reports-prerequisites clean-work
+	check-cell-type-reports-prerequisites clean-core-output clean-analysis-output clean-work
 
 help: ## Show available development commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target> [STUDIES=<comma-separated-list>]\n\n"} /^[a-zA-Z_-]+:.*## / {printf "  %-31s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -74,6 +76,7 @@ workflow-lint: ## Lint the Nextflow workflow (requires Nextflow >=25.04)
 	$(NXF) lint main.nf
 	$(NXF) lint cell_type_analysis.nf
 	$(NXF) lint differential_expression.nf
+	$(NXF) lint integration_benchmark.nf
 
 docs-check: ## Validate repository Markdown links and documented Make targets
 	python3 scripts/check_docs.py
@@ -83,9 +86,11 @@ test-unit: $(VENV_DEPS) ## Run deterministic unit and output-contract tests
 
 verify: lint test-unit workflow-lint docs-check run-all-test ## Run all checks and fresh Docker workflows for all studies
 
-# Keep DE and reports ordered even under `make -j`: the report renderer consumes
-# the synthetic DE manifest produced immediately above.
-run-all-test: run-test ## Run the ordered core, positive-DE, and cell-type Docker test workflows
+# Keep benchmark, DE, and reports ordered even under `make -j`: each stage
+# consumes the fresh core output or synthetic-DE manifest from the prior stage.
+run-all-test: run-test ## Run the ordered core, benchmark, positive-DE, and cell-type Docker test workflows
+	$(MAKE) run-integration-benchmark-test
+	$(MAKE) check-integration-benchmark-test
 	$(MAKE) run-de-synthetic-test
 	$(MAKE) check-synthetic-de-results
 	$(MAKE) run-cell-type-analysis-test
@@ -160,6 +165,24 @@ run-de-test: OUTDIR = output/test
 run-de-test: PSEUDOBULK_INPUT = output/test/merged/pseudobulk_merged.h5ad
 run-de-test: check-de-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Run DE from an existing test pseudobulk merge
 	$(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --pseudobulk_input "$(PSEUDOBULK_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
+
+check-integration-benchmark-prerequisites:
+	@if test ! -f "$(INTEGRATION_BENCHMARK_INPUT)"; then \
+		echo "Missing merged single-cell input: $(INTEGRATION_BENCHMARK_INPUT). Run the core workflow first." >&2; exit 2; \
+	else \
+		echo "Ready: $(INTEGRATION_BENCHMARK_INPUT)"; \
+	fi
+
+run-integration-benchmark: check-integration-benchmark-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Run optional global Harmony and unintegrated-PCA label/UMAP diagnostics
+	$(NXF) run integration_benchmark.nf -profile $(NF_PROFILE),integration_benchmark -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(INTEGRATION_BENCHMARK_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume
+
+run-integration-benchmark-test: OUTDIR = output/test
+run-integration-benchmark-test: INTEGRATION_BENCHMARK_INPUT = output/test/merged/single_cell_merged.h5ad
+run-integration-benchmark-test: check-integration-benchmark-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Fresh global integration benchmark from an existing test merge
+	$(NXF) run integration_benchmark.nf -profile $(NF_PROFILE),integration_benchmark,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(INTEGRATION_BENCHMARK_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
+
+check-integration-benchmark-test: $(PYTHON_CONTAINER_PREREQS) ## Check thin integration-benchmark test artifact and method contract
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/check_integration_benchmark.py --outdir output/test
 
 run-de-synthetic-test: OUTDIR = output/test
 run-de-synthetic-test: SYNTHETIC_DE_DIR = $(OUTDIR)/synthetic_de
@@ -276,3 +299,9 @@ render-cell-type-reports-test: check-cell-type-reports-prerequisites $(PYTHON_CO
 
 clean-work: ## Delete completed Nextflow cache entries (destructive)
 	$(NXF) clean -f
+
+clean-core-output: ## Delete all published production outputs, preserving output/test and the Nextflow cache
+	rm -rf output/prepared output/harmonized output/pseudobulk output/merged output/reports output/qc output/differential_expression output/cell_type_analysis output/cell_type_splits output/run_manifest.json
+
+clean-analysis-output: ## Delete published production DE and cell-type-analysis outputs, preserving core and output/test
+	rm -rf output/differential_expression output/cell_type_analysis output/cell_type_splits
