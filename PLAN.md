@@ -253,22 +253,29 @@ fixture can exercise filtering and graceful skip behavior while retaining the
 adult and model-estimability safeguards. A separate deterministic synthetic
 pseudobulk fixture provides the positive-fit path: it generates independent
 sample rows with adequate age/sex variation and at least 15 cells per
-pseudobulk, then applies the ordinary production filters. Synthetic results
-carry a test-only warning throughout the CSVs, manifest, and reports. Do not
+pseudobulk, plants age, sex, BMI, and CMV signals, and applies the ordinary
+production filters. BMI is available in two synthetic studies and CMV in one,
+with missing values to exercise complete-case selection. Synthetic results
+carry a test-only warning throughout the CSVs, manifest, and reports. This is
+workflow-path coverage, not biological realism: sample counts are balanced,
+gene-availability differences are sparse, and effects do not vary by study.
+Do not
 upsample real test samples to imitate replication; more sampled cells in one
 sample do not increase the number of independent observations. Neither kind of
 test-mode result is biological evidence.
 
 The first pass includes samples aged at least 20 years with at least 10 cells
 in that sample × cell-type pseudobulk. It also requires complete sex metadata;
-all sample exclusions are recorded. Per-cell-type reports optionally show the
-per-study recurrence of FDR-significant genes and the merged volcano plot when
-those DE results are present. DE models currently use age and sex per study,
-and age, sex, and study in the merged model; BMI and CMV are not included in DE
-yet. The separate cell-type fraction model uses eligible age, sex, BMI, and CMV
-covariates per study. Keep nonlinear age and an age-20 sensitivity analysis as
-future decisions. R DESeq2, edgeR quasi-likelihood, and limma-voom comparisons
-are outside this first implementation.
+all sample exclusions are recorded. Per-cell-type reports show per-study,
+per-covariate significance inside/outside the shared tested-gene intersection, and combined
+volcano plots for age, sex, BMI, and CMV where metadata support the fits. BMI
+and CMV use separate complete-case models adjusted for age and sex; a single-
+study optional-covariate model omits the study term. Each model records its
+included studies and sample counts. Categorical coefficient labels show the
+reference group (female for sex; no/negative for CMV). Keep
+nonlinear age and an age-20 sensitivity analysis as future decisions. R DESeq2,
+edgeR quasi-likelihood, and limma-voom comparisons are outside this first
+implementation.
 
 ## Planned exploratory analysis: residual structure after pseudobulk DE
 
@@ -321,24 +328,29 @@ primary age-DE analysis, not a replacement for it.
    source `obs` rows only for retained cells. It is an audit artifact rather
    than part of the harmonized metadata contract. Revisit a columnar format if
    sidecars become too large for convenient inspection.
-4. **Freeze remaining dependencies for production.** The complete Python image
+4. **Revisit merged cross-study cell-type fractions.** The current combined
+   age-fraction view is descriptive, with a shared age slope, equal study
+   weights, and unclustered sample-level uncertainty. Further work should
+   assess study-specific age effects, uneven age support, and repeated subjects
+   before choosing an inferential cross-study summary.
+5. **Freeze remaining dependencies for production.** The complete Python image
    environment is now pinned in `requirements.lock`, and the lock participates
    in the content-derived image tag. The remaining reproducibility work is to
    publish immutable image digests for production releases and, where practical,
    record package artifact hashes in addition to version pins.
-5. **Complete run provenance.** `run_manifest.json` records the Git revision,
+6. **Complete run provenance.** `run_manifest.json` records the Git revision,
    image references, configuration checksum, selected studies, and hashes of
    artifacts and reports. Add the input and CellTypist model checksums, random
    seeds, and production image digests so the successful run can be reproduced
    and audited.
-6. **Atomic writes are low priority inside Nextflow.** Failed processes remain in
+7. **Atomic writes are low priority inside Nextflow.** Failed processes remain in
    isolated work directories and outputs are published only after success. A
    temporary-write/validate/rename helper remains useful for large H5AD files
    written directly via the CLI, but no larger transaction system is warranted.
-7. **Test edge cases explicitly.** Random 200-cell subsets may omit rare labels,
+8. **Test edge cases explicitly.** Random 200-cell subsets may omit rare labels,
    batches, or join cases. Keep them for end-to-end smoke tests and add small
    synthetic fixtures for metadata and conversion edge cases.
-8. **Add optional resource profiling.** Start with Nextflow's built-in execution
+9. **Add optional resource profiling.** Start with Nextflow's built-in execution
    report, task trace, and timeline on a production run; summarize per-process
    peak RSS, CPU use, and elapsed time with run metadata. The merge already logs
    phase timings. Add in-process memory sampling only if task-level metrics do

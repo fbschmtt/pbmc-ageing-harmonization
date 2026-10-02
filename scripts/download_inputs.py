@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import shutil
 import sys
@@ -28,40 +29,74 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def download(url: str, destination: Path, expected_size: int | None = None) -> None:
+def download(
+    url: str,
+    destination: Path,
+    expected_size: int | None = None,
+    expected_sha256: str | None = None,
+) -> None:
     partial = destination.with_name(destination.name + ".part")
     destination.parent.mkdir(parents=True, exist_ok=True)
     request = urllib.request.Request(url, headers={"User-Agent": "pbmc-ageing-pipeline/0.1"})
-    with urllib.request.urlopen(request) as response, partial.open("wb") as handle:
-        content_length = response.headers.get("Content-Length")
-        total = int(content_length) if content_length and content_length.isdigit() else expected_size
-        copied = 0
-        reported = 0
-        started = time.monotonic()
-        terminal = sys.stderr.isatty()
-        step = max((total or 0) // 20, 10 * 1024 * 1024) if total else 100 * 1024 * 1024
+    try:
+        with urllib.request.urlopen(request) as response:
+            content_length_header = response.headers.get("Content-Length")
+            content_length = (
+                int(content_length_header)
+                if content_length_header and content_length_header.isdigit()
+                else None
+            )
+            if (
+                expected_size is not None
+                and content_length is not None
+                and content_length != expected_size
+            ):
+                raise ValueError(
+                    f"server Content-Length {content_length} differs from expected size {expected_size}"
+                )
+            total = content_length if content_length is not None else expected_size
+            copied = 0
+            reported = 0
+            started = time.monotonic()
+            terminal = sys.stderr.isatty()
+            step = max((total or 0) // 20, 10 * 1024 * 1024) if total else 100 * 1024 * 1024
 
-        def report(force: bool = False) -> None:
-            nonlocal reported
-            if not force and copied - reported < step:
-                return
-            reported = copied
-            rate = format_size(int(copied / max(time.monotonic() - started, 0.001))) + "/s"
-            if total:
-                percent = min(copied * 100 // total, 100)
-                message = f"      {percent:3d}%  {format_size(copied)} / {format_size(total)}  {rate}"
-            else:
-                message = f"      {format_size(copied)} downloaded  {rate}"
-            print(message, end="\r" if terminal else "\n", file=sys.stderr, flush=True)
+            def report(force: bool = False) -> None:
+                nonlocal reported
+                if not force and copied - reported < step:
+                    return
+                reported = copied
+                rate = format_size(int(copied / max(time.monotonic() - started, 0.001))) + "/s"
+                if total:
+                    percent = min(copied * 100 // total, 100)
+                    message = f"      {percent:3d}%  {format_size(copied)} / {format_size(total)}  {rate}"
+                else:
+                    message = f"      {format_size(copied)} downloaded  {rate}"
+                print(message, end="\r" if terminal else "\n", file=sys.stderr, flush=True)
 
-        while block := response.read(1024 * 1024):
-            handle.write(block)
-            copied += len(block)
-            report()
-        report(force=True)
-        if terminal:
-            print(file=sys.stderr, flush=True)
-    partial.replace(destination)
+            with partial.open("wb") as handle:
+                while block := response.read(1024 * 1024):
+                    handle.write(block)
+                    copied += len(block)
+                    report()
+            report(force=True)
+            if terminal:
+                print(file=sys.stderr, flush=True)
+
+        if content_length is not None and copied != content_length:
+            raise ValueError(f"download ended at {copied} bytes; server advertised {content_length}")
+        if expected_size is not None and copied != expected_size:
+            raise ValueError(f"download ended at {copied} bytes; expected {expected_size}")
+        if expected_sha256 is not None:
+            observed_sha256 = sha256(partial)
+            if observed_sha256 != expected_sha256:
+                raise ValueError(
+                    f"download checksum {observed_sha256} differs from expected {expected_sha256}"
+                )
+        partial.replace(destination)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
 
 
 def extract(archive: Path, member: str, destination: Path) -> None:
@@ -153,7 +188,7 @@ def main() -> None:
         )
         destination = root / item["path"]
         record = {"id": item["id"], "path": item["path"], "timestamp_utc": datetime.now(timezone.utc).isoformat()}
-        if destination.exists() and not args.force:
+        if destination.exists() and (not args.force or "url" not in item):
             observed_size = destination.stat().st_size
             record["observed_size_bytes"] = observed_size
             if item.get("expected_size_bytes") not in (None, observed_size):
@@ -167,13 +202,21 @@ def main() -> None:
             try:
                 if item.get("archive_member"):
                     archive = destination.with_name(destination.name + ".download")
-                    download(item["url"], archive, item.get("expected_size_bytes"))
+                    download(
+                        item["url"], archive, item.get("expected_size_bytes"), item.get("sha256")
+                    )
                     extract(archive, item["archive_member"], destination)
                     archive.unlink()
                 else:
-                    download(item["url"], destination, item.get("expected_size_bytes"))
+                    download(
+                        item["url"], destination, item.get("expected_size_bytes"),
+                        item.get("sha256"),
+                    )
                 record["status"] = "downloaded"
-            except (OSError, ValueError, tarfile.TarError, urllib.error.URLError, zipfile.BadZipFile) as error:
+            except (
+                OSError, ValueError, http.client.HTTPException, tarfile.TarError,
+                urllib.error.URLError, zipfile.BadZipFile,
+            ) as error:
                 record.update({"status": "failed", "error": str(error), "source_page": item.get("source_page")})
         if destination.exists():
             record["observed_size_bytes"] = destination.stat().st_size
@@ -207,8 +250,10 @@ def main() -> None:
     report_path = root / "input_data/download_manifest.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps({"records": records}, indent=2) + "\n")
-    incomplete = {"manual", "failed", "checksum_mismatch", "size_mismatch"}
-    if args.require_all and any(record["status"] in incomplete for record in records):
+    invalid_downloads = {"failed", "checksum_mismatch", "size_mismatch"}
+    if any(record["status"] in invalid_downloads for record in records):
+        raise SystemExit(1)
+    if args.require_all and any(record["status"] == "manual" for record in records):
         raise SystemExit(1)
 
 

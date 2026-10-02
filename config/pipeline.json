@@ -92,6 +92,7 @@
     "per_study_design": "~ age + sex",
     "merged_design": "~ study + age + sex",
     "age_term": "age",
+    "optional_covariates": ["bmi", "cmv"],
     "alpha": 0.05,
     "sample_inclusion": {
       "minimum_age_years_inclusive": 20,

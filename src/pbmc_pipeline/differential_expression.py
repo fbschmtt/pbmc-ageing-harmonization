@@ -1,4 +1,4 @@
-"""Run sample-level age-associated differential expression on pseudobulk counts."""
+"""Run sample-level covariate differential expression on pseudobulk counts."""
 from __future__ import annotations
 
 import argparse
@@ -14,9 +14,10 @@ import pandas as pd
 from scipy import sparse
 
 from .config import config_digest, read_json
+from .covariates import categorical_levels, normalize_cmv_status
 
 LOGGER = logging.getLogger(__name__)
-_UNKNOWN = {"", "not_provided", "heterogeneous during bulk", "nan", "none"}
+_UNKNOWN = {"", "not_provided", "heterogeneous during bulk", "nan", "none", "unknown"}
 _TEST_MODE_WARNING = (
     "TEST MODE: the configured minimum cells per pseudobulk was bypassed so the "
     "small fixture can exercise model fitting. These results are for software "
@@ -49,12 +50,17 @@ def _matrix_to_counts(matrix, *, context: str) -> np.ndarray:
 def _prepare_metadata(
     obs: pd.DataFrame, inclusion: dict, *, test_mode: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, int], list[dict]]:
-    metadata = obs[["study", "sample", "age", "sex", "n_cells"]].copy()
+    optional_covariates = [column for column in ("bmi", "cmv") if column in obs]
+    metadata = obs[["study", "sample", "age", "sex", "n_cells", *optional_covariates]].copy()
     metadata["study"] = metadata["study"].astype("string").str.strip()
     metadata["sample"] = metadata["sample"].astype("string").str.strip()
     metadata["sex"] = metadata["sex"].astype("string").str.strip().str.lower()
     metadata["age"] = pd.to_numeric(metadata["age"], errors="coerce")
     metadata["n_cells"] = pd.to_numeric(metadata["n_cells"], errors="coerce")
+    if "bmi" in metadata:
+        metadata["bmi"] = pd.to_numeric(metadata["bmi"], errors="coerce")
+    if "cmv" in metadata:
+        metadata["cmv"] = normalize_cmv_status(metadata["cmv"])
     minimum_age = inclusion["minimum_age_years_inclusive"]
     minimum_cells = inclusion["minimum_cells_per_pseudobulk_inclusive"]
     valid_study = metadata["study"].notna() & ~metadata["study"].str.lower().isin(_UNKNOWN)
@@ -105,7 +111,7 @@ def _prepare_metadata(
         ),
         "eligible_before_duplicate_check": int(valid.sum()),
     }
-    metadata = metadata.loc[valid, ["study", "sample", "age", "sex", "n_cells"]].copy()
+    metadata = metadata.loc[valid].copy()
     duplicate = metadata.duplicated(["study", "sample"], keep=False)
     if duplicate.any():
         keys = metadata.loc[duplicate, ["study", "sample"]].astype(str).to_dict("records")
@@ -122,26 +128,34 @@ def _availability_mask(var: pd.DataFrame, studies: list[str], *, context: str) -
     return availability.all(axis=1).to_numpy()
 
 
-def _fit_age_model(
+def _has_covariate_variation(metadata: pd.DataFrame, covariate: str) -> bool:
+    values = metadata[covariate]
+    if covariate in {"age", "bmi"}:
+        values = pd.to_numeric(values, errors="coerce")
+    return values.nunique() >= 2
+
+
+def _fit_covariate_model(
     counts: np.ndarray,
     genes: pd.Index,
     metadata: pd.DataFrame,
     *,
     design: str,
-    age_term: str,
+    covariates: list[str],
     alpha: float,
     cpus: int,
-) -> pd.DataFrame:
+) -> dict[str, pd.DataFrame]:
     from formulaic_contrasts import FormulaicContrasts
     from pydeseq2.dds import DeseqDataSet
     from pydeseq2.ds import DeseqStats
 
     counts_df = pd.DataFrame(counts, index=metadata.index, columns=genes)
     model_metadata = metadata.copy()
-    for column in ("study", "sex"):
-        if column in design:
+    for column in ("study", "sex", "cmv"):
+        if column in design and column in model_metadata:
             model_metadata[column] = pd.Categorical(
-                model_metadata[column], categories=sorted(model_metadata[column].unique())
+                model_metadata[column],
+                categories=categorical_levels(column, model_metadata[column]),
             )
 
     design_matrix = FormulaicContrasts(model_metadata, design).design_matrix
@@ -164,22 +178,45 @@ def _fit_age_model(
     )
     dds.deseq2()
     design_matrix = dds.obsm["design_matrix"]
-    if age_term not in design_matrix.columns:
-        raise ValueError(
-            f"Age coefficient {age_term!r} not found in design matrix columns "
-            f"{list(design_matrix.columns)}"
-        )
-    contrast = np.zeros(design_matrix.shape[1], dtype=float)
-    contrast[list(design_matrix.columns).index(age_term)] = 1.0
-    stats = DeseqStats(
-        dds,
-        contrast=contrast,
-        alpha=alpha,
-        n_cpus=cpus,
-        quiet=True,
-    )
-    stats.summary()
-    return stats.results_df
+    coefficient_results = {}
+    for covariate in covariates:
+        if covariate in {"age", "bmi"}:
+            terms = [covariate] if covariate in design_matrix.columns else []
+            levels = []
+        else:
+            terms = [
+                term for term in design_matrix.columns
+                if term.startswith(f"{covariate}[T.")
+            ]
+            levels = categorical_levels(covariate, model_metadata[covariate])
+        if not terms:
+            raise _NonEstimableModel(
+                f"no estimable coefficient was found for {covariate!r} in "
+                f"design columns {list(design_matrix.columns)}"
+            )
+        pieces = []
+        for term in terms:
+            contrast = np.zeros(design_matrix.shape[1], dtype=float)
+            contrast[list(design_matrix.columns).index(term)] = 1.0
+            stats = DeseqStats(
+                dds,
+                contrast=contrast,
+                alpha=alpha,
+                n_cpus=cpus,
+                quiet=True,
+            )
+            stats.summary()
+            result = stats.results_df.copy()
+            if covariate in {"age", "bmi"}:
+                contrast_label = "per year" if covariate == "age" else "per BMI unit"
+            else:
+                level = term.removeprefix(f"{covariate}[T.").removesuffix("]")
+                contrast_label = f"{level} vs {levels[0]}"
+            result["covariate"] = covariate
+            result["contrast"] = contrast_label
+            pieces.append(result)
+        coefficient_results[covariate] = pd.concat(pieces).rename_axis("gene").reset_index()
+    return coefficient_results
 
 
 def _run_model(
@@ -191,7 +228,7 @@ def _run_model(
     model_name: str,
     study: str | None,
     design: str,
-    age_term: str,
+    covariates: list[str],
     alpha: float,
     cpus: int,
     output_dir: Path,
@@ -202,67 +239,109 @@ def _run_model(
         "model": model_name,
         "study": study,
         "design": design,
-        "contrast": f"log2 fold change per one-year increase in {age_term}",
+        "covariates": covariates,
         "n_samples": len(metadata),
         "status": "skipped",
     }
     if metadata.empty:
-        details["reason"] = (
-            "no samples pass the configured age, sex, and minimum-cell inclusion filters"
+        details["reason"] = "no samples pass the configured inclusion filters"
+        return details
+
+    design_covariates = [
+        column.strip()
+        for column in design.removeprefix("~").split("+")
+        if column.strip() and column.strip() != "study"
+    ]
+    has_study_term = "study" in design
+    valid = pd.Series(True, index=metadata.index)
+    for column in design_covariates:
+        if column in {"age", "bmi"}:
+            values = pd.to_numeric(metadata[column], errors="coerce")
+            valid &= values.notna() & np.isfinite(values)
+        else:
+            values = metadata[column].astype("string").str.strip().str.lower()
+            valid &= values.notna() & ~values.isin(_UNKNOWN)
+    metadata = metadata.loc[valid].copy()
+    for covariate in covariates:
+        if not _has_covariate_variation(metadata, covariate):
+            details["reason"] = f"{covariate} has fewer than two observed values"
+            return details
+    if metadata.empty:
+        details["reason"] = "no samples have complete values for this model"
+        return details
+    if has_study_term and metadata["study"].nunique() < 2:
+        if model_name == "combined":
+            # A single study can still provide a useful covariate-specific fit;
+            # omit the redundant study term and record the resulting formula.
+            has_study_term = False
+        else:
+            details["reason"] = "study has fewer than two observed levels"
+            return details
+    design_covariates = [
+        covariate for covariate in design_covariates
+        if covariate in covariates or _has_covariate_variation(metadata, covariate)
+    ]
+    design_terms = (["study"] if has_study_term else []) + design_covariates
+    design = "~ " + " + ".join(design_terms)
+    details["design"] = design
+
+    zero_library_samples = []
+    while True:
+        studies = sorted(metadata["study"].astype(str).unique())
+        study_sample_counts = {
+            str(key): int(value)
+            for key, value in metadata.groupby("study", observed=True).size().items()
+        }
+        details.update({
+            "studies": studies,
+            "study_sample_counts": study_sample_counts,
+            "n_samples": len(metadata),
+        })
+        var_mask = _availability_mask(adata.var, studies, context=f"{cell_type}/{model_name}")
+        genes = adata.var_names[var_mask]
+        if len(genes) == 0:
+            details["reason"] = "no genes are available in every study included in this fit"
+            return details
+
+        # The order of pseudobulk rows in the AnnData object matches obs/metadata.
+        row_positions = obs.index.get_indexer(metadata.index)
+        col_positions = adata.var_names.get_indexer(genes)
+        count_values = _matrix_to_counts(
+            adata.X[row_positions, :][:, col_positions], context=f"{cell_type}/{model_name}"
         )
-        return details
-    if metadata["age"].nunique() < 2:
-        details["reason"] = "age has fewer than two distinct values"
-        return details
-    if metadata["sex"].nunique() < 2:
-        details["reason"] = "sex has fewer than two observed levels"
-        return details
-    if "study" in design and metadata["study"].nunique() < 2:
-        details["reason"] = "study has fewer than two observed levels"
-        return details
-
-    studies = sorted(metadata["study"].astype(str).unique())
-    var_mask = _availability_mask(adata.var, studies, context=f"{cell_type}/{model_name}")
-    genes = adata.var_names[var_mask]
-    if len(genes) == 0:
-        details["reason"] = "no genes are available in every study included in this fit"
-        return details
-
-    # The order of pseudobulk rows in the AnnData object matches obs/metadata.
-    obs_indices = metadata.index
-    row_positions = obs.index.get_indexer(obs_indices)
-    col_positions = adata.var_names.get_indexer(genes)
-    count_values = _matrix_to_counts(
-        adata.X[row_positions, :][:, col_positions], context=f"{cell_type}/{model_name}"
-    )
-    nonzero_gene = count_values.sum(axis=0) > 0
-    details["n_all_zero_genes_excluded"] = int((~nonzero_gene).sum())
-    count_values = count_values[:, nonzero_gene]
-    genes = genes[nonzero_gene]
-    if len(genes) == 0:
-        details["reason"] = "all genes in the analysis universe have zero counts"
-        return details
-    nonzero_library = count_values.sum(axis=1) > 0
-    if not nonzero_library.all():
+        nonzero_gene = count_values.sum(axis=0) > 0
+        count_values = count_values[:, nonzero_gene]
+        genes = genes[nonzero_gene]
+        if len(genes) == 0:
+            details["reason"] = "all genes in the analysis universe have zero counts"
+            return details
+        nonzero_library = count_values.sum(axis=1) > 0
+        if nonzero_library.all():
+            details["n_all_zero_genes_excluded"] = int((~nonzero_gene).sum())
+            break
         zero_library_metadata = metadata.iloc[np.flatnonzero(~nonzero_library)]
-        metadata = metadata.iloc[np.flatnonzero(nonzero_library)].copy()
-        count_values = count_values[nonzero_library]
-        details["n_zero_library_samples_excluded"] = int((~nonzero_library).sum())
-        details["zero_library_samples_excluded"] = [
+        zero_library_samples.extend(
             {
                 "pseudobulk_id": str(index),
                 "study": str(row["study"]),
                 "sample": str(row["sample"]),
             }
             for index, row in zero_library_metadata.iterrows()
-        ]
+        )
+        metadata = metadata.iloc[np.flatnonzero(nonzero_library)].copy()
+        if metadata.empty:
+            details["reason"] = "all samples have zero counts over the fit's gene universe"
+            return details
+    if zero_library_samples:
+        details["n_zero_library_samples_excluded"] = len(zero_library_samples)
+        details["zero_library_samples_excluded"] = zero_library_samples
     try:
-        results = _fit_age_model(
+        results_by_covariate = _fit_covariate_model(
             count_values,
             genes,
             metadata,
             design=design,
-            age_term=age_term,
+            covariates=covariates,
             alpha=alpha,
             cpus=cpus,
         )
@@ -278,32 +357,52 @@ def _run_model(
         details.update({"status": "failed", "error": f"{type(exc).__name__}: {exc}"})
         return details
 
-    result = results.rename_axis("gene").reset_index()
-    result.insert(0, "cell_type", cell_type)
-    result.insert(1, "model", model_name)
-    result.insert(2, "study", study if study is not None else "all")
-    test_only = test_mode or synthetic_test_data
-    result.insert(3, "analysis_mode", "test_only" if test_only else "standard")
-    result.insert(
-        4,
-        "interpretation_warning",
-        _SYNTHETIC_DATA_WARNING if synthetic_test_data else (
-            _TEST_MODE_WARNING if test_mode else ""
-        ),
-    )
     cell_type_dir = output_dir / _slug(cell_type)
-    if model_name == "per_study":
-        destination = cell_type_dir / "per_study" / f"{_slug(study or 'unknown-study')}.csv"
-    else:
-        destination = cell_type_dir / "merged.csv"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    result.to_csv(destination, index=False)
+    paths = {}
+    test_only = test_mode or synthetic_test_data
+    for covariate, result in results_by_covariate.items():
+        result.insert(0, "cell_type", cell_type)
+        result.insert(1, "model", model_name)
+        result.insert(2, "study", study if study is not None else "all")
+        result.insert(3, "analysis_mode", "test_only" if test_only else "standard")
+        result.insert(
+            4,
+            "interpretation_warning",
+            _SYNTHETIC_DATA_WARNING if synthetic_test_data else (
+                _TEST_MODE_WARNING if test_mode else ""
+            ),
+        )
+        result["studies_included"] = ";".join(studies)
+        result["study_sample_counts"] = json.dumps(study_sample_counts, sort_keys=True)
+        if model_name == "per_study":
+            if covariate == "age":
+                destination = cell_type_dir / "per_study" / f"{_slug(study or 'unknown-study')}.csv"
+            else:
+                destination = cell_type_dir / "per_study" / covariate / f"{_slug(study or 'unknown-study')}.csv"
+        elif covariate == "age":
+            destination = cell_type_dir / "merged.csv"
+        else:
+            destination = cell_type_dir / "combined" / f"{covariate}.csv"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        result.to_csv(destination, index=False)
+        paths[covariate] = str(destination.relative_to(output_dir))
+
+    # Keep the established age-result path in the summary fields while
+    # indexing every fitted contrast explicitly for reports and downstream tools.
+    primary_covariate = "age" if "age" in paths else next(iter(paths), None)
+    details["results_by_covariate"] = paths
+    details["results"] = paths.get(primary_covariate) if primary_covariate else None
+    if not paths:
+        return details
+    significant = {}
+    for covariate, result in results_by_covariate.items():
+        significant[covariate] = int((result["padj"] < alpha).sum())
     details.update(
         {
             "status": "complete",
             "n_genes": len(genes),
-            "results": str(destination.relative_to(output_dir)),
-            "n_significant_adjusted_p_lt_alpha": int((results["padj"] < alpha).sum()),
+            "n_significant_adjusted_p_lt_alpha": significant.get(primary_covariate, 0),
+            "n_significant_by_covariate": significant,
         }
     )
     return details
@@ -365,7 +464,7 @@ def _run_cell_type_differential_expression(
     test_mode: bool,
     synthetic_test_data: bool,
 ) -> dict:
-    """Fit every configured DE model for one in-memory pseudobulk subset."""
+    """Fit age, sex, and available optional-covariate models for one subset."""
     slug = _slug(cell_type)
     selected = labels == cell_type
     type_adata = adata[selected.to_numpy(), :]
@@ -382,19 +481,23 @@ def _run_cell_type_differential_expression(
         "excluded_samples": excluded_samples,
         "models": [],
     }
+    optional_covariates = spec.get("optional_covariates", ["bmi", "cmv"])
     for study in sorted(metadata["study"].astype(str).unique()):
         study_metadata = metadata.loc[metadata["study"].astype(str) == study].copy()
-        model_metadata = study_metadata[["study", "sample", "age", "sex"]]
+        core_covariates = [
+            covariate for covariate in ("age", "sex")
+            if _has_covariate_variation(study_metadata, covariate)
+        ] or ["age", "sex"]
         item["models"].append(
             _run_model(
                 adata=type_adata,
                 obs=type_obs,
-                metadata=model_metadata,
+                metadata=study_metadata,
                 cell_type=cell_type,
                 model_name="per_study",
                 study=study,
                 design=spec["per_study_design"],
-                age_term=spec["age_term"],
+                covariates=core_covariates,
                 alpha=spec["alpha"],
                 cpus=cpus,
                 output_dir=output_dir,
@@ -402,16 +505,40 @@ def _run_cell_type_differential_expression(
                 synthetic_test_data=synthetic_test_data,
             )
         )
+        for covariate in optional_covariates:
+            if covariate not in study_metadata:
+                continue
+            item["models"].append(
+                _run_model(
+                    adata=type_adata,
+                    obs=type_obs,
+                    metadata=study_metadata,
+                    cell_type=cell_type,
+                    model_name="per_study",
+                    study=study,
+                    design=f"{spec['per_study_design']} + {covariate}",
+                    covariates=[covariate],
+                    alpha=spec["alpha"],
+                    cpus=cpus,
+                    output_dir=output_dir,
+                    test_mode=test_mode,
+                    synthetic_test_data=synthetic_test_data,
+                )
+            )
+    core_covariates = [
+        covariate for covariate in ("age", "sex")
+        if _has_covariate_variation(metadata, covariate)
+    ] or ["age", "sex"]
     item["models"].append(
         _run_model(
             adata=type_adata,
             obs=type_obs,
-            metadata=metadata[["study", "sample", "age", "sex"]],
+            metadata=metadata,
             cell_type=cell_type,
             model_name="merged",
             study=None,
             design=spec["merged_design"],
-            age_term=spec["age_term"],
+            covariates=core_covariates,
             alpha=spec["alpha"],
             cpus=cpus,
             output_dir=output_dir,
@@ -419,6 +546,26 @@ def _run_cell_type_differential_expression(
             synthetic_test_data=synthetic_test_data,
         )
     )
+    for covariate in optional_covariates:
+        if covariate not in metadata:
+            continue
+        item["models"].append(
+            _run_model(
+                adata=type_adata,
+                obs=type_obs,
+                metadata=metadata,
+                cell_type=cell_type,
+                model_name="combined",
+                study=None,
+                design=f"{spec['merged_design']} + {covariate}",
+                covariates=[covariate],
+                alpha=spec["alpha"],
+                cpus=cpus,
+                output_dir=output_dir,
+                test_mode=test_mode,
+                synthetic_test_data=synthetic_test_data,
+            )
+        )
     type_metadata = {
         "kind": "pseudobulk_differential_expression_cell_type_metadata",
         "cell_type": cell_type,
@@ -436,6 +583,16 @@ def _run_cell_type_differential_expression(
             "minimum_cells_filter_enabled": not test_mode,
         },
         "metadata_exclusions": exclusions,
+        "models": [
+            {
+                **model,
+                "results_by_covariate": {
+                    covariate: str(Path(path).relative_to(slug))
+                    for covariate, path in model.get("results_by_covariate", {}).items()
+                },
+            }
+            for model in item["models"]
+        ],
     }
     cell_type_dir = output_dir / slug
     (cell_type_dir / "run_metadata.json").write_text(json.dumps(type_metadata, indent=2) + "\n")
@@ -478,8 +635,9 @@ def _write_differential_expression_manifest(
         ),
         "gene_universe": {
             "per_study": "genes available in that study",
-                "merged": "intersection of genes available in all studies included in each cell-type fit",
+            "merged": "intersection of genes available in all studies included in each cell-type fit",
         },
+        "optional_covariates": spec.get("optional_covariates", ["bmi", "cmv"]),
         "sample_inclusion": spec["sample_inclusion"],
         "sample_inclusion_applied": {
             **spec["sample_inclusion"],
@@ -488,8 +646,14 @@ def _write_differential_expression_manifest(
         "models": {
             "per_study": spec["per_study_design"],
             "merged": spec["merged_design"],
+            "covariate_adjustment": "Age and sex are included for BMI and CMV models.",
         },
-        "age_effect": "log2 fold change per one-year increase in age",
+        "effect_scales": {
+            "age": "log2 fold change per one-year increase",
+            "bmi": "log2 fold change per one-unit increase in BMI",
+            "sex": "log2 fold change for the listed level versus female",
+            "cmv": "log2 fold change for yes versus no CMV status",
+        },
         "cell_types": records,
         "results_by_cell_type": {
             item["slug"]: {
@@ -503,16 +667,35 @@ def _write_differential_expression_manifest(
                     )
                 ),
                 "per_study": [
-                    {"study": model["study"], "path": model["results"]}
-                    for model in item["models"]
-                    if model["model"] == "per_study" and model.get("status") == "complete"
+                    {
+                        "study": study,
+                        "paths": {
+                            covariate: path
+                            for model in item["models"]
+                            if model["model"] == "per_study"
+                            and model.get("study") == study
+                            and model.get("status") == "complete"
+                            for covariate, path in model.get("results_by_covariate", {}).items()
+                        },
+                    }
+                    for study in sorted({
+                        model["study"] for model in item["models"]
+                        if model["model"] == "per_study"
+                    })
                 ],
+                "combined": {
+                    covariate: path
+                    for model in item["models"]
+                    if model["model"] in {"merged", "combined"}
+                    and model.get("status") == "complete"
+                    for covariate, path in model.get("results_by_covariate", {}).items()
+                },
                 "merged": next(
                     (
-                        model["results"] for model in item["models"]
+                        model.get("results_by_covariate", {}).get("age")
+                        for model in item["models"]
                         if model["model"] == "merged" and model.get("status") == "complete"
-                    ),
-                    None,
+                    ), None,
                 ),
                 "fit_status": (
                     "complete"
@@ -646,7 +829,7 @@ def combine_cell_type_differential_expression(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run per-study and merged PyDESeq2 models on a merged pseudobulk H5AD"
+        description="Run per-study and combined PyDESeq2 covariate models on merged pseudobulk"
     )
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path)

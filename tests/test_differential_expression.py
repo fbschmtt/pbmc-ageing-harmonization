@@ -9,6 +9,7 @@ import pandas as pd
 from pbmc_pipeline.config import read_json
 from pbmc_pipeline.differential_expression import (
     _prepare_metadata,
+    _run_model,
     combine_cell_type_differential_expression,
     list_pseudobulk_cell_types,
 )
@@ -53,15 +54,85 @@ def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None
     first = ad.read_h5ad(first_path)
     second = ad.read_h5ad(second_path)
 
-    assert first.shape == (48, 87)
+    assert first.shape == (48, 91)
     assert first.obs["study"].nunique() == 3
     assert first.obs["sample"].nunique() == 8
     assert first.obs["aifi_l2_majority"].nunique() == 2
     assert first.obs["n_cells"].min() == 15
     assert (first.obs["age"] >= 20).all()
     assert first.obs.groupby(["study", "aifi_l2_majority"], observed=True).size().eq(8).all()
+    assert first.obs.groupby("study", observed=True)["bmi"].apply(
+        lambda values: values.notna().any()
+    ).to_dict() == {
+        "synthetic_study_a": True,
+        "synthetic_study_b": False,
+        "synthetic_study_c": True,
+    }
+    assert first.obs.groupby("study", observed=True)["cmv"].apply(
+        lambda values: values.notna().any()
+    ).to_dict() == {
+        "synthetic_study_a": True,
+        "synthetic_study_b": False,
+        "synthetic_study_c": False,
+    }
     assert (first.X != second.X).nnz == 0
     assert first.uns["synthetic_test_data"]["not_biological_evidence"] is True
+
+
+def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_path) -> None:
+    import numpy as np
+
+    import pbmc_pipeline.differential_expression as de
+
+    index = [f"sample_{number}" for number in range(8)]
+    obs = pd.DataFrame(
+        {
+            "study": ["aifi"] * 8,
+            "sample": index,
+            "age": [24, 31, 38, 45, 52, 60, 68, 76],
+            "sex": ["female", "male"] * 4,
+            "cmv": ["no", "yes"] * 4,
+            "n_cells": [20] * 8,
+        },
+        index=index,
+    )
+    var = pd.DataFrame({"available_in_aifi": [True, True]}, index=["G1", "G2"])
+    adata = ad.AnnData(X=np.full((8, 2), 100, dtype=np.int32), obs=obs, var=var)
+    captured = {}
+
+    def fake_fit(counts, genes, metadata, **kwargs):
+        captured["design"] = kwargs["design"]
+        return {
+            "cmv": pd.DataFrame({
+                "gene": ["G1", "G2"],
+                "padj": [0.01, 0.9],
+                "log2FoldChange": [1.2, 0.1],
+                "contrast": ["yes vs no"] * 2,
+            })
+        }
+
+    monkeypatch.setattr(de, "_fit_covariate_model", fake_fit)
+    result = _run_model(
+        adata=adata,
+        obs=obs,
+        metadata=obs.copy(),
+        cell_type="CD14 monocyte",
+        model_name="combined",
+        study=None,
+        design="~ study + age + sex + cmv",
+        covariates=["cmv"],
+        alpha=0.05,
+        cpus=1,
+        output_dir=tmp_path,
+        test_mode=False,
+        synthetic_test_data=True,
+    )
+
+    assert result["status"] == "complete"
+    assert result["studies"] == ["aifi"]
+    assert result["study_sample_counts"] == {"aifi": 8}
+    assert result["design"] == "~ age + sex + cmv"
+    assert captured["design"] == "~ age + sex + cmv"
 
 
 def test_synthetic_fixture_requires_production_cell_cutoff(tmp_path) -> None:

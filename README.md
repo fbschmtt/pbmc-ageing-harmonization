@@ -63,8 +63,11 @@ make run-all-test
 ```
 
 By default this requests every configured study and
-skips any unavailable fixture. It includes the positive synthetic-DE check and
-standard cell-type reports. Use an explicit `STUDIES=<list>` to narrow a run.
+skips any unavailable fixture. It runs the core pipeline on available downsampled
+real-data fixtures, then uses a separate generated pseudobulk fixture for
+positive DE fits, and finally renders reports from the core test merge with
+those synthetic DE results. Use an explicit `STUDIES=<list>` to narrow the core
+run.
 Existing fixtures are preserved; use `TEST_DATA_OVERWRITE=true` only when they
 need refreshing.
 
@@ -263,7 +266,9 @@ fixtures are generated under the ignored `test_data/` directory.
 
 Specify the studies to acquire. The best-effort command downloads configured
 public URLs without portal authentication or scraping and records outcomes in
-ignored `input_data/download_manifest.json`:
+ignored `input_data/download_manifest.json`. It returns a failure if a direct
+download fails or fails its size/checksum check; manual-only inputs remain
+reported for best-effort acquisition:
 
 ```bash
 make download-inputs STUDIES=aifi
@@ -276,19 +281,21 @@ and percentage when the source reports a size or the manifest records one;
 otherwise it reports downloaded bytes and rate.
 
 `make download-inputs-strict STUDIES=fachrul26` is the explicit acquisition
-preflight. It exits nonzero for a failed download, a size/checksum mismatch, or
-a manual-only artifact that has not yet been placed at its configured path. It
-is an acquisition preflight, not a routine test, and never runs as part of
-analysis commands. Existing files are left unchanged unless
+preflight. In addition to failed downloads and size/checksum mismatches, it
+exits nonzero for a manual-only artifact that has not yet been placed at its
+configured path. It is an acquisition preflight, not a routine test, and never
+runs as part of analysis commands. Run it before production when download
+integrity matters. Existing files are left unchanged unless
 `DOWNLOAD_FORCE=true` is supplied deliberately.
 
 The manifest records manual-only sources and their acquisition instructions.
 Synapse expression objects require portal access, the AIDA publisher
-attachment rejects unauthenticated programmatic requests, and AIFI model links
-require interactive Allen authentication. The downloader does not implement
-these access flows. Some files currently present at production paths are
-test-scale subsets. Recorded SHA-256 values and CELLxGENE byte sizes are
-verified; confirm that acquired files are suitable for production analysis.
+attachment rejects unauthenticated programmatic requests, and the AIFI full
+H5AD link currently redirects through Allen's Google-authenticated workspace.
+The downloader does not implement these access flows. Some files currently
+present at production paths are test-scale subsets. Recorded SHA-256 values and
+CELLxGENE byte sizes are verified; confirm that acquired files are suitable for
+production analysis.
 See `config/input_sources.json` and [INPUT_FILES.md](INPUT_FILES.md).
 
 ## QC reports
@@ -322,6 +329,13 @@ starts with pseudobulk composition and a gene-presence UpSet plot; if the
 single-cell branch is enabled it appends its embedding, depth checks, UMAPs of
 log(UMIs per cell) and mitochondrial percentage (capped at 15%), and the matrix
 comparing experimental merged AIFI L2 calls to each cell's per-study label.
+The report also accounts for raw counts retained or discarded by each
+gene-symbol join. The pseudobulk outer union retains all input counts; the
+technical-covariate plots show the number of studies for each technology,
+intronic-count, and frozen-status value. The optional single-cell inner
+intersection includes a per-study bar chart of the fraction of counts discarded,
+alongside a table with count totals and the gene symbol with the largest loss per
+study.
 The merged artifact retains per-study labels in `aifi_l2_majority` for all
 downstream grouping and splitting. Diagnostic re-annotations are stored in
 `experimental_aifi_l2_majority` (Harmony graph) and
@@ -351,7 +365,8 @@ which validation to run.
 |---|---|---|
 | Python library, CLI, or deterministic test change | `make lint test-unit` | Run a focused workflow too if a task contract or published artifact changed. |
 | Nextflow workflow or configuration change | `make workflow-lint` | Add `make run-test STUDIES=<study>` when task wiring must execute. |
-| One cell-type report template | `make run-cell-type-test CELL_TYPE=cd14-monocyte` | Use `make render-cell-type-test` only when an existing analysis is sufficient and no analysis output changed. |
+| One cell-type report template | `make run-cell-type-test CELL_TYPE=cd14-monocyte` | Use `make render-cell-type-test` or `make render-cell-type-reports-test` when existing analysis artifacts are sufficient. |
+| Rerender reports from existing analysis artifacts | `make render-cell-type-reports[-test]` | Use `make render-cell-type[-test] CELL_TYPE=<slug>` to refresh only one report. |
 | Cell-type splitting or shared analysis | `make run-test`, then `make run-cell-type-analysis-test` | Use `make run-all-test` when the complete ordered test workflow is needed. |
 | Positive pseudobulk DE fitting | `make run-test`, then `make run-de-synthetic-test` and `make check-synthetic-de-results` | Follow with `make run-cell-type-analysis-test` when checking that DE results reach reports. |
 | Core workflow for one or a few studies | `make run-test STUDIES=<list>` | Omit `STUDIES` to request all configured studies. |
@@ -477,6 +492,8 @@ make run-cell-type CELL_TYPE=cd14-monocyte
 make run-cell-type-test CELL_TYPE=cd14-monocyte
 make render-cell-type CELL_TYPE=cd14-monocyte
 make render-cell-type-test CELL_TYPE=cd14-monocyte
+make render-cell-type-reports
+make render-cell-type-reports-test
 ```
 
 The targeted test command deliberately does not build a core test merge or all
@@ -489,10 +506,11 @@ all-type workflow before treating the published report set as a new
 manifest-backed release. `cd14-monocyte` is the default targeted test type
 because it is well represented in the bundled multi-study fixture.
 
-For a template-only report edit, `make render-cell-type[-test]` instead
-requires the published split plus `analysis.h5ad` in that type's analysis
-directory. It schedules only rendering and overwrites the executed notebook and
-HTML without rerunning local PCA, Harmony, UMAP, clustering, or marker ranking.
+For a report-only edit, `make render-cell-type[-test]` rerenders one type, while
+`make render-cell-type-reports[-test]` rerenders every type. These targets
+require the published splits and `analysis.h5ad` artifacts. They schedule only
+rendering and overwrite the executed notebooks and HTML without rerunning local
+PCA, Harmony, UMAP, clustering, or marker ranking.
 
 Use `make check-cell-type-test-prerequisites CELL_TYPE=<slug>` before a
 targeted test rerun when unsure whether its input exists. It prints the minimal
@@ -550,14 +568,20 @@ sample-level pseudobulk H5AD. It first lists retained per-study
 `aifi_l2_majority` labels, then runs one independent task per label. Each task
 loads the same small merged pseudobulk H5AD and subsets its label in memory; it
 does not materialize a per-type pseudobulk H5AD. Each task runs one `~ age +
-sex` fit per study and one shared age-slope `~ study + age + sex` fit across
-studies. A final collector writes the ordinary result directories and manifest.
-The age effect is reported as log2 fold change per year. The per-study fit uses
-genes available in that study; each merged fit uses the intersection of genes
-available across the studies contributing samples, so study-absent genes'
-synthetic outer-join zeros are excluded. The parallel type-fitting task is
-configured for one CPU, which is passed directly to PyDESeq2; all other CPU,
-time, and memory requests use the executor defaults.
+sex` fit per study and one shared age-and-sex `~ study + age + sex` fit across
+studies. When present and variable, BMI and CMV each receive separate per-study
+and combined fits, with age and sex as adjustment covariates. Combined fits
+include studies with usable values for that covariate and report the studies
+and sample counts used. If only one study contributes, the fit drops the study
+term and reports that study's adjusted association. Age, sex, BMI, and CMV
+effects each have a combined-model volcano plot where estimable. A final collector writes the result
+directories and manifest. Per-study results also show significant-gene counts
+inside and outside the per-covariate intersection of genes tested by all
+available study fits. Per-study fits use genes available in that study; each combined fit
+uses the intersection of genes available across its included studies, so
+study-absent genes' synthetic outer-join zeros are excluded. The parallel
+type-fitting task is configured for one CPU, which is passed directly to
+PyDESeq2; all other CPU, time, and memory requests use the executor defaults.
 
 Samples must be age 20 or older and have at least 10 cells in that
 sample × cell-type pseudobulk. Samples with missing/unknown sex metadata or
@@ -568,10 +592,12 @@ beneath `<outdir>/differential_expression/`; each cell-type directory also
 contains the task fit record (`cell_type_result.json`) used by the collector.
 
 The DE manifest is the handoff contract for reports. Its
-`results_by_cell_type` index lists the per-study and merged result paths (or an
-empty result set) for each cell-type slug. The cell-type workflow reads this
-manifest and passes only the matching cell-type results to a single report
-renderer. The renderer writes all single-cell artifacts beneath
+`results_by_cell_type` index lists the per-study and combined result paths for
+each covariate (or an empty result set) for each cell-type slug. The cell-type
+workflow reads this manifest and passes only the matching cell-type results to
+a single report renderer. `make render-cell-type-reports` rerenders all existing
+reports from the published splits and analysis artifacts without repeating
+analysis. The renderer writes all single-cell artifacts beneath
 `<outdir>/cell_type_analysis/`; it never publishes report files into the DE
 directory. Named Nextflow subworkflows group splitting plus analysis, analysis
 of an existing split, and report rendering while retaining the separate
@@ -592,11 +618,18 @@ small deterministic pseudobulk H5AD directly (the fixture is generated, not
 checked in, and does not pass through single-cell pseudobulking). It contains
 three synthetic studies, eight independent samples per study and cell type,
 and at least 15 cells per pseudobulk. Its negative-binomial counts include
-known synthetic age and sex signals and study-specific gene-availability flags.
-This exercises the normal age and cell-count filters and produces positive
-per-study and merged fits without copying the large real pseudobulk file. Every
-result is labeled synthetic and test-only. Do not upsample the existing test
-samples to simulate replication: more cells within a sample do not add
+known synthetic age, sex, BMI, and CMV signals and study-specific gene-
+availability flags. BMI is present in two studies; CMV is present in one.
+Missing values exercise covariate-specific study selection and complete-case
+sample counts, including the single-study combined-fit path. This exercises the
+normal age and cell-count filters and produces positive per-study and combined
+fits without copying the large real pseudobulk file. Every result is labeled
+synthetic and test-only. This fixture is realistic in workflow shape, not in
+statistical complexity: it has balanced sample counts, a small number of planted
+effects and gene-availability gaps, and no modeled cross-gene correlation or
+study-specific effect heterogeneity. It validates fitting and report wiring,
+not biological power or expected real-data results. Do not upsample real test
+samples to simulate replication; more cells within a sample do not add
 independent samples.
 
 To render the standard test reports with the synthetic DE results, run:
@@ -607,11 +640,13 @@ make run-de-synthetic-test
 make run-cell-type-analysis-test
 ```
 
-`make run-all-test` is the complete ordered Docker test: it generates the
-synthetic fixture, checks the DE outputs, then renders the ordinary reports and
-checks that the synthetic DE panels appear. `make verify` runs this same target
-after linting, unit tests, Nextflow lint, and documentation checks. Pass
-`STUDIES=<list>` to narrow the core test inputs when needed.
+`make run-all-test` is the complete ordered Docker test. Its core and cell-type
+analysis stages use available downsampled real-data fixtures; its positive DE
+stage uses the separate synthetic pseudobulk. The final reports combine the
+real test merge/splits with those synthetic DE results to check the handoff and
+plots. `make verify` runs this same target after linting, unit tests, Nextflow
+lint, and documentation checks. Pass `STUDIES=<list>` to narrow the core test
+inputs; it does not change the synthetic DE fixture.
 
 The generated input stays under `output/test/synthetic_de/`. DE outputs use the
 standard `output/test/differential_expression/` directory, and the ordinary
@@ -621,7 +656,8 @@ cell-type report target renders them under
 Cell-type report generation checks for matching DE result files under that
 directory. When available, it appends per-study significant-gene recurrence
 within the genes tested in every per-study fit, total significant-gene counts,
-and a merged-model volcano plot at the bottom of the report. Each plot is
+and combined-model volcano plots for the available covariates at the bottom of
+the report. Each plot is
 omitted if its corresponding result files are absent.
 
 Run the workflow after creating the pseudobulk merge:
@@ -639,9 +675,14 @@ with `make run-test`. It uses the explicitly labeled test mode described above.
 Use `make run-de-synthetic-test` to exercise successful PyDESeq2 fits with the
 production sample-inclusion filters enabled.
 
-The current DE models use age and sex per study, and age, sex, and study in the
-merged model. BMI and CMV are not included in DE yet. The separate cell-type
-fraction model uses eligible age, sex, BMI, and CMV covariates per study.
+DE fits estimate age and sex together per study and in a study-adjusted combined
+model. BMI and CMV are fitted separately when metadata support them, adjusting
+for age and sex; missing values are excluded from the relevant fit. A single-
+study optional-covariate fit omits the study term and still produces its
+volcano plot. CMV negative/positive values are harmonized to no/yes. Combined
+volcano plots list the studies and samples that contributed. Cell-type fraction
+forest plots label categorical contrasts explicitly: male versus female, and
+yes CMV versus no CMV.
 
 ## Further reading
 

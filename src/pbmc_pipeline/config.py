@@ -154,6 +154,17 @@ def validate_configuration(
             )
         if differential_expression.get("age_term") != "age":
             raise ConfigurationError("differential_expression.age_term must be 'age'")
+        optional_covariates = differential_expression.get("optional_covariates", ["bmi", "cmv"])
+        if (
+            not isinstance(optional_covariates, list)
+            or not all(isinstance(value, str) for value in optional_covariates)
+            or len(optional_covariates) != len(set(optional_covariates))
+            or not set(optional_covariates).issubset({"bmi", "cmv"})
+        ):
+            raise ConfigurationError(
+                "differential_expression.optional_covariates must be a unique list "
+                "containing only 'bmi' and/or 'cmv'"
+            )
         alpha = differential_expression.get("alpha")
         if not isinstance(alpha, (int, float)) or not 0 < alpha < 1:
             raise ConfigurationError("differential_expression.alpha must be between 0 and 1")

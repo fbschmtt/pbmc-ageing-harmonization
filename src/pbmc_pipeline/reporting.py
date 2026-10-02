@@ -1,7 +1,17 @@
 """Pure data-preparation helpers used by executable QC reports."""
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
+
+
+def signed_value_at_largest_absolute_magnitude(values: pd.Series) -> float:
+    """Return the signed finite value with the greatest absolute magnitude."""
+    numeric = pd.to_numeric(values, errors="coerce").to_numpy(dtype=float)
+    finite = numeric[np.isfinite(numeric)]
+    if finite.size == 0:
+        return float("nan")
+    return float(finite[np.abs(finite).argmax()])
 
 
 def gene_presence_indicators(var: pd.DataFrame) -> pd.DataFrame:

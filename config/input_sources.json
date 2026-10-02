@@ -10,7 +10,7 @@
       "url": "https://allenimmunology.org/public/publication/download/84792154-cdfb-42d0-8e42-39e210e980b4/filesets/568ad40c-516a-4646-9426-bdcd7029c1f5/human_immune_health_atlas_full.h5ad",
       "source_page": "https://apps.allenimmunology.org/aifi/resources/imm-health-atlas/downloads/scrna/",
       "expected_size_bytes": 42826405062,
-      "note": "Public download; approximately 40 GB. The host may require an interactive access step."
+      "note": "The official page lists this full H5AD at approximately 40 GB. Its current download link redirects through Allen's Google-authenticated workspace; the downloader cannot authenticate and rejects responses that do not match the expected byte size."
     },
     {
       "id": "aifi_celltypist_l1",

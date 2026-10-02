@@ -165,6 +165,9 @@ def merge_pseudobulks(
     # See ``pseudobulk_study``: merged pseudobulk is deliberately uncompressed.
     merged.write_h5ad(output_path, compression=None)
     report = _merge_report("pseudobulk_merge", merged, paths, pipeline)
+    report["gene_join_accounting"] = _gene_join_count_accounting(
+        parts, merged.var_names, "outer",
+    )
     _write_report(report_path, report)
     return report
 
@@ -175,6 +178,66 @@ def _shared_gene_names(parts: list) -> pd.Index:
     for part in parts[1:]:
         shared = shared.intersection(part.var_names, sort=False)
     return shared
+
+
+def _gene_join_count_accounting(parts: list, joined_genes: pd.Index, gene_join: str) -> dict:
+    """Count raw UMIs retained or excluded by the merge's gene-name join."""
+    study_rows = []
+    total_counts = 0
+    retained_counts = 0
+    for part in parts:
+        gene_names = pd.Index(part.var_names.astype(str))
+        retained_mask = gene_names.isin(joined_genes)
+        gene_counts = np.zeros(part.n_vars, dtype=np.int64)
+        for start in range(0, part.n_obs, 2048):
+            block = part.X[start:min(start + 2048, part.n_obs)]
+            if hasattr(block, "to_memory"):
+                block = block.to_memory()
+            block_totals = (
+                np.asarray(block.sum(axis=0)).ravel()
+                if sparse.issparse(block)
+                else np.asarray(block).sum(axis=0, dtype=np.int64)
+            )
+            gene_counts += block_totals.astype(np.int64, copy=False)
+
+        study_total = int(gene_counts.sum(dtype=np.int64))
+        study_retained = int(gene_counts[retained_mask].sum(dtype=np.int64))
+        discarded_mask = ~retained_mask
+        study_discarded = study_total - study_retained
+        top_discarded_gene = None
+        top_discarded_gene_counts = 0
+        if study_discarded:
+            discarded_positions = np.flatnonzero(discarded_mask)
+            top_position = discarded_positions[np.argmax(gene_counts[discarded_mask])]
+            top_discarded_gene = str(gene_names[top_position])
+            top_discarded_gene_counts = int(gene_counts[top_position])
+        study_rows.append({
+            "study": str(part.obs["study"].iloc[0]),
+            "input_gene_symbols": int(part.n_vars),
+            "retained_gene_symbols": int(retained_mask.sum()),
+            "discarded_gene_symbols": int(discarded_mask.sum()),
+            "input_counts": study_total,
+            "retained_counts": study_retained,
+            "discarded_counts": study_discarded,
+            "discarded_fraction": study_discarded / study_total if study_total else 0.0,
+            "top_discarded_gene": top_discarded_gene,
+            "top_discarded_gene_counts": top_discarded_gene_counts,
+            "top_gene_fraction_of_discarded_counts": (
+                top_discarded_gene_counts / study_discarded if study_discarded else 0.0
+            ),
+        })
+        total_counts += study_total
+        retained_counts += study_retained
+    discarded_counts = total_counts - retained_counts
+    return {
+        "gene_join": gene_join,
+        "joined_gene_symbols": len(joined_genes),
+        "input_counts": total_counts,
+        "retained_counts": retained_counts,
+        "discarded_counts": discarded_counts,
+        "discarded_fraction": discarded_counts / total_counts if total_counts else 0.0,
+        "studies": sorted(study_rows, key=lambda row: row["study"]),
+    }
 
 
 def _link_h5ad_for_merge(source: Path, destination: Path) -> None:
@@ -227,6 +290,19 @@ def merge_single_cells(
         shared_genes = _shared_gene_names(parts)
         if shared_genes.empty:
             raise ValueError("Studies have no shared genes for single-cell merge")
+        if spec["gene_join"] == "inner":
+            joined_genes = shared_genes
+        else:
+            joined_genes = parts[0].var_names
+            for part in parts[1:]:
+                joined_genes = joined_genes.union(part.var_names, sort=False)
+        accounting_started = _start_step(
+            study_id, "gene_join_count_accounting", join=spec["gene_join"]
+        )
+        gene_join_accounting = _gene_join_count_accounting(
+            parts, joined_genes, spec["gene_join"],
+        )
+        _log_step(study_id, "gene_join_count_accounting", accounting_started)
         _log_step(
             study_id, "read_input_metadata", started,
             inputs=len(paths), shared_genes=len(shared_genes),
@@ -386,6 +462,7 @@ def merge_single_cells(
     _log_step(study_id, "write_merged_h5ad", started)
     started = _start_step(study_id, "write_merge_report", output=report_path)
     report = _merge_report("single_cell_merge", merged, paths, pipeline)
+    report["gene_join_accounting"] = gene_join_accounting
     report.update({"embedding": embedding})
     _write_report(report_path, report)
     _log_step(study_id, "write_merge_report", started)

@@ -37,8 +37,15 @@ workflow {
             error "${de_manifest_file}: missing results_by_cell_type DE artifact index"
         }
         def indexed_dirs = result_index.collect { slug, record ->
-            def result_paths = (record.per_study ?: []).collect { model -> model.path } +
-                (record.merged ? [record.merged] : [])
+            def result_paths = (record.per_study ?: []).collectMany { model ->
+                if (model.paths instanceof Map) {
+                    return model.paths.values().collect { result_path -> result_path as String }
+                }
+                return model.path ? [model.path as String] : []
+            } + (record.combined instanceof Map
+                ? record.combined.values().collect { result_path -> result_path as String }
+                : []) + (record.merged ? [record.merged as String] : [])
+            result_paths = result_paths.unique()
             result_paths.each { relative_path ->
                 if (!de_manifest_file.parent.resolve(relative_path as String).isFile()) {
                     error "${de_manifest_file}: indexed DE result is missing: ${relative_path}"

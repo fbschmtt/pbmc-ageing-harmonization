@@ -1,12 +1,34 @@
 import pandas as pd
 
+from pbmc_pipeline.covariates import (
+    categorical_contrast_label,
+    categorical_levels,
+    normalize_cmv_status,
+)
 from pbmc_pipeline.reporting import (
     aifi_l2_concordance,
     gene_presence_indicators,
     pseudobulk_celltype_fractions,
     sample_cell_type_fractions,
     sample_cluster_fractions,
+    signed_value_at_largest_absolute_magnitude,
 )
+
+
+def test_categorical_reference_levels_are_explicit_and_cmv_labels_are_harmonized():
+    cmv = normalize_cmv_status(pd.Series(["Positive", "Negative", "no", "yes"]))
+
+    assert cmv.tolist() == ["yes", "no", "no", "yes"]
+    assert categorical_levels("sex", pd.Series(["male", "female"])) == ["female", "male"]
+    assert categorical_levels("cmv", cmv) == ["no", "yes"]
+    assert categorical_contrast_label("sex", "male", "female") == "SEX: male vs female"
+    assert categorical_contrast_label("cmv", "yes", "no") == "CMV: yes vs no"
+
+
+def test_signed_largest_magnitude_retains_direction_and_ignores_invalid_values():
+    values = pd.Series([1.4, -3.2, 2.7, float("nan"), float("inf"), "invalid"])
+
+    assert signed_value_at_largest_absolute_magnitude(values) == -3.2
 
 
 def test_gene_presence_indicators_uses_merge_provenance_columns():

@@ -16,6 +16,7 @@ import pandas as pd
 import scanpy as sc
 import seaborn as sns
 from IPython.display import Markdown, display
+from matplotlib.ticker import MaxNLocator
 from scipy import sparse
 from upsetplot import UpSet, from_indicators
 
@@ -38,7 +39,7 @@ def show_summary(adata, report, path, heading):
 
 def show_study_coverage(adata):
     study_sizes = adata.obs["study"].astype(str).value_counts().sort_values()
-    fig, axes = plt.subplots(1, 2, figsize=(13, 4))
+    _, axes = plt.subplots(1, 2, figsize=(13, 4))
     study_sizes.plot.barh(ax=axes[0], color="#4c72b0")
     axes[0].set_title("Observations by study")
     if "n_cells" in adata.obs:
@@ -61,58 +62,87 @@ def show_technical_covariates(adata):
 
     metadata = adata.obs[["study", "sample", *available]].copy()
     metadata["study"] = metadata["study"].astype(str)
-    metadata["sample"] = metadata["sample"].astype(str)
-    study_config_path = Path(os.environ["QC_STUDIES_CONFIG"])
-    study_config = json.loads(study_config_path.read_text()).get("studies", {})
-    rows = []
-    for column in available:
-        values = metadata[["study", "sample", column]].copy()
+    fig, axes = plt.subplots(1, len(available), figsize=(5 * len(available), 4), squeeze=False)
+    for axis, column in zip(axes.flat, available):
+        values = metadata[["study", column]].copy()
         values[column] = values[column].astype("string").fillna("not_provided").astype(str)
-        values = values.drop_duplicates()
-        sample_counts = values.groupby(["study", column], observed=True)["sample"].nunique()
-        total_samples = values.groupby("study", observed=True)["sample"].nunique()
-        multiple_values = values.groupby(["study", "sample"], observed=True)[column].nunique()
-        multiple_values = multiple_values.gt(1).groupby(level="study", observed=True).sum()
-        for (study, value), count in sample_counts.items():
-            provenance = study_config.get(study, {}).get("provenance", {}).get(column, "")
-            normalized = str(provenance).lower()
-            if "needs_review" in normalized:
-                evidence = "needs review"
-            elif (
-                "pending_author" in normalized
-                or "pending confirmation" in normalized
-                or "pending author" in normalized
-            ):
-                evidence = "pending confirmation"
-            elif "inferred" in normalized:
-                evidence = "inferred"
-            elif provenance:
-                evidence = "documented"
-            else:
-                evidence = "not recorded"
-            denominator = int(total_samples.loc[study])
-            rows.append({
-                "covariate": column,
-                "study": study,
-                "value": value,
-                "samples": int(count),
-                "study samples": denominator,
-                "percent": round(100 * int(count) / denominator, 1) if denominator else 0.0,
-                "samples with multiple values": int(multiple_values.get(study, 0)),
-                "evidence": evidence,
-            })
+        study_counts = (
+            values.drop_duplicates()
+            .groupby(column, observed=True)["study"]
+            .nunique()
+            .sort_values(ascending=True)
+        )
+        axis.barh(study_counts.index, study_counts.values, color="#4c72b0")
+        axis.set_title(column.replace("_", " "))
+        axis.set_xlabel("Studies")
+        axis.set_ylabel("Value")
+        axis.set_xlim(0, max(1, int(study_counts.max())))
+        axis.xaxis.set_major_locator(MaxNLocator(integer=True))
 
     display(Markdown("### Technical covariates across studies"))
     display(Markdown(
-        "Counts use distinct configured study × sample units from the merged "
-        "pseudobulks. A sample with multiple values is counted in each matching "
-        "row; `Heterogeneous During Bulk` denotes mixed values within a sample × "
-        "AIFI-L2 aggregate. Evidence status summarizes `config/studies.json`. "
-        "OneK1K currently uses `donor_id` as its sample key; that assumption is "
-        "flagged there for review."
+        "Bars count distinct studies represented by each value. A study with "
+        "multiple values for a covariate is counted under each value; missing "
+        "values are shown as `not_provided`."
     ))
-    summary = pd.DataFrame(rows)
-    display(summary.sort_values(["covariate", "study", "value"]).reset_index(drop=True))
+    fig.tight_layout()
+    plt.show()
+
+
+def show_gene_join_accounting(report, heading):
+    accounting = report.get("gene_join_accounting")
+    if not accounting:
+        display(Markdown(f"### {heading}\n\n_Count accounting is unavailable in this merge report._"))
+        return
+
+    join = accounting["gene_join"]
+    join_description = "union" if join == "outer" else "intersection"
+    total = int(accounting["input_counts"])
+    discarded = int(accounting["discarded_counts"])
+    percent = 100 * float(accounting["discarded_fraction"])
+    display(Markdown(
+        f"### {heading}\n\nThe {join_description} retains "
+        f"{accounting['joined_gene_symbols']:,} gene symbols. Across all studies, "
+        f"{discarded:,} of {total:,} input counts ({percent:.3f}%) are excluded by "
+        "the gene join. The table reports each study's counts and the excluded gene "
+        "symbol with the largest count contribution."
+    ))
+    rows = pd.DataFrame(accounting["studies"])
+    if rows.empty:
+        return
+    rows["counts discarded (%)"] = (100 * rows["discarded_fraction"]).map(lambda value: f"{value:.3f}")
+    rows["top excluded gene"] = rows.apply(
+        lambda row: (
+            f"{row['top_discarded_gene']} ({int(row['top_discarded_gene_counts']):,})"
+            if row["top_discarded_gene"] is not None
+            else "—"
+        ),
+        axis=1,
+    )
+    if report.get("kind") == "single_cell_merge":
+        plot_rows = rows.sort_values("discarded_fraction", ascending=False)
+        percentages = 100 * plot_rows["discarded_fraction"]
+        fig, axis = plt.subplots(figsize=(9, max(3, 0.4 * len(plot_rows))))
+        bars = axis.barh(plot_rows["study"], percentages, color="#c44e52")
+        axis.invert_yaxis()
+        axis.set_xlabel("Counts discarded (%)")
+        axis.set_ylabel("Study")
+        axis.set_title("Counts removed by the single-cell gene intersection")
+        axis.set_xlim(0, max(0.5, float(percentages.max()) * 1.15))
+        axis.bar_label(bars, labels=[f"{value:.2f}%" for value in percentages], padding=3)
+        fig.tight_layout()
+        plt.show()
+
+    display(rows[[
+        "study", "input_gene_symbols", "retained_gene_symbols", "discarded_gene_symbols",
+        "input_counts", "discarded_counts", "counts discarded (%)", "top excluded gene",
+    ]].rename(columns={
+        "input_gene_symbols": "input genes",
+        "retained_gene_symbols": "retained genes",
+        "discarded_gene_symbols": "discarded genes",
+        "input_counts": "input counts",
+        "discarded_counts": "discarded counts",
+    }))
 
 
 # %% [markdown]
@@ -122,6 +152,7 @@ def show_technical_covariates(adata):
 pseudobulk, pseudobulk_report, pseudobulk_path = load_merge("PSEUDOBULK")
 show_summary(pseudobulk, pseudobulk_report, pseudobulk_path, "Pseudobulk merge")
 show_study_coverage(pseudobulk)
+show_gene_join_accounting(pseudobulk_report, "Pseudobulk gene join")
 show_technical_covariates(pseudobulk)
 
 # %% [markdown]
@@ -166,6 +197,7 @@ else:
     single_cell, single_cell_report, single_cell_path = load_merge("SINGLE_CELL")
     show_summary(single_cell, single_cell_report, single_cell_path, "Global single-cell merge")
     show_study_coverage(single_cell)
+    show_gene_join_accounting(single_cell_report, "Single-cell gene join")
 
     display(Markdown("### AIFI L2 label concordance"))
     label_columns = [

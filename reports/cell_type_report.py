@@ -1,4 +1,5 @@
 # %%
+import json
 import os
 import warnings
 from html import escape
@@ -14,13 +15,22 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 import seaborn as sns
-from IPython.display import HTML, Markdown, display
 import statsmodels.api as sm
+from IPython.display import HTML, Markdown, display
 
 sns.set_theme(style="whitegrid")
 plt.rcParams.update({"figure.dpi": 110, "savefig.dpi": 110})
 from pbmc_pipeline.config import read_json
-from pbmc_pipeline.reporting import sample_cell_type_fractions, sample_cluster_fractions
+from pbmc_pipeline.covariates import (
+    categorical_contrast_label,
+    categorical_levels,
+    normalize_cmv_status,
+)
+from pbmc_pipeline.reporting import (
+    sample_cell_type_fractions,
+    sample_cluster_fractions,
+    signed_value_at_largest_absolute_magnitude,
+)
 
 primitive = sc.read_h5ad(Path(os.environ["CELL_TYPE_H5AD"]))
 analysis_path = Path(os.environ["CELL_TYPE_ANALYSIS_H5AD"])
@@ -438,6 +448,8 @@ def fit_parent_fraction_models(
             raise ValueError(f"{column} must be constant within each study × sample")
     data = fractions.merge(metadata, on=["study", "sample"], how="left", validate="one_to_one")
     data["age"] = pd.to_numeric(data["age"], errors="coerce")
+    if "cmv" in present:
+        data["cmv"] = normalize_cmv_status(data["cmv"])
     data = data.loc[data["age"] >= 20].copy()
     results = []
     residual_diagnostics = []
@@ -461,8 +473,8 @@ def fit_parent_fraction_models(
             coverage = float(valid.mean()) if len(eligible) else np.nan
             if coverage >= 0.95:
                 if column in {"sex", "cmv"}:
-                    levels = eligible.loc[valid, column].astype("string").str.strip().str.lower().nunique()
-                    variable = levels >= 2
+                    levels = categorical_levels(column, eligible.loc[valid, column])
+                    variable = len(levels) >= 2
                 else:
                     variable = pd.to_numeric(eligible.loc[valid, column], errors="coerce").nunique() >= 2
                 if variable:
@@ -484,7 +496,7 @@ def fit_parent_fraction_models(
                 term_covariates[column] = column
             else:
                 values = model_data[column].astype("string").str.strip().str.lower()
-                levels = sorted(values.unique().tolist())
+                levels = categorical_levels(column, values)
                 values = pd.Series(pd.Categorical(values, categories=levels), index=model_data.index)
                 dummies = pd.get_dummies(values, prefix=column, drop_first=True, dtype=float)
                 for term in dummies:
@@ -528,7 +540,10 @@ def fit_parent_fraction_models(
                 continue
             covariate = term_covariates[term]
             if covariate in {"sex", "cmv"}:
-                levels = sorted(model_data[covariate].astype("string").str.strip().str.lower().unique())
+                levels = categorical_levels(
+                    covariate,
+                    model_data[covariate].astype("string").str.strip().str.lower(),
+                )
                 contrast = f"{term.removeprefix(f'{covariate}_')} vs {levels[0]}"
             else:
                 contrast = "per decade" if covariate == "age" else "per BMI unit"
@@ -566,13 +581,32 @@ def plot_parent_fraction_coefficients(coefficients, residual_diagnostics, *, pal
                        if name in coefficients["covariate"].unique()]
     studies = sorted(coefficients["study"].unique())
     residual_label = "residual_sd"
-    y_positions = {name: index for index, name in enumerate([*covariate_order, residual_label])}
-    figure, axis = plt.subplots(figsize=(10, max(4.8, 1.25 * (len(covariate_order) + 1))))
+    coefficient_rows = []
+    for covariate in covariate_order:
+        subset = coefficients.loc[coefficients["covariate"] == covariate]
+        for contrast in sorted(subset["contrast"].astype(str).unique()):
+            if covariate in {"sex", "cmv"}:
+                label = categorical_contrast_label(
+                    covariate, contrast.split(" vs ", maxsplit=1)[0],
+                    contrast.split(" vs ", maxsplit=1)[1],
+                )
+            elif covariate == "age":
+                label = "AGE (per decade)"
+            else:
+                label = "BMI (per BMI unit)"
+            coefficient_rows.append((covariate, contrast, label))
+    y_positions = {
+        (covariate, contrast): index
+        for index, (covariate, contrast, _) in enumerate(coefficient_rows)
+    }
+    residual_y = len(coefficient_rows)
+    y_positions[residual_label] = residual_y
+    figure, axis = plt.subplots(figsize=(10, max(4.8, 1.15 * (len(coefficient_rows) + 1))))
     for study_index, study in enumerate(studies):
         subset = coefficients.loc[coefficients["study"] == study]
         for _, row in subset.iterrows():
             offset = (study_index - (len(studies) - 1) / 2) * 0.055
-            y = y_positions[row["covariate"]] + offset
+            y = y_positions[(row["covariate"], row["contrast"])] + offset
             axis.errorbar(
                 row["estimate"], y,
                 xerr=[[row["estimate"] - row["ci_low"]], [row["ci_high"] - row["estimate"]]],
@@ -586,7 +620,7 @@ def plot_parent_fraction_coefficients(coefficients, residual_diagnostics, *, pal
         # Interpretation check: assess whether residual variation is too large
         # for the coefficient estimates above to support useful interpretation.
         offset = (study_index - (len(studies) - 1) / 2) * 0.055
-        y = y_positions[residual_label] + offset
+        y = residual_y + offset
         axis.plot(row["residual_sd"], y, "o", color=palette[study], markersize=6)
         axis.plot(
             row["binomial_sampling_sd"], y, marker="D", linestyle="", markersize=5,
@@ -594,11 +628,8 @@ def plot_parent_fraction_coefficients(coefficients, residual_diagnostics, *, pal
         )
     axis.axvline(0, color="#333333", linewidth=1, linestyle="--")
     axis.set_yticks(
-        list(y_positions.values()),
-        [
-            *("AGE (Effect per decade)" if name == "age" else name.upper() for name in covariate_order),
-            "RESIDUAL SD (fraction)",
-        ],
+        list(range(residual_y + 1)),
+        [*(label for _, _, label in coefficient_rows), "RESIDUAL SD (fraction)"],
     )
     axis.set_xlabel("OLS coefficient (95% CI)")
     axis.set_ylabel("Covariate / diagnostic")
@@ -898,8 +929,9 @@ display(Markdown(
 # sex and CMV are categorical treatment-coded terms. A covariate is included
 # when it is present and observed in at least 95% of adult samples in that
 # study. Models use complete cases for the included covariates, and categorical
-# contrasts use the first sorted level as the reference. Age coefficients and
-# intervals are scaled to a 10-year change. The bottom row compares each model's
+# contrasts use female as the sex reference and no CMV (negative, when that is
+# the source label) as the CMV reference. Age coefficients and intervals are
+# scaled to a 10-year change. The bottom row compares each model's
 # residual SD with a conditional parametric bootstrap of binomial cell-sampling
 # noise. For donor *i*, the reported OLS model supplies its fitted fraction
 # \(p_i\), clipped to [0, 1], and its observed parent-cell count is \(n_i\).
@@ -1143,16 +1175,56 @@ if report["status"] == "complete":
 # %%
 if de_dir:
     de_dir = Path(de_dir)
-    per_study_files = sorted((de_dir / "per_study").glob("*.csv"))
-    merged_file = de_dir / "merged.csv"
-    merged_results = pd.read_csv(merged_file) if merged_file.is_file() else None
+    indexed_result_paths = {
+        (de_dir / relative_path).resolve()
+        for model in de_run_metadata.get("models", [])
+        if model.get("status") == "complete"
+        for relative_path in model.get("results_by_covariate", {}).values()
+    }
+    if "models" in de_run_metadata:
+        per_study_files = sorted(
+            path for path in (de_dir / "per_study").rglob("*.csv")
+            if path.resolve() in indexed_result_paths
+        )
+        merged_file = de_dir / "merged.csv"
+        if merged_file.resolve() not in indexed_result_paths:
+            merged_file = None
+        combined_files = sorted(
+            path for path in (de_dir / "combined").glob("*.csv")
+            if path.resolve() in indexed_result_paths
+        )
+    else:
+        per_study_files = sorted((de_dir / "per_study").rglob("*.csv"))
+        merged_file = de_dir / "merged.csv"
+        combined_files = sorted((de_dir / "combined").glob("*.csv"))
     per_study_results = []
     for result_path in per_study_files:
         result = pd.read_csv(result_path)
+        if "covariate" not in result:
+            result["covariate"] = "age"
+        if "contrast" not in result:
+            result["contrast"] = "per year"
+        if "study_sample_counts" not in result:
+            result["study_sample_counts"] = "{}"
         per_study_results.append(result)
     has_per_study = bool(per_study_results)
-    has_merged = merged_results is not None
-    if has_per_study or has_merged or de_run_metadata:
+    combined_results_by_covariate = {}
+    if merged_file is not None and merged_file.is_file():
+        result = pd.read_csv(merged_file)
+        if "covariate" not in result:
+            result["covariate"] = "age"
+        if "contrast" not in result:
+            result["contrast"] = "per year"
+        combined_results_by_covariate["age"] = result
+    for result_path in combined_files:
+        result = pd.read_csv(result_path)
+        if "covariate" not in result:
+            result["covariate"] = result_path.stem
+        if "contrast" not in result:
+            result["contrast"] = "per BMI unit" if result_path.stem == "bmi" else result_path.stem
+        combined_results_by_covariate[result_path.stem] = result
+    has_combined = bool(combined_results_by_covariate)
+    if has_per_study or has_combined or de_run_metadata:
         display(Markdown("<a id=\"differential-expression\"></a>\n## Pseudobulk differential expression"))
         display(Markdown(
             "Pseudobulk models aggregate counts at the study × sample × cell-type level. "
@@ -1163,18 +1235,30 @@ if de_dir:
                 "> **TEST OUTPUT — NOT FOR BIOLOGICAL INTERPRETATION.** "
                 + de_run_metadata["interpretation_warning"]
             ))
-        if not has_per_study and not has_merged:
+        if not has_per_study and not has_combined:
             display(Markdown(
                 "_No estimable PyDESeq2 result files were produced for this cell type._"
             ))
-    if has_per_study or has_merged:
+    if has_per_study or has_combined:
         de_alpha = pipeline["differential_expression"]["alpha"]
-        per_study_all = pd.concat(per_study_results, ignore_index=True) if has_per_study else pd.DataFrame()
-        if has_per_study:
-            gene_universes = [set(result["gene"].astype(str)) for result in per_study_results]
+        per_study_by_covariate = {}
+        for result in per_study_results:
+            for covariate, subset in result.groupby("covariate", observed=True):
+                per_study_by_covariate.setdefault(str(covariate), []).append(subset)
+        age_per_study = (
+            pd.concat(per_study_by_covariate.get("age", []), ignore_index=True)
+            if per_study_by_covariate.get("age") else pd.DataFrame()
+        )
+        age_study_results = (
+            [group for _, group in age_per_study.groupby("study", observed=True)]
+            if not age_per_study.empty else []
+        )
+        has_age_per_study = bool(age_study_results)
+        if has_age_per_study:
+            gene_universes = [set(result["gene"].astype(str)) for result in age_study_results]
             common_per_study_genes = set.intersection(*gene_universes)
-            per_study_significant = per_study_all.loc[
-                pd.to_numeric(per_study_all["padj"], errors="coerce") < de_alpha
+            per_study_significant = age_per_study.loc[
+                pd.to_numeric(age_per_study["padj"], errors="coerce") < de_alpha
             ].copy()
             per_study_hits = per_study_significant.loc[
                 per_study_significant["gene"].astype(str).isin(common_per_study_genes)
@@ -1185,29 +1269,60 @@ if de_dir:
                     studies_associated=("study", "nunique"),
                     studies=("study", lambda values: ", ".join(sorted(set(values)))),
                     maximum_absolute_log2_fold_change=(
-                        "log2FoldChange", lambda values: pd.to_numeric(values, errors="coerce").abs().max()
+                        "log2FoldChange", signed_value_at_largest_absolute_magnitude
                     ),
                 )
+                .assign(_absolute_effect=lambda frame: frame[
+                    "maximum_absolute_log2_fold_change"
+                ].abs())
                 .sort_values(
-                    ["studies_associated", "maximum_absolute_log2_fold_change", "gene"],
+                    ["studies_associated", "_absolute_effect", "gene"],
                     ascending=[False, False, True],
                 )
+                .drop(columns="_absolute_effect")
             )
         else:
             recurrence = pd.DataFrame()
 
+        diagnostic_rows = []
+        for covariate, model_results in per_study_by_covariate.items():
+            covariate_results = pd.concat(model_results, ignore_index=True)
+            study_gene_sets = [
+                set(group["gene"].astype(str))
+                for _, group in covariate_results.groupby("study", observed=True)
+            ]
+            if not study_gene_sets:
+                continue
+            common_genes = set.intersection(*study_gene_sets)
+            for (study, contrast), study_results in covariate_results.groupby(
+                ["study", "contrast"], sort=True, observed=True
+            ):
+                significant = study_results.loc[
+                    pd.to_numeric(study_results["padj"], errors="coerce") < de_alpha
+                ]
+                in_intersection = significant.loc[
+                    significant["gene"].astype(str).isin(common_genes), "gene"
+                ].nunique()
+                total_significant = int(significant["gene"].nunique())
+                outside_intersection = total_significant - int(in_intersection)
+                diagnostic_rows.append({
+                    "covariate": covariate,
+                    "contrast": contrast,
+                    "study": study,
+                    "significant genes": total_significant,
+                    "significant genes in study intersection": int(in_intersection),
+                    "significant genes outside intersection": outside_intersection,
+                    "outside intersection (%)": (
+                        100 * outside_intersection / total_significant if total_significant else 0.0
+                    ),
+                })
+        intersection_diagnostics = pd.DataFrame(diagnostic_rows)
+
         summary_rows = []
-        if has_per_study:
-            significant_by_study = (
-                per_study_significant.groupby("study")["gene"].nunique().sort_index()
-            )
-            summary_rows.extend(
-                {"model": f"Per study: {study}", "FDR-significant age-associated genes": int(count)}
-                for study, count in significant_by_study.items()
-            )
+        if has_age_per_study:
             summary_rows.append(
                 {
-                    "model": "Per-study union",
+                    "model": "Per-study age significant-gene union",
                     "FDR-significant age-associated genes": int(
                         per_study_significant["gene"].nunique()
                     ),
@@ -1215,26 +1330,86 @@ if de_dir:
             )
             summary_rows.append(
                 {
-                    "model": "Per-study common-universe union",
+                    "model": "Per-study age significant genes in all-study intersection",
                     "FDR-significant age-associated genes": int(per_study_hits["gene"].nunique()),
                 }
             )
-        if has_merged:
-            merged_padj = pd.to_numeric(merged_results["padj"], errors="coerce")
-            summary_rows.append(
-                {
-                    "model": "Merged shared-slope fit",
-                    "FDR-significant age-associated genes": int((merged_padj < de_alpha).sum()),
-                }
-            )
-        display(Markdown(
-            f"PyDESeq2 age effects; FDR threshold **{de_alpha:g}**. "
-            "Gene counts use adjusted p-values in each fitted model. Study recurrence "
-            "is restricted to genes tested in every available per-study result."
-        ))
-        display(pd.DataFrame(summary_rows))
+        if not intersection_diagnostics.empty:
+            display(Markdown(
+                "For each covariate, each study's significant genes are compared with the "
+                "intersection of genes tested by all available per-study fits for that "
+                "covariate. The table reports the count and fraction outside the intersection."
+            ))
+            display(intersection_diagnostics.assign(
+                **{"outside intersection (%)": intersection_diagnostics[
+                    "outside intersection (%)"
+                ].map(lambda value: f"{value:.1f}%")}
+            ))
 
-        if has_per_study:
+        combined_fit_records = [
+            model for model in de_run_metadata.get("models", [])
+            if model.get("model") in {"merged", "combined"}
+        ]
+        combined_covariate_summary = []
+        for covariate, results in combined_results_by_covariate.items():
+            padj = pd.to_numeric(results["padj"], errors="coerce")
+            fit_record = next(
+                (model for model in combined_fit_records
+                 if covariate in model.get("results_by_covariate", {})),
+                {},
+            )
+            combined_covariate_summary.append({
+                "covariate": covariate,
+                "design": fit_record.get("design", "—"),
+                "FDR-significant genes": int((padj < de_alpha).sum()),
+                "studies used": ", ".join(fit_record.get("studies", [])),
+                "samples used": fit_record.get("n_samples", "—"),
+            })
+        if combined_covariate_summary:
+            display(Markdown("### Combined covariate models"))
+            display(pd.DataFrame(combined_covariate_summary))
+
+        per_study_covariate_summary = []
+        for result in per_study_results:
+            for (covariate, contrast), subset in result.groupby(
+                ["covariate", "contrast"], observed=True
+            ):
+                sample_counts = json.loads(str(subset["study_sample_counts"].iloc[0]))
+                study = str(subset["study"].iloc[0])
+                fit_record = next(
+                    (model for model in de_run_metadata.get("models", [])
+                     if model.get("model") == "per_study"
+                     and model.get("study") == study
+                     and covariate in model.get("results_by_covariate", {})),
+                    {},
+                )
+                per_study_covariate_summary.append({
+                    "study": study,
+                    "covariate": covariate,
+                    "contrast": contrast,
+                    "design": fit_record.get("design", "—"),
+                    "samples used": sum(sample_counts.values()) if sample_counts else "—",
+                    "genes tested": subset["gene"].nunique(),
+                    "FDR-significant genes": int(
+                        (pd.to_numeric(subset["padj"], errors="coerce") < de_alpha).sum()
+                    ),
+                })
+        if per_study_covariate_summary:
+            display(Markdown("### Per-study covariate models"))
+            display(pd.DataFrame(per_study_covariate_summary))
+
+        display(Markdown(
+            f"PyDESeq2 covariate effects; FDR threshold **{de_alpha:g}**. "
+            "Age and sex share the study-adjusted model. BMI and CMV use separate "
+            "models adjusted for age and sex, with study adjustment when multiple "
+            "studies contribute. Missing covariate values are excluded from that "
+            "covariate's fit. Categorical effects use female as the sex reference "
+            "and no CMV (negative where that is the source label) as the CMV reference."
+        ))
+        if summary_rows:
+            display(pd.DataFrame(summary_rows))
+
+        if has_age_per_study:
             figure, axes = plt.subplots(1, 2, figsize=(14.5, 5.8))
             if recurrence.empty:
                 empty_message = (
@@ -1268,24 +1443,60 @@ if de_dir:
             figure.tight_layout()
             plt.show()
             if not recurrence.empty:
+                display(Markdown(
+                    "The effect shown for each gene is the **signed** age log2 fold change "
+                    "with the largest absolute magnitude among its per-study estimates."
+                ))
                 display(recurrence.head(20))
 
-        if has_merged:
-            volcano = merged_results.copy()
-            volcano["padj"] = pd.to_numeric(volcano["padj"], errors="coerce")
-            volcano["log2FoldChange"] = pd.to_numeric(
-                volcano["log2FoldChange"], errors="coerce"
+        for covariate, combined_results in combined_results_by_covariate.items():
+            fit_record = next(
+                (model for model in combined_fit_records
+                 if covariate in model.get("results_by_covariate", {})),
+                {},
             )
-            volcano = volcano.dropna(subset=["padj", "log2FoldChange"]).copy()
-            if volcano.empty:
-                display(Markdown("_The merged model has no finite adjusted p-values to plot._"))
-            else:
+            for contrast, contrast_results in combined_results.groupby("contrast", sort=True):
+                volcano = contrast_results.copy()
+                volcano["padj"] = pd.to_numeric(volcano["padj"], errors="coerce")
+                volcano["log2FoldChange"] = pd.to_numeric(
+                    volcano["log2FoldChange"], errors="coerce"
+                )
+                volcano = volcano.dropna(subset=["padj", "log2FoldChange"]).copy()
+                if volcano.empty:
+                    display(Markdown(
+                        f"_{covariate} ({contrast}) has no finite adjusted p-values to plot._"
+                    ))
+                    continue
                 volcano["minus_log10_padj"] = -np.log10(
                     volcano["padj"].clip(lower=np.finfo(float).tiny)
                 )
                 volcano["association"] = np.where(
                     volcano["padj"] < de_alpha, "FDR significant", "Not significant"
                 )
+                studies_used = (
+                    str(volcano["studies_included"].iloc[0]).split(";")
+                    if "studies_included" in volcano else fit_record.get("studies", [])
+                )
+                sample_counts = (
+                    json.loads(str(volcano["study_sample_counts"].iloc[0]))
+                    if "study_sample_counts" in volcano
+                    else fit_record.get("study_sample_counts", {})
+                )
+                study_summary = ", ".join(
+                    f"{study} (n={sample_counts.get(study, 0)})" for study in studies_used if study
+                )
+                if not studies_used:
+                    studies_used = sorted(sample_counts)
+                if not study_summary and sample_counts:
+                    study_summary = ", ".join(
+                        f"{study} (n={count})" for study, count in sample_counts.items()
+                    )
+                n_samples_used = sum(sample_counts.values()) if sample_counts else "unavailable"
+                display(Markdown(
+                    f"**{covariate.upper()} contrast:** {contrast}. **Studies used:** "
+                    f"{study_summary or 'unavailable in this legacy result set'}; "
+                    f"**samples used:** {n_samples_used}."
+                ))
                 figure, axis = plt.subplots(figsize=(9, 6.5))
                 sns.scatterplot(
                     data=volcano, x="log2FoldChange", y="minus_log10_padj",
@@ -1295,9 +1506,20 @@ if de_dir:
                 )
                 axis.axhline(-np.log10(de_alpha), color="#555555", linestyle="--", linewidth=1)
                 axis.axvline(0, color="#555555", linewidth=0.8)
-                axis.set_xlabel("Age effect (log2 fold change per year)")
+                if covariate == "age":
+                    effect_label = "log2 fold change per year"
+                elif covariate == "bmi":
+                    effect_label = "log2 fold change per BMI unit"
+                else:
+                    effect_label = f"log2 fold change ({contrast})"
+                axis.set_xlabel(f"{covariate.upper()} effect ({effect_label})")
                 axis.set_ylabel("−log10(adjusted p-value)")
-                axis.set_title("Merged shared-slope age association")
+                if len(studies_used) > 1:
+                    title = f"Combined study-adjusted {covariate.upper()} association"
+                else:
+                    study_name = studies_used[0] if studies_used else "single study"
+                    title = f"{covariate.upper()} association in {study_name}"
+                axis.set_title(title)
                 labels = volcano.loc[volcano["padj"] < de_alpha].nsmallest(12, "padj")
                 for _, row in labels.iterrows():
                     axis.annotate(
@@ -1309,6 +1531,7 @@ if de_dir:
                 plt.show()
         display(Markdown(
             "_DE interpretation: the recurrence panels emphasize agreement among available per-study "
-            "models; the merged volcano is a shared-slope, study-adjusted summary and does not by "
-            "itself establish replication across studies._"
+            "models; each combined volcano summarizes all eligible samples with age and sex adjustment. "
+            "When only one study contributes, study adjustment is omitted and the plot describes that "
+            "study alone. Combined fits do not by themselves establish replication across studies._"
         ))

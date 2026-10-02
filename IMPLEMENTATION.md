@@ -86,7 +86,8 @@ merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
   pseudobulk fixture generation; the generated H5AD is ignored output, not a
   checked-in fixture.
 - `scripts/check_synthetic_de.py`: assertions used by `make run-all-test` and
-  `make verify` for model completion, planted age-marker detection, and report output.
+  `make verify` for age, sex, BMI, and CMV marker detection; covariate-specific
+  study selection; complete-case counts; and report output.
 - `src/pbmc_pipeline/reporting.py`: testable report data transformations.
 - `reports/merge_qc_report.py`: Jupytext source for the generated merge
   notebook. Report runners materialize these Python sources in a temporary
@@ -112,7 +113,7 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/cell_type_analysis/<aifi-l2-type>/executed.ipynb` (optional executed technical/audit report)
 - `<outdir>/cell_type_analysis/<aifi-l2-type>/fraction_model_diagnostics.tsv` (optional per-study fraction-model covariates, residual SD, and binomial-sampling reference)
 - `<outdir>/cell_type_analysis/cell_type_manifest.json` (optional downstream provenance and completeness contract)
-- `<outdir>/differential_expression/<cell-type-slug>/...csv` (per-study and merged age results)
+- `<outdir>/differential_expression/<cell-type-slug>/...csv` (per-study and combined covariate results)
 - `<outdir>/differential_expression/<cell-type-slug>/cell_type_result.json` (per-task fit record collected into the root manifest)
 - `<outdir>/differential_expression/differential_expression.json` (DE status and cell-type result index)
 - `<outdir>/run_manifest.json` (requested, selected, and skipped studies;
@@ -187,8 +188,8 @@ report rendering are named Nextflow subworkflows. The DE workflow remains an
 independent producer: it lists labels, then each task loads the small merged
 pseudobulk H5AD and subsets its assigned type in memory (without materializing
 per-type pseudobulk inputs). A final collector writes the
-`differential_expression.json` manifest that indexes results by cell-type slug.
-A single report-render process receives either the
+`differential_expression.json` manifest that indexes per-study and combined
+covariate results by cell-type slug. A single report-render process receives either the
 matching result directory or a no-DE flag and publishes only beneath
 `cell_type_analysis/`. DE results publish only beneath
 `differential_expression/`.
@@ -235,7 +236,10 @@ age markers, renders all cell-type reports from the fresh core test merge, and
 checks that the matching reports contain the warning, marker results, and
 rendered DE plots. Reserve it for cross-cutting or release-level validation;
 pass `STUDIES=<list>` for a narrower verification. The synthetic fixture has
-only two cell types, so other reports exercise the ordinary no-DE path.
+only two cell types, so other reports exercise the ordinary no-DE path. It is
+workflow coverage rather than a realistic model of study balance or biological
+effects: covariate availability and gene presence are deliberately simple, and
+the planted effects have no study-specific heterogeneity.
 `make run` is the resumable production entry point; `make run-no-qc` omits only
 report rendering.
 `MERGE_SINGLE_CELL=true` enables the optional single-cell branch.
@@ -251,6 +255,8 @@ study with eligible age, sex, BMI, and CMV covariates. Age effects are reported
 per decade. `cell_type_analysis.fraction_model` configures the deterministic
 parametric binomial bootstrap (currently 1,000 replicates and seed 0) used as
 the conditional cell-sampling reference in the report and diagnostics TSV.
+Categorical forest-plot labels show each contrast and its reference level;
+sex uses female as the reference, and CMV uses no/negative as the reference.
 Each donor's OLS-fitted fraction is held fixed as its binomial probability
 (clipped to `[0, 1]`, with the count and fraction reported in diagnostics), its
 observed parent-cell count supplies the number of trials, and the same
