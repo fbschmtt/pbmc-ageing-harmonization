@@ -80,8 +80,10 @@ merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
   diagnostics, plus optional DE summaries and plots when the matching cell-type
   slug is present in the DE manifest. Its reader HTML leads with support
   metrics, a grouped table of contents, and a study-specific fraction-model
-  evidence summary; it places coverage and model evidence before embedding and
-  marker detail.
+  evidence summary; it places coverage and the adjusted-fraction forest plot
+  before secondary age trends, embedding, and marker detail. Forest-plot
+  effects and residual SDs are displayed in percentage points, with confidence
+  intervals extending beyond the axis marked at its boundary.
 - `differential_expression.nf` and `modules/differential_expression.nf`: the
   independent pseudobulk DE workflow: label listing, one in-memory type subset
   and fit per task, then result/manifest collection.
@@ -271,13 +273,18 @@ report rendering.
 The current Nextflow profiles leave CPU and time requests unspecified except
 for one CPU per parallel cell-type DE task; they do not set per-process memory
 limits. The full production pipeline and a fresh-clone input acquisition plus
-`make run-all` have completed successfully. Resource reports/traces are not yet
-part of the tracked run artifacts; record measured peak RAM before sizing a
-different runner or adding resource directives.
+`make run-all` completed successfully before the latest manual metadata
+corrections. Resource reports/traces are not yet part of the tracked run
+artifacts; record measured peak RAM before sizing a different runner or adding
+resource directives.
 
-The cell-type fraction model uses adults only and independently fits each
+## Per-cell-type reports
+
+The main fraction model uses adults only and independently fits each
 study with eligible age, sex, BMI, and CMV covariates. Age effects are reported
-per decade. `cell_type_analysis.fraction_model` configures the deterministic
+per decade. The modeled response is a 0–1 fraction; the forest plot scales
+coefficients, confidence limits, and residual SDs to percentage points.
+`cell_type_analysis.fraction_model` configures the deterministic
 parametric binomial bootstrap (currently 1,000 replicates and seed 0) used as
 the conditional cell-sampling reference in the report and diagnostics TSV.
 Categorical forest-plot labels show each contrast and its reference level;

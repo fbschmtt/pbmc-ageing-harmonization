@@ -423,20 +423,30 @@ notebook is the audit artifact. These standalone pages are intentionally
 separate from any future project-level website or custom frontend, which should
 browse manifests and structured report tables rather than parse notebook HTML.
 
-## Per-cell-type residual-variation reports
+## Per-cell-type reports
 
 The optional downstream workflow loads a completed merged single-cell H5AD once
 and splits it by the retained per-study `aifi_l2_majority` call. Experimental
 benchmark labels are never used for this split. For each type, `ANALYSE_CELL_TYPE`
 creates the type-specific PCA/UMAP/Leiden embedding, marker tables, PC--age
-correlation table, and `analysis.h5ad`. `RENDER_CELL_TYPE_REPORT` then loads
+correlation table, and `analysis.h5ad`. The PCA section shows each principal
+component's individual share of variance explained, not cumulative variance.
+`RENDER_CELL_TYPE_REPORT` then loads
 that analysis artifact plus the primitive raw-count H5AD to create the executed
 notebook and HTML. It also plots the retained per-study `aifi_l3_majority`
 labels; no merged L3 prediction is created. Global neighbours are deliberately
 not copied into the split artifacts.
 
-Each report also plots the type's sample-level fraction across age, coloured by
-study. It shows two descriptive denominators, both recorded before splitting:
+The main adjusted-fraction forest plot fits adult-only OLS models separately by
+study. Its age coefficient is per decade; sex, BMI, and CMV terms are shown when
+estimable. Fractions are modeled on the 0–1 scale and effects, confidence
+intervals, and residual SDs are displayed as absolute percentage-point changes
+(0.01 fraction = 1 percentage point). Confidence intervals extending beyond
+the displayed scale are marked with arrowheads. The title names the current L2
+cell type and its L1 parent.
+
+Secondary descriptive views plot the type's sample-level fraction across age,
+coloured by study. They show two denominators, both recorded before splitting:
 
 - all retained PBMCs in the same `study × sample` (`n_cells_in_sample`);
 - all retained cells in the configured AIFI-L1 parent compartment in that
@@ -473,6 +483,8 @@ predictions outside that range extrapolate for at least one study. This is a
 study-adjusted descriptive summary, separate from the per-study fraction models.
 The HC3 interval treats sample rows as independent; repeat samples from the same
 subject are not clustered, which may understate uncertainty.
+The within-study and study-adjusted age-trend figures appear in collapsed
+panels after the forest plot.
 
 ```bash
 make run-cell-type-analysis

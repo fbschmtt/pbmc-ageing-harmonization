@@ -176,9 +176,9 @@ make run STUDIES=all MERGE_SINGLE_CELL=true
   the pseudobulk sample count.
 - Wang25 is provisionally marked fresh based on the paper's selection of fresh
   reference samples; author confirmation is pending.
-- Review inferred intronic-read handling for OneK1K and Wang25, ambiguous AIDA25
-  Lonza batch assignments, and Terekhova23 demultiplexing. Keep unresolved
-  assumptions labelled as inferred.
+- Include OneK1K and Wang25 intronic-read handling, AIDA25 Lonza batch
+  assignments, and Terekhova23 demultiplexing in the final metadata review.
+  Keep unresolved assumptions labelled as inferred.
 - Wang25's published CMV IgM field is retained as qualitative serostatus and is
   negative for all 61 workbook records.
 - Decide whether final study files should retain UMAP/PCA artifacts or only labels.
@@ -259,6 +259,33 @@ reference group (female for sex; no/negative for CMV). Keep
 nonlinear age and an age-20 sensitivity analysis as future decisions. R DESeq2,
 edgeR quasi-likelihood, and limma-voom comparisons are outside this first
 implementation.
+
+### Priority investigation: unusual Naive CD8 T-cell age signal
+
+The production age volcano for Naive CD8 T cells has an unusually strong,
+asymmetric pattern. Diagnose it against the matching production pseudobulk and
+DE outputs before treating it as a biological result:
+
+- Reproduce the fit and inspect its sample-level age, study-site, technology,
+  sex, and pseudobulk cell-count distributions. Compare the pooled age
+  coefficient with within-study and within-site fits, study/site-specific age
+  slopes, and leave-one-study/site-out fits. Check count normalization,
+  size-factor behavior, filtering, and the result-to-plot mapping as part of
+  the reproduction.
+- Assess whether conditioning on the minimum 10 cells per sample × cell-type
+  pseudobulk induces selection/collider bias, especially for cell types whose
+  abundance falls with age. Compare inclusion against age, site, abundance,
+  and expression-related measurements, and run prespecified threshold
+  sensitivity analyses before deciding whether the cutoff contributes to the
+  signal.
+- Update the main cross-study batch adjustment from `study` to `study_site`.
+  The intended granularity is to split AIDA by country while keeping other
+  studies at one batch level, but `study_site` is also source-derived for
+  Fachrul26 (village) and Nehar-Belaid26 (collection site). Decide explicitly
+  whether to collapse those labels or retain them as additional batches; do not
+  let the raw column silently split them. Validate label uniqueness, site-level
+  sample sizes and age support, design rank, and changes in estimability before
+  updating merged and covariate-specific combined models.
 
 ## Planned exploratory analysis: residual structure after pseudobulk DE
 
@@ -347,19 +374,23 @@ primary age-DE analysis, not a replacement for it.
 
 ## Recommended next sequence
 
-1. Complete a final manual metadata check for every study against its paper and
-   supplements, resolving outstanding provenance questions where possible and
-   preserving any remaining inferences explicitly.
-2. Rerun the production workflow to publish metadata corrections and refreshed
-   merge QC covariate distributions.
-3. Complete the run manifest with input/model checksums and random seeds; record
-   immutable Python and R image digests for the production run.
-4. Add opt-in Nextflow execution reports and traces, then record per-task RAM,
+1. Reproduce and diagnose the unusual Naive CD8 T-cell age result, including
+   study/site-specific fits and sensitivity to the 10-cell inclusion cutoff.
+2. Define the intended batch levels explicitly (AIDA by country, other studies
+   by study unless metadata review supports finer batches), then update merged
+   DE formulas and check site support and design estimability.
+3. Complete the final manual metadata review for every study against its paper
+   and supplements, keeping unresolved assumptions explicitly labelled.
+4. Rerun production after the metadata and DE-design updates so published
+   outputs match the reviewed inputs and model specification.
+5. Add random-seed and immutable image-digest provenance to the production run
+   record; input, metadata, model, artifact, and report checksums are already
+   included.
+6. Add opt-in Nextflow execution reports and traces, then record per-task RAM,
    CPU, and elapsed-time baselines from production.
-5. Add targeted synthetic tests for metadata joins, rare labels, and conversion
+7. Add targeted synthetic tests for metadata joins, rare labels, and conversion
    edge cases that random smoke-test subsets may omit.
-6. Continue with the exploratory residual-structure analysis after the model
-   and validation design is prespecified.
-7. Polish the existing static HTML reports for reader-facing use (without
-   sacrificing the executed notebooks as audit artifacts), then add a static
-   manifest-driven report index before considering a custom web frontend.
+8. Continue with exploratory residual-structure analysis after its model and
+   validation design is prespecified.
+9. Add a static manifest-driven report index before considering a custom
+   project-level web frontend.
