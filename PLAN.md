@@ -212,10 +212,13 @@ is material) and make the study design visible before downstream interpretation.
 
 ## Primary analysis: age-associated pseudobulk DE
 
-The first implementation uses **PyDESeq2** on sample × cell-type raw-count
-pseudobulks. It runs one model per study (`~ age + sex`) and one shared-slope
-merged model (`~ study + age + sex`) for each AIFI L2 type. The age coefficient
-is a linear effect per year, tested with a Wald test. Nextflow lists cell types
+The experimental branch `experiment/study-site-de-adjustment` uses **PyDESeq2**
+on sample × cell-type raw-count pseudobulks. It runs one maximal model per
+study, adding `study_site` when multiple sites remain, and one shared-slope
+merged model (`~ study_site + age + sex`) for each AIFI L2 type. Combined
+covariate models also adjust for `study_site`, age, and sex; the site term is
+dropped when only one site remains. The age coefficient is a linear effect per
+year, tested with a Wald test. Nextflow lists cell types
 then runs one task per type; each task loads and subsets the same small merged
 pseudobulk H5AD in memory, without materializing a per-type pseudobulk input.
 The final collector writes the standard result layout and root manifest.
@@ -238,7 +241,8 @@ pseudobulk fixture provides the positive-fit path: it generates independent
 sample rows with adequate age/sex variation and at least 15 cells per
 pseudobulk, plants age, sex, BMI, and CMV signals, and applies the ordinary
 production filters. BMI is available in two synthetic studies and CMV in one,
-with missing values to exercise complete-case selection. Synthetic results
+with missing values to exercise complete-case selection; one synthetic study
+contains multiple sites to exercise site adjustment. Synthetic results
 carry a test-only warning throughout the CSVs, manifest, and reports. This is
 workflow-path coverage, not biological realism: sample counts are balanced,
 gene-availability differences are sparse, and effects do not vary by study.
@@ -252,9 +256,9 @@ in that sample × cell-type pseudobulk. It also requires complete sex metadata;
 all sample exclusions are recorded. Per-cell-type reports show per-study,
 per-covariate significance inside/outside the shared tested-gene intersection, and combined
 volcano plots for age, sex, BMI, and CMV where metadata support the fits. BMI
-and CMV use separate complete-case models adjusted for age and sex; a single-
-study optional-covariate model omits the study term. Each model records its
-included studies and sample counts. Categorical coefficient labels show the
+and CMV use separate complete-case models adjusted for study site, age, and
+sex; per-study models include site when it varies within the study. Each model
+records its included studies, sites, and sample counts. Categorical coefficient labels show the
 reference group (female for sex; no/negative for CMV). Keep
 nonlinear age and an age-20 sensitivity analysis as future decisions. R DESeq2,
 edgeR quasi-likelihood, and limma-voom comparisons are outside this first
@@ -278,14 +282,14 @@ DE outputs before treating it as a biological result:
   and expression-related measurements, and run prespecified threshold
   sensitivity analyses before deciding whether the cutoff contributes to the
   signal.
-- Update the main cross-study batch adjustment from `study` to `study_site`.
-  The intended granularity is to split AIDA by country while keeping other
-  studies at one batch level, but `study_site` is also source-derived for
-  Fachrul26 (village) and Nehar-Belaid26 (collection site). Decide explicitly
-  whether to collapse those labels or retain them as additional batches; do not
-  let the raw column silently split them. Validate label uniqueness, site-level
-  sample sizes and age support, design rank, and changes in estimability before
-  updating merged and covariate-specific combined models.
+- Evaluate the experimental `study_site` batch adjustment against the current
+  study-level design before adopting it in production. This uses source labels
+  for AIDA sites/countries, Fachrul26 villages, and Nehar-Belaid26 collection
+  sites, while studies with one site retain one level. Check label uniqueness,
+  site-level sample sizes and age support, design rank, and changes in
+  estimability. In Nehar-Belaid26, the adult metadata include 32 UCHC and 9
+  HSNRI samples before cell-type cell-count filtering, so site-specific support
+  may be limited.
 
 ## Planned exploratory analysis: residual structure after pseudobulk DE
 
@@ -376,13 +380,13 @@ primary age-DE analysis, not a replacement for it.
 
 1. Reproduce and diagnose the unusual Naive CD8 T-cell age result, including
    study/site-specific fits and sensitivity to the 10-cell inclusion cutoff.
-2. Define the intended batch levels explicitly (AIDA by country, other studies
-   by study unless metadata review supports finer batches), then update merged
-   DE formulas and check site support and design estimability.
+2. Compare the experimental `study_site` DE models with the study-adjusted
+   baseline, checking site support, design estimability, and changes in which
+   cell types and covariates can be fitted.
 3. Complete the final manual metadata review for every study against its paper
    and supplements, keeping unresolved assumptions explicitly labelled.
-4. Rerun production after the metadata and DE-design updates so published
-   outputs match the reviewed inputs and model specification.
+4. If the site-adjusted fits are supported by the diagnostics, rerun production
+   so published outputs match the reviewed inputs and model specification.
 5. Add random-seed and immutable image-digest provenance to the production run
    record; input, metadata, model, artifact, and report checksums are already
    included.

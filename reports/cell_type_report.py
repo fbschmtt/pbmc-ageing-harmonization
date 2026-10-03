@@ -1471,6 +1471,7 @@ if de_dir:
                     "design": fit_record.get("design", "—"),
                     "FDR-significant genes": int((padj < de_alpha).sum()),
                     "studies used": ", ".join(fit_record.get("studies", [])),
+                    "study sites used": ", ".join(fit_record.get("study_sites", [])),
                     "complete-case samples used": fit_record.get("n_samples", "—"),
                     "excluded for missing design values": fit_record.get(
                         "n_samples_excluded_missing_design_covariates", "—"
@@ -1480,8 +1481,8 @@ if de_dir:
             display(Markdown("### Combined covariate models"))
             display(Markdown(
                 "Each model estimates its named covariate effect using all studies with recorded "
-                "values for that covariate. It adjusts for age and sex, includes a study term when "
-                "multiple studies contribute, and uses complete cases for its displayed design."
+                "values for that covariate. It adjusts for study-site batch, age, and sex, and "
+                "uses complete cases for its displayed design."
             ))
             display_collapsible_table(
                 pd.DataFrame(combined_covariate_summary),
@@ -1543,8 +1544,8 @@ if de_dir:
         display(Markdown(
             f"PyDESeq2 covariate effects; FDR threshold **{de_alpha:g}**. "
             "Per-study fits use one maximal available model. Combined fits target one covariate "
-            "at a time, adjust for age and sex, and add study adjustment when multiple studies "
-            "contribute. Missing values exclude a sample only from models whose design includes "
+            "at a time and adjust for study site, age, and sex. Per-study fits also adjust for "
+            "site when multiple sites contribute. Missing values exclude a sample only from models whose design includes "
             "that variable. Categorical effects use female as the sex reference and no CMV "
             "(negative where that is the source label) as the CMV reference."
         ))
@@ -1564,24 +1565,26 @@ if de_dir:
             if expected_columns.issubset(age_diagnostics):
                 display(Markdown("### Shared age-model diagnostics"))
                 display(Markdown(
-                    "This single figure checks study/age support, the relation between age and "
+                "This single figure checks study-site/age support, the relation between age and "
                     "the raw pseudobulk counts used in the shared age gene intersection, and "
                     "the unadjusted age-model p-value calibration. Q-Q points are the raw "
                     "p-values (`pvalue`, before multiple-testing correction) from the combined "
-                    "age model fitted across all eligible studies for this cell type, using the "
-                    "model's shared gene intersection. The dashed y=x line is the null reference; "
+                    "age model fitted across all eligible studies for this cell type, adjusted "
+                    "for study site, sex, and age, and using the model's shared gene intersection. "
+                    "The dashed y=x line is the null reference; "
                     "the axes retain independent scales so departures remain readable. This is "
                     "descriptive: it does not diagnose a specific gene or replace model checks."
                 ))
-                figure, axes = plt.subplots(1, 3, figsize=(17, 4.8))
+                figure, axes = plt.subplots(1, 3, figsize=(18, 4.8))
+                support_column = "study_site" if "study_site" in age_diagnostics else "study"
                 sns.stripplot(
-                    data=age_diagnostics, x="study", y="age", hue="sex", dodge=True,
+                    data=age_diagnostics, x=support_column, y="age", hue="sex", dodge=True,
                     jitter=0.18, alpha=0.8, ax=axes[0],
                 )
-                axes[0].set_xlabel("Study")
+                axes[0].set_xlabel("Study site" if support_column == "study_site" else "Study")
                 axes[0].set_ylabel("Age (years)")
-                axes[0].set_title("Age support by study")
-                axes[0].tick_params(axis="x", rotation=45)
+                axes[0].set_title("Age support by study site")
+                axes[0].tick_params(axis="x", rotation=75, labelsize=7)
                 axes[0].legend(title="Sex", fontsize=8, title_fontsize=8)
 
                 plot_samples = age_diagnostics.loc[
@@ -1591,7 +1594,7 @@ if de_dir:
                     plot_samples["counts_in_age_gene_intersection"]
                 )
                 sns.scatterplot(
-                    data=plot_samples, x="age", y="log10_counts", hue="study", style="sex",
+                    data=plot_samples, x="age", y="log10_counts", hue=support_column, style="sex",
                     s=42, alpha=0.85, ax=axes[1],
                 )
                 axes[1].set_xlabel("Age (years)")
@@ -1765,7 +1768,7 @@ if de_dir:
                 axis.set_xlabel(f"{covariate.upper()} effect ({effect_label})")
                 axis.set_ylabel("−log10(adjusted p-value)")
                 if len(studies_used) > 1:
-                    title = f"Combined study-adjusted {covariate.upper()} association: {contrast}"
+                    title = f"Combined site-adjusted {covariate.upper()} association: {contrast}"
                 else:
                     study_name = studies_used[0] if studies_used else "single study"
                     title = f"{covariate.upper()} association in {study_name}: {contrast}"
@@ -1781,10 +1784,10 @@ if de_dir:
                 plt.show()
         display(Markdown(
             "_DE interpretation: the recurrence panels emphasize agreement among available per-study "
-            "models; each combined volcano summarizes all eligible samples with age and sex adjustment. "
+            "models; each combined volcano summarizes eligible samples with study-site, age, and sex adjustment. "
             "Volcano point color gives the number of available per-study fits for the same covariate "
             "and contrast with FDR-significant association for that gene (using the displayed FDR "
             "threshold); the plotted effect and adjusted p-value come from the combined fit. "
-            "When only one study contributes, study adjustment is omitted and the plot describes that "
-            "study alone. Combined fits do not by themselves establish replication across studies._"
+            "The site term is omitted when only one site remains estimable. Combined fits do not "
+            "by themselves establish replication across studies._"
         ))

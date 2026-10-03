@@ -150,8 +150,8 @@ optional pseudobulk differential-expression workflow
   pseudobulk_merged.h5ad ──> list per-study AIFI-L2 labels
                               └──> one parallel task per label, each loading and
                                    subsetting the same small pseudobulk H5AD in memory
-                                     ├──> per-study ~ age + sex fits
-                                     └──> merged ~ study + age + sex fit
+                                     ├──> per-study fits with site adjustment
+                                     └──> merged ~ study_site + age + sex fit
                                            └──> collector: gene-level CSVs + indexed JSON manifest
 ```
 
@@ -597,13 +597,14 @@ The separate `differential_expression.nf` workflow consumes the merged
 sample-level pseudobulk H5AD. It first lists retained per-study
 `aifi_l2_majority` labels, then runs one independent task per label. Each task
 loads the same small merged pseudobulk H5AD and subsets its label in memory; it
-does not materialize a per-type pseudobulk H5AD. Each task runs one `~ age +
-sex` fit per study and one shared age-and-sex `~ study + age + sex` fit across
-studies. When present and variable, BMI and CMV each receive separate per-study
-and combined fits, with age and sex as adjustment covariates. Combined fits
-include studies with usable values for that covariate and report the studies
-and sample counts used. If only one study contributes, the fit drops the study
-term and reports that study's adjusted association. Age, sex, BMI, and CMV
+does not materialize a per-type pseudobulk H5AD. Per-study models adjust for
+`study_site` when multiple sites remain in that study, along with age, sex, and
+available optional covariates. The merged age-and-sex model uses
+`~ study_site + age + sex` across studies. When present and variable, BMI and
+CMV each receive separate combined fits adjusted for study site, age, and sex.
+Combined fits include studies with usable values for that covariate and report
+the studies, sites, and sample counts used. The site term is dropped when only
+one site remains. Age, sex, BMI, and CMV
 effects each have a combined-model volcano plot where estimable. A final collector writes the result
 directories and manifest. Per-study results also show significant-gene counts
 inside and outside the per-covariate intersection of genes tested by all
@@ -612,8 +613,8 @@ uses the intersection of genes available across its included studies, so
 study-absent genes' synthetic outer-join zeros are excluded. The parallel
 type-fitting task is configured for one CPU, which is passed directly to
 PyDESeq2; all other CPU, time, and memory requests use the executor defaults.
-Each cell type also renders one shared-age diagnostic figure: study-specific
-age support, age against raw pseudobulk depth in the tested gene intersection,
+Each cell type also renders one shared-age diagnostic figure: study-site age
+support, age against raw pseudobulk depth in the tested gene intersection,
 and a Q-Q plot of unadjusted p-values from the combined age model fitted across
 all eligible studies for that cell type. Its dashed y=x line marks the null
 reference, with independently scaled axes for readability. Combined-model
@@ -712,14 +713,15 @@ with `make run-test`. It uses the explicitly labeled test mode described above.
 Use `make run-de-synthetic-test` to exercise successful PyDESeq2 fits with the
 production sample-inclusion filters enabled.
 
-Each study has one maximal DE model: age and sex plus every optional covariate
-with at least two observed values. All coefficients for that study therefore
-come from one formula and complete-case sample set. A missing BMI or CMV value
+Each study has one maximal DE model: `study_site` when it varies, age, sex, and
+every optional covariate with at least two observed values. All coefficients
+for that study therefore come from one formula and complete-case sample set.
+A missing BMI or CMV value
 excludes that pseudobulk only from models containing that term; one missing
 value removes one row. Combined models target one covariate at a time, using
-all complete-case samples from studies that recorded it and adjusting for age,
-sex, and study when more than one study contributes. A single-study combined
-fit omits the redundant study term. CMV negative/positive values are harmonized
+all complete-case samples from studies that recorded it and adjusting for
+study site, age, and sex. The site term is omitted when one site remains. CMV
+negative/positive values are harmonized
 to no/yes. Categorical volcano plots and summaries name their comparison
 groups, including male versus female and yes CMV versus no CMV.
 

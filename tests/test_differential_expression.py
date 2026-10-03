@@ -26,6 +26,7 @@ def test_test_mode_bypasses_cell_count_cutoff_but_keeps_adult_filter() -> None:
     obs = pd.DataFrame(
         {
             "study": ["study_a", "study_a", "study_a"],
+            "study_site": ["site_1", "site_1", "site_1"],
             "sample": ["adult_low_cells", "adult_enough_cells", "under_20"],
             "age": [35, 50, 19],
             "sex": ["female", "male", "female"],
@@ -60,6 +61,7 @@ def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None
 
     assert first.shape == (48, 91)
     assert first.obs["study"].nunique() == 3
+    assert first.obs["study_site"].nunique() == 4
     assert first.obs["sample"].nunique() == 8
     assert first.obs["aifi_l2_majority"].nunique() == 2
     assert first.obs["n_cells"].min() == 15
@@ -71,6 +73,11 @@ def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None
         "synthetic_study_a": True,
         "synthetic_study_b": False,
         "synthetic_study_c": True,
+    }
+    assert first.obs.groupby("study", observed=True)["study_site"].nunique().to_dict() == {
+        "synthetic_study_a": 2,
+        "synthetic_study_b": 1,
+        "synthetic_study_c": 1,
     }
     assert first.obs.groupby("study", observed=True)["cmv"].apply(
         lambda values: values.notna().any()
@@ -94,7 +101,9 @@ def test_per_study_design_uses_all_varying_covariates_once() -> None:
     covariates = _maximal_per_study_covariates(metadata, ["bmi", "cmv"])
 
     assert covariates == ["age", "sex", "bmi", "cmv"]
-    assert _design_with_covariates("~ age + sex", covariates) == "~ age + sex + bmi + cmv"
+    assert _design_with_covariates(
+        "~ study_site + age + sex", covariates
+    ) == "~ study_site + age + sex + bmi + cmv"
 
 
 def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_path) -> None:
@@ -104,6 +113,7 @@ def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_
     obs = pd.DataFrame(
         {
             "study": ["aifi"] * 8,
+            "study_site": ["aifi"] * 8,
             "sample": index,
             "age": [24, 31, 38, 45, 52, 60, 68, 76],
             "sex": ["female", "male"] * 4,
@@ -136,7 +146,7 @@ def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_
         cell_type="CD14 monocyte",
         model_name="combined",
         study=None,
-        design="~ study + age + sex + cmv",
+        design="~ study_site + age + sex + cmv",
         covariates=["cmv"],
         alpha=0.05,
         cpus=1,
@@ -150,16 +160,21 @@ def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_
     assert result["study_sample_counts"] == {"aifi": 7}
     assert result["design"] == "~ age + sex + cmv"
     assert captured["design"] == "~ age + sex + cmv"
+    assert result["study_sites"] == ["aifi"]
+    assert result["study_site_sample_counts"] == {"aifi": 7}
     assert captured["metadata_index"] == [index[position] for position in (0, 1, 2, 4, 5, 6, 7)]
     assert result["n_samples_before_complete_case_filter"] == 8
     assert result["n_samples_excluded_missing_design_covariates"] == 1
-    assert result["missing_values_by_design_covariate"] == {"age": 0, "sex": 0, "cmv": 1}
+    assert result["missing_values_by_design_covariate"] == {
+        "study_site": 0, "age": 0, "sex": 0, "cmv": 1,
+    }
 
 
 def test_age_model_diagnostics_record_the_shared_gene_universe_and_raw_counts(tmp_path) -> None:
     obs = pd.DataFrame(
         {
             "study": ["one", "two"],
+            "study_site": ["site_one", "site_two"],
             "sample": ["one_sample", "two_sample"],
             "age": [30.0, 60.0],
             "sex": ["female", "male"],

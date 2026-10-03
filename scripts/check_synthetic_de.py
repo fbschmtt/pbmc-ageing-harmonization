@@ -105,9 +105,11 @@ def check_results(outdir: Path) -> None:
                     f"Combined {covariate} fit for {cell_type!r} used "
                     f"{combined.get('studies')}, expected {studies}"
                 )
-            if covariate == "cmv" and combined.get("design") != "~ age + sex + cmv":
+            if covariate == "cmv" and combined.get("design") != (
+                "~ study_site + age + sex + cmv"
+            ):
                 raise SystemExit(
-                    f"Single-study CMV fit for {cell_type!r} did not omit the study term: "
+                    f"Single-study CMV fit for {cell_type!r} omitted its varying site term: "
                     f"{combined.get('design')}"
                 )
             expected_n = 7

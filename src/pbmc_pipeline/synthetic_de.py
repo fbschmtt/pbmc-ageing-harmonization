@@ -59,6 +59,11 @@ def create_synthetic_pseudobulk(
         for cell_type_index, cell_type in enumerate(cell_types):
             for sample_index, (age, sex) in enumerate(zip(ages, sexes, strict=True)):
                 sample = f"SYN{sample_index + 1:02d}"
+                site_index = int(
+                    study == studies[0]
+                    and (sample_index // 2) % 2 == 1
+                )
+                study_site = f"{study}_site_{site_index + 1}"
                 bmi = float(bmi_values[sample_index]) if study in {studies[0], studies[2]} else np.nan
                 # Leave one additional missing value within each supported study to
                 # exercise complete-case selection, while retaining estimable fits.
@@ -90,6 +95,7 @@ def create_synthetic_pseudobulk(
                 rows.append(
                     {
                         "study": study,
+                        "study_site": study_site,
                         "sample": sample,
                         "age": float(age),
                         "sex": sex,

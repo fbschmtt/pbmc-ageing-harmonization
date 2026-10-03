@@ -100,8 +100,8 @@
   "differential_expression": {
     "method": "pydeseq2",
     "split_by": "aifi_l2_majority",
-    "per_study_design": "~ age + sex",
-    "merged_design": "~ study + age + sex",
+    "per_study_design": "~ study_site + age + sex",
+    "merged_design": "~ study_site + age + sex",
     "age_term": "age",
     "optional_covariates": ["bmi", "cmv"],
     "alpha": 0.05,

@@ -51,8 +51,11 @@ def _prepare_metadata(
     obs: pd.DataFrame, inclusion: dict, *, test_mode: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, int], list[dict]]:
     optional_covariates = [column for column in ("bmi", "cmv") if column in obs]
-    metadata = obs[["study", "sample", "age", "sex", "n_cells", *optional_covariates]].copy()
+    metadata = obs[[
+        "study", "study_site", "sample", "age", "sex", "n_cells", *optional_covariates,
+    ]].copy()
     metadata["study"] = metadata["study"].astype("string").str.strip()
+    metadata["study_site"] = metadata["study_site"].astype("string").str.strip()
     metadata["sample"] = metadata["sample"].astype("string").str.strip()
     metadata["sex"] = metadata["sex"].astype("string").str.strip().str.lower()
     metadata["age"] = pd.to_numeric(metadata["age"], errors="coerce")
@@ -64,13 +67,19 @@ def _prepare_metadata(
     minimum_age = inclusion["minimum_age_years_inclusive"]
     minimum_cells = inclusion["minimum_cells_per_pseudobulk_inclusive"]
     valid_study = metadata["study"].notna() & ~metadata["study"].str.lower().isin(_UNKNOWN)
+    valid_study_site = (
+        metadata["study_site"].notna()
+        & ~metadata["study_site"].str.lower().isin(_UNKNOWN)
+    )
     valid_sample = metadata["sample"].notna() & ~metadata["sample"].str.lower().isin(_UNKNOWN)
     valid_age = metadata["age"].notna() & np.isfinite(metadata["age"])
     adult = valid_age & (metadata["age"] >= minimum_age)
     valid_sex = metadata["sex"].notna() & ~metadata["sex"].str.lower().isin(_UNKNOWN)
     valid_cells = metadata["n_cells"].notna() & np.isfinite(metadata["n_cells"])
     enough_cells = valid_cells & (metadata["n_cells"] >= minimum_cells)
-    valid_other_metadata = valid_study & valid_sample & adult & valid_sex & valid_cells
+    valid_other_metadata = (
+        valid_study & valid_study_site & valid_sample & adult & valid_sex & valid_cells
+    )
     valid = valid_other_metadata & (enough_cells | test_mode)
     excluded = []
     for position in np.flatnonzero(~valid.to_numpy(dtype=bool)):
@@ -78,6 +87,8 @@ def _prepare_metadata(
         reasons = []
         if not valid_study.iloc[position]:
             reasons.append("missing_or_unknown_study")
+        if not valid_study_site.iloc[position]:
+            reasons.append("missing_or_unknown_study_site")
         if not valid_sample.iloc[position]:
             reasons.append("missing_or_unknown_sample")
         if not valid_age.iloc[position]:
@@ -100,6 +111,7 @@ def _prepare_metadata(
         )
     exclusion_counts = {
         "missing_or_unknown_study": int((~valid_study).sum()),
+        "missing_or_unknown_study_site": int((~valid_study_site).sum()),
         "missing_or_unknown_sample": int((~valid_sample).sum()),
         "missing_or_non_numeric_age": int((~valid_age).sum()),
         "age_below_minimum": int((valid_age & ~adult).sum()),
@@ -169,7 +181,7 @@ def _fit_covariate_model(
 
     counts_df = pd.DataFrame(counts, index=metadata.index, columns=genes)
     model_metadata = metadata.copy()
-    for column in ("study", "sex", "cmv"):
+    for column in ("study_site", "sex", "cmv"):
         if column in design and column in model_metadata:
             model_metadata[column] = pd.Categorical(
                 model_metadata[column],
@@ -268,12 +280,17 @@ def _run_model(
     design_covariates = [
         column.strip()
         for column in design.removeprefix("~").split("+")
-        if column.strip() and column.strip() != "study"
+        if column.strip() and column.strip() != "study_site"
     ]
-    has_study_term = "study" in design
+    has_site_term = "study_site" in design
     n_samples_before_complete_case_filter = len(metadata)
     valid = pd.Series(True, index=metadata.index)
     missing_by_covariate = {}
+    if has_site_term:
+        site_values = metadata["study_site"].astype("string").str.strip().str.lower()
+        site_observed = site_values.notna() & ~site_values.isin(_UNKNOWN)
+        missing_by_covariate["study_site"] = int((~site_observed).sum())
+        valid &= site_observed
     for column in design_covariates:
         if column in {"age", "bmi"}:
             values = pd.to_numeric(metadata[column], errors="coerce")
@@ -296,19 +313,14 @@ def _run_model(
     if metadata.empty:
         details["reason"] = "no samples have complete values for this model"
         return details
-    if has_study_term and metadata["study"].nunique() < 2:
-        if model_name == "combined":
-            # A single study can still provide a useful covariate-specific fit;
-            # omit the redundant study term and record the resulting formula.
-            has_study_term = False
-        else:
-            details["reason"] = "study has fewer than two observed levels"
-            return details
+    if has_site_term and metadata["study_site"].nunique() < 2:
+        # A single-site fit remains estimable without a redundant batch term.
+        has_site_term = False
     design_covariates = [
         covariate for covariate in design_covariates
         if covariate in covariates or _has_covariate_variation(metadata, covariate)
     ]
-    design_terms = (["study"] if has_study_term else []) + design_covariates
+    design_terms = (["study_site"] if has_site_term else []) + design_covariates
     design = "~ " + " + ".join(design_terms)
     details["design"] = design
 
@@ -319,9 +331,15 @@ def _run_model(
             str(key): int(value)
             for key, value in metadata.groupby("study", observed=True).size().items()
         }
+        study_site_sample_counts = {
+            str(key): int(value)
+            for key, value in metadata.groupby("study_site", observed=True).size().items()
+        }
         details.update({
             "studies": studies,
             "study_sample_counts": study_sample_counts,
+            "study_sites": sorted(metadata["study_site"].astype(str).unique()),
+            "study_site_sample_counts": study_site_sample_counts,
             "n_samples": len(metadata),
         })
         var_mask = _availability_mask(adata.var, studies, context=f"{cell_type}/{model_name}")
@@ -362,6 +380,9 @@ def _run_model(
     if zero_library_samples:
         details["n_zero_library_samples_excluded"] = len(zero_library_samples)
         details["zero_library_samples_excluded"] = zero_library_samples
+    if has_site_term and metadata["study_site"].nunique() < 2:
+        design = "~ " + " + ".join(design_covariates)
+        details["design"] = design
     try:
         results_by_covariate = _fit_covariate_model(
             count_values,
@@ -401,6 +422,12 @@ def _run_model(
         )
         result["studies_included"] = ";".join(studies)
         result["study_sample_counts"] = json.dumps(study_sample_counts, sort_keys=True)
+        result["study_sites_included"] = ";".join(
+            sorted(metadata["study_site"].astype(str).unique())
+        )
+        result["study_site_sample_counts"] = json.dumps(
+            study_site_sample_counts, sort_keys=True
+        )
         result["design"] = design
         result["n_samples_model"] = len(metadata)
         result["n_samples_before_complete_case_filter"] = n_samples_before_complete_case_filter
@@ -455,7 +482,9 @@ def _write_age_model_diagnostics(
     counts = _matrix_to_counts(
         adata.X[row_positions, :][:, col_positions], context=f"{cell_type}/merged diagnostics"
     )
-    diagnostics = metadata[["study", "sample", "age", "sex", "n_cells"]].copy()
+    diagnostics = metadata[[
+        "study", "study_site", "sample", "age", "sex", "n_cells",
+    ]].copy()
     diagnostics.insert(0, "pseudobulk_id", diagnostics.index.astype(str))
     diagnostics["counts_in_age_gene_intersection"] = counts.sum(axis=1, dtype=np.int64)
     diagnostics["genes_in_age_intersection"] = len(genes)
@@ -474,7 +503,7 @@ def _load_pseudobulk(input_path: Path, pipeline: dict):
         raise ValueError("Only the configured PyDESeq2 method is supported")
     split_by = spec["split_by"]
     adata = ad.read_h5ad(input_path)
-    required = {"study", "sample", "age", "sex", "n_cells", split_by}
+    required = {"study", "study_site", "sample", "age", "sex", "n_cells", split_by}
     missing = sorted(required - set(adata.obs.columns))
     if missing:
         raise ValueError(f"{input_path}: pseudobulk metadata columns are missing: {missing}")
@@ -688,13 +717,14 @@ def _write_differential_expression_manifest(
         },
         "models": {
             "per_study": (
-                "One maximal complete-case design per study: the configured age/sex terms "
-                "plus every configured optional covariate with at least two observed values."
+                "One maximal complete-case design per study: study_site when it varies, "
+                "the configured age/sex terms, and every configured optional covariate "
+                "with at least two observed values."
             ),
             "merged": spec["merged_design"],
             "combined": (
-                "One combined model per target covariate, adjusted for age and sex; it uses "
-                "all complete-case samples from studies with recorded target values."
+                "One combined model per target covariate, adjusted for study_site, age, and "
+                "sex; it uses all complete-case samples from studies with recorded target values."
             ),
             "missing_values": (
                 "A model excludes only samples missing a term in that model's design; exclusion "
