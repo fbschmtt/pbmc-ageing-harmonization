@@ -602,7 +602,12 @@ type-fitting task is configured for one CPU, which is passed directly to
 PyDESeq2; all other CPU, time, and memory requests use the executor defaults.
 Each cell type also renders one shared-age diagnostic figure: study-specific
 age support, age against raw pseudobulk depth in the tested gene intersection,
-and a QQ plot of unadjusted age-model p-values.
+and a Q-Q plot of unadjusted p-values from the combined age model fitted across
+all eligible studies for that cell type. Its dashed y=x line marks the null
+reference, with independently scaled axes for readability. Combined-model
+volcano point colors show the number of available per-study fits for the same
+covariate and contrast where that gene passes the FDR threshold; point position
+continues to show the combined-fit effect and adjusted p-value.
 
 Samples must be age 20 or older and have at least 10 cells in that
 sample × cell-type pseudobulk. Samples with missing/unknown sex metadata or
