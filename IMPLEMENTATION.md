@@ -216,9 +216,11 @@ matching result directory or a no-DE flag and publishes only beneath
 
 Each study is fitted once with its maximal available design: age and sex plus
 each optional covariate with at least two observed values, plus `study_site`
-when it varies within the study. Its coefficients use one complete-case sample
-set. Combined fits target one covariate at a time and include all complete-case
-samples from studies that recorded it, adjusting for `study_site`, age, and sex.
+when it varies within the study, and natural log pseudobulk `total_counts` as a
+technical covariate. Its coefficients use one complete-case sample set.
+Combined fits target one covariate at a time and include all complete-case
+samples from studies that recorded it, adjusting for `study_site`, age, sex,
+and log total counts.
 The site term is omitted when only one site remains. Fit metadata and CSVs
 record the formula, included studies and sites, complete-case sample count, and
 exclusions for missing design values.

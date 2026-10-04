@@ -79,7 +79,7 @@ def prepare_cells(source, root):
         "include_intronic": {"constant": "no"},
         "smoking_status": {"constant": "not_provided"},
         "disease_status": {"constant": "healthy"},
-        "study_site": {"source": "study_site_normalized"},
+        "study_site": {"source": "study_site_normalized", "prefix": "nehar_belaid26_"},
         "country": {"source": "country_normalized"},
         "batch_single_cell": {"source": "runs_10x", "prefix": "nehar_belaid26_"},
     })

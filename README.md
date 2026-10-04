@@ -151,7 +151,7 @@ optional pseudobulk differential-expression workflow
                               └──> one parallel task per label, each loading and
                                    subsetting the same small pseudobulk H5AD in memory
                                      ├──> per-study fits with site adjustment
-                                     └──> merged ~ study_site + age + sex fit
+                                     └──> merged ~ study_site + age + sex + log_total_counts fit
                                            └──> collector: gene-level CSVs + indexed JSON manifest
 ```
 
@@ -600,8 +600,10 @@ loads the same small merged pseudobulk H5AD and subsets its label in memory; it
 does not materialize a per-type pseudobulk H5AD. Per-study models adjust for
 `study_site` when multiple sites remain in that study, along with age, sex, and
 available optional covariates. The merged age-and-sex model uses
-`~ study_site + age + sex` across studies. When present and variable, BMI and
-CMV each receive separate combined fits adjusted for study site, age, and sex.
+`~ study_site + age + sex + log_total_counts` across studies. The natural log
+of each pseudobulk's `total_counts` is included as a technical covariate in all
+DE models. When present and variable, BMI and CMV each receive separate
+combined fits adjusted for study site, age, sex, and log total counts.
 Combined fits include studies with usable values for that covariate and report
 the studies, sites, and sample counts used. The site term is dropped when only
 one site remains. Age, sex, BMI, and CMV
@@ -616,7 +618,8 @@ PyDESeq2; all other CPU, time, and memory requests use the executor defaults.
 Each cell type also renders one shared-age diagnostic figure: study-site age
 support, age against raw pseudobulk depth in the tested gene intersection,
 and a Q-Q plot of unadjusted p-values from the combined age model fitted across
-all eligible studies for that cell type. Its dashed y=x line marks the null
+all eligible studies for that cell type and adjusted for study site, sex, age,
+and log total counts. Its dashed y=x line marks the null
 reference, with independently scaled axes for readability. Combined-model
 volcano point colors show the number of available per-study fits for the same
 covariate and contrast where that gene passes the FDR threshold; point position
@@ -713,14 +716,16 @@ with `make run-test`. It uses the explicitly labeled test mode described above.
 Use `make run-de-synthetic-test` to exercise successful PyDESeq2 fits with the
 production sample-inclusion filters enabled.
 
-Each study has one maximal DE model: `study_site` when it varies, age, sex, and
-every optional covariate with at least two observed values. All coefficients
-for that study therefore come from one formula and complete-case sample set.
+Each study has one maximal DE model: `study_site` when it varies, age, sex,
+log total counts, and every optional covariate with at least two observed
+values. All coefficients for that study therefore come from one formula and
+complete-case sample set.
 A missing BMI or CMV value
 excludes that pseudobulk only from models containing that term; one missing
 value removes one row. Combined models target one covariate at a time, using
 all complete-case samples from studies that recorded it and adjusting for
-study site, age, and sex. The site term is omitted when one site remains. CMV
+study site, age, sex, and log total counts. The site term is omitted when one
+site remains. CMV
 negative/positive values are harmonized
 to no/yes. Categorical volcano plots and summaries name their comparison
 groups, including male versus female and yes CMV versus no CMV.

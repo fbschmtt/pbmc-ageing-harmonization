@@ -4,8 +4,8 @@ import json
 import os
 import re
 import warnings
-from io import BytesIO
 from html import escape
+from io import BytesIO
 from pathlib import Path
 
 # The report runs in a notebook kernel where ipywidgets is intentionally not a
@@ -20,6 +20,7 @@ import scanpy as sc
 import seaborn as sns
 import statsmodels.api as sm
 from IPython.display import HTML, Markdown, display
+from matplotlib.colors import LogNorm, Normalize
 
 sns.set_theme(style="whitegrid")
 plt.rcParams.update({"figure.dpi": 110, "savefig.dpi": 110})
@@ -1481,7 +1482,8 @@ if de_dir:
             display(Markdown("### Combined covariate models"))
             display(Markdown(
                 "Each model estimates its named covariate effect using all studies with recorded "
-                "values for that covariate. It adjusts for study-site batch, age, and sex, and "
+                "values for that covariate. It adjusts for study-site batch, age, sex, and "
+                "log total counts, and "
                 "uses complete cases for its displayed design."
             ))
             display_collapsible_table(
@@ -1544,7 +1546,7 @@ if de_dir:
         display(Markdown(
             f"PyDESeq2 covariate effects; FDR threshold **{de_alpha:g}**. "
             "Per-study fits use one maximal available model. Combined fits target one covariate "
-            "at a time and adjust for study site, age, and sex. Per-study fits also adjust for "
+            "at a time and adjust for study site, age, sex, and log total counts. Per-study fits also adjust for "
             "site when multiple sites contribute. Missing values exclude a sample only from models whose design includes "
             "that variable. Categorical effects use female as the sex reference and no CMV "
             "(negative where that is the source label) as the CMV reference."
@@ -1570,7 +1572,8 @@ if de_dir:
                     "the unadjusted age-model p-value calibration. Q-Q points are the raw "
                     "p-values (`pvalue`, before multiple-testing correction) from the combined "
                     "age model fitted across all eligible studies for this cell type, adjusted "
-                    "for study site, sex, and age, and using the model's shared gene intersection. "
+                    "for study site, sex, age, and log total counts, and using the model's shared "
+                    "gene intersection. "
                     "The dashed y=x line is the null reference; "
                     "the axes retain independent scales so departures remain readable. This is "
                     "descriptive: it does not diagnose a specific gene or replace model checks."
@@ -1782,9 +1785,54 @@ if de_dir:
                     )
                 figure.tight_layout(rect=(0, 0, 0.78, 1))
                 plt.show()
+                if covariate == "age" and "baseMean" in volcano.columns:
+                    base_mean = pd.to_numeric(volcano["baseMean"], errors="coerce")
+                    finite = np.isfinite(base_mean)
+                    if finite.any():
+                        base_mean = base_mean.loc[finite]
+                        age_volcano = volcano.loc[finite]
+                        positive = base_mean[base_mean > 0]
+                        if not positive.empty:
+                            norm = LogNorm(
+                                vmin=float(positive.min()),
+                                vmax=float(positive.max())
+                                if positive.max() > positive.min()
+                                else float(positive.min()) * 1.01,
+                            )
+                        else:
+                            norm = Normalize(vmin=0, vmax=1)
+                        figure, axis = plt.subplots(figsize=(10.5, 6.5))
+                        points = axis.scatter(
+                            age_volcano["log2FoldChange"],
+                            age_volcano["minus_log10_padj"],
+                            c=base_mean,
+                            cmap="viridis",
+                            norm=norm,
+                            s=16,
+                            alpha=0.7,
+                            linewidths=0,
+                        )
+                        colorbar = figure.colorbar(points, ax=axis, pad=0.02)
+                        colorbar.set_label("Combined-fit baseMean (log scale)")
+                        axis.axhline(
+                            -np.log10(de_alpha), color="#555555", linestyle="--", linewidth=1
+                        )
+                        axis.axvline(0, color="#555555", linewidth=0.8)
+                        axis.set_xlabel(f"{covariate.upper()} effect ({effect_label})")
+                        axis.set_ylabel("−log10(adjusted p-value)")
+                        axis.set_title(f"{title} (colored by baseMean)")
+                        for _, row in labels.iterrows():
+                            axis.annotate(
+                                str(row["gene"]),
+                                (row["log2FoldChange"], row["minus_log10_padj"]),
+                                xytext=(3, 3), textcoords="offset points", fontsize=7,
+                            )
+                        figure.tight_layout()
+                        plt.show()
         display(Markdown(
             "_DE interpretation: the recurrence panels emphasize agreement among available per-study "
-            "models; each combined volcano summarizes eligible samples with study-site, age, and sex adjustment. "
+            "models; each combined volcano summarizes eligible samples with study-site, age, sex, "
+            "and log-total-count adjustment. "
             "Volcano point color gives the number of available per-study fits for the same covariate "
             "and contrast with FDR-significant association for that gene (using the displayed FDR "
             "threshold); the plotted effect and adjusted p-value come from the combined fit. "

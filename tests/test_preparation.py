@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from pbmc_pipeline.preparation import PreparationError, prepare_study, read_prepared_cells
-from pbmc_pipeline.studies import fachrul26, nehar_belaid26, perez22
+from pbmc_pipeline.studies import aida25, fachrul26, nehar_belaid26, perez22
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -70,7 +70,32 @@ def test_fachrul_adapter_uses_embedded_metadata():
     assert prepared.loc["cell_a", "age"] == 54.0
     assert prepared.loc["cell_a", "technology"] == "10X5'v2"
     assert prepared.loc["cell_a", "frozen"] == "yes"
+    assert prepared.loc["cell_a", "study_site"] == "fachrul26_pedawa"
     assert prepared.loc["cell_a", "batch_single_cell"] == "fachrul26_library_1"
+
+
+def test_aida_site_label_has_study_prefix(monkeypatch):
+    source = pd.DataFrame(
+        {
+            "donor_id": ["donor_1"], "Country": ["IN"],
+            "Annotation_Level2": ["CD4 T cell"], "development_stage": ["45-year-old stage"],
+            "sex": ["Female"], "BMI": [24.0], "self_reported_ethnicity": ["Asian"],
+            "assay": ["10x 5' v2"], "alignment_software": ["Cell Ranger"],
+            "reference_genome": ["GRCh38"], "intronic_reads_counted": ["yes"],
+        },
+        index=["cell_a"],
+    )
+    metadata = pd.DataFrame(
+        {
+            "DCP_ID": ["donor_1"], "Country": ["India"],
+            "scRNA-seq Experimental Batch": ["batch_1"], "Smoking Status": ["0"],
+        }
+    )
+    monkeypatch.setattr(aida25.pd, "read_excel", lambda *args, **kwargs: metadata)
+
+    prepared = aida25.prepare_cells(source, ROOT)
+
+    assert prepared.loc["cell_a", "study_site"] == "aida_IN"
 
 
 def test_perez_adapter_uses_embedded_metadata():
@@ -152,6 +177,7 @@ def test_nehar_belaid_adapter_excludes_reused_public_cohorts_and_uses_supplement
     assert np.isnan(prepared.loc["own_1", "bmi"])
     assert prepared["cmv"].tolist() == ["not_provided", "yes"]
     assert prepared["country"].tolist() == ["usa", "canada"]
+    assert prepared["study_site"].tolist() == ["nehar_belaid26_nch", "nehar_belaid26_hsnri"]
     assert prepared["technology"].tolist() == ["10X3'v2", "10X3'v3"]
 
 

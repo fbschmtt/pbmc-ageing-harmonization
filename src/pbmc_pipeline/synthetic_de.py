@@ -14,7 +14,7 @@ def create_synthetic_pseudobulk(
     output_path: Path,
     *,
     seed: int = 413,
-    samples_per_study: int = 8,
+    samples_per_study: int = 16,
     cells_per_pseudobulk: int = 15,
 ) -> Path:
     """Write a small pseudobulk H5AD with estimable, deliberately synthetic fits."""
@@ -102,6 +102,7 @@ def create_synthetic_pseudobulk(
                         "bmi": bmi,
                         "cmv": cmv,
                         "n_cells": int(cells_per_pseudobulk),
+                        "total_counts": int(counts.sum()),
                         "aifi_l2_majority": cell_type,
                     }
                 )
@@ -137,7 +138,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=413)
-    parser.add_argument("--samples-per-study", type=int, default=8)
+    parser.add_argument("--samples-per-study", type=int, default=16)
     parser.add_argument("--cells-per-pseudobulk", type=int, default=15)
     args = parser.parse_args()
     output = create_synthetic_pseudobulk(

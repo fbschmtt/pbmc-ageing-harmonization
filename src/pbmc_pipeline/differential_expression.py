@@ -52,7 +52,8 @@ def _prepare_metadata(
 ) -> tuple[pd.DataFrame, dict[str, int], list[dict]]:
     optional_covariates = [column for column in ("bmi", "cmv") if column in obs]
     metadata = obs[[
-        "study", "study_site", "sample", "age", "sex", "n_cells", *optional_covariates,
+        "study", "study_site", "sample", "age", "sex", "n_cells", "total_counts",
+        *optional_covariates,
     ]].copy()
     metadata["study"] = metadata["study"].astype("string").str.strip()
     metadata["study_site"] = metadata["study_site"].astype("string").str.strip()
@@ -60,6 +61,9 @@ def _prepare_metadata(
     metadata["sex"] = metadata["sex"].astype("string").str.strip().str.lower()
     metadata["age"] = pd.to_numeric(metadata["age"], errors="coerce")
     metadata["n_cells"] = pd.to_numeric(metadata["n_cells"], errors="coerce")
+    metadata["total_counts"] = pd.to_numeric(metadata["total_counts"], errors="coerce")
+    positive_total_counts = metadata["total_counts"].where(metadata["total_counts"] > 0)
+    metadata["log_total_counts"] = np.log(positive_total_counts)
     if "bmi" in metadata:
         metadata["bmi"] = pd.to_numeric(metadata["bmi"], errors="coerce")
     if "cmv" in metadata:
@@ -76,9 +80,15 @@ def _prepare_metadata(
     adult = valid_age & (metadata["age"] >= minimum_age)
     valid_sex = metadata["sex"].notna() & ~metadata["sex"].str.lower().isin(_UNKNOWN)
     valid_cells = metadata["n_cells"].notna() & np.isfinite(metadata["n_cells"])
+    valid_total_counts = (
+        metadata["total_counts"].notna()
+        & np.isfinite(metadata["total_counts"])
+        & (metadata["total_counts"] > 0)
+    )
     enough_cells = valid_cells & (metadata["n_cells"] >= minimum_cells)
     valid_other_metadata = (
         valid_study & valid_study_site & valid_sample & adult & valid_sex & valid_cells
+        & valid_total_counts
     )
     valid = valid_other_metadata & (enough_cells | test_mode)
     excluded = []
@@ -101,6 +111,8 @@ def _prepare_metadata(
             reasons.append("missing_or_non_numeric_n_cells")
         elif not enough_cells.iloc[position] and not test_mode:
             reasons.append("n_cells_below_minimum")
+        if not valid_total_counts.iloc[position]:
+            reasons.append("missing_or_nonpositive_total_counts")
         excluded.append(
             {
                 "pseudobulk_id": str(metadata.index[position]),
@@ -117,6 +129,7 @@ def _prepare_metadata(
         "age_below_minimum": int((valid_age & ~adult).sum()),
         "missing_or_unknown_sex": int((~valid_sex).sum()),
         "missing_or_non_numeric_n_cells": int((~valid_cells).sum()),
+        "missing_or_nonpositive_total_counts": int((~valid_total_counts).sum()),
         "n_cells_below_minimum": int((valid_cells & ~enough_cells).sum()),
         "n_cells_filter_bypassed": int(
             (valid_other_metadata & ~enough_cells).sum() if test_mode else 0
@@ -142,7 +155,7 @@ def _availability_mask(var: pd.DataFrame, studies: list[str], *, context: str) -
 
 def _has_covariate_variation(metadata: pd.DataFrame, covariate: str) -> bool:
     values = metadata[covariate]
-    if covariate in {"age", "bmi"}:
+    if covariate in {"age", "bmi", "log_total_counts"}:
         values = pd.to_numeric(values, errors="coerce")
     return values.nunique() >= 2
 
@@ -292,7 +305,7 @@ def _run_model(
         missing_by_covariate["study_site"] = int((~site_observed).sum())
         valid &= site_observed
     for column in design_covariates:
-        if column in {"age", "bmi"}:
+        if column in {"age", "bmi", "log_total_counts"}:
             values = pd.to_numeric(metadata[column], errors="coerce")
             observed = values.notna() & np.isfinite(values)
         else:
@@ -483,7 +496,8 @@ def _write_age_model_diagnostics(
         adata.X[row_positions, :][:, col_positions], context=f"{cell_type}/merged diagnostics"
     )
     diagnostics = metadata[[
-        "study", "study_site", "sample", "age", "sex", "n_cells",
+        "study", "study_site", "sample", "age", "sex", "n_cells", "total_counts",
+        "log_total_counts",
     ]].copy()
     diagnostics.insert(0, "pseudobulk_id", diagnostics.index.astype(str))
     diagnostics["counts_in_age_gene_intersection"] = counts.sum(axis=1, dtype=np.int64)
@@ -503,7 +517,9 @@ def _load_pseudobulk(input_path: Path, pipeline: dict):
         raise ValueError("Only the configured PyDESeq2 method is supported")
     split_by = spec["split_by"]
     adata = ad.read_h5ad(input_path)
-    required = {"study", "study_site", "sample", "age", "sex", "n_cells", split_by}
+    required = {
+        "study", "study_site", "sample", "age", "sex", "n_cells", "total_counts", split_by,
+    }
     missing = sorted(required - set(adata.obs.columns))
     if missing:
         raise ValueError(f"{input_path}: pseudobulk metadata columns are missing: {missing}")
@@ -718,13 +734,14 @@ def _write_differential_expression_manifest(
         "models": {
             "per_study": (
                 "One maximal complete-case design per study: study_site when it varies, "
-                "the configured age/sex terms, and every configured optional covariate "
-                "with at least two observed values."
+                "the configured age/sex terms, log_total_counts, and every configured "
+                "optional covariate with at least two observed values."
             ),
             "merged": spec["merged_design"],
             "combined": (
-                "One combined model per target covariate, adjusted for study_site, age, and "
-                "sex; it uses all complete-case samples from studies with recorded target values."
+                "One combined model per target covariate, adjusted for study_site, age, sex, "
+                "and log_total_counts; it uses complete cases from studies with recorded "
+                "target values."
             ),
             "missing_values": (
                 "A model excludes only samples missing a term in that model's design; exclusion "

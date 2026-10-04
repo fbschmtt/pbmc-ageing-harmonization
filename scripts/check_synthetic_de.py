@@ -72,6 +72,10 @@ def check_results(outdir: Path) -> None:
                 f"got {len(completed)} complete, "
                 f"{sum(model.get('status') == 'failed' for model in models)} failed"
             )
+        if any("log_total_counts" not in model.get("design", "") for model in completed):
+            raise SystemExit(
+                f"A completed DE fit for {cell_type!r} omitted the log_total_counts adjustment"
+            )
         merged = next((model for model in models if model.get("model") == "merged"), None)
         if merged is None or not merged.get("results"):
             raise SystemExit(f"Missing merged-model result for {cell_type!r}")
@@ -106,13 +110,13 @@ def check_results(outdir: Path) -> None:
                     f"{combined.get('studies')}, expected {studies}"
                 )
             if covariate == "cmv" and combined.get("design") != (
-                "~ study_site + age + sex + cmv"
+                "~ study_site + age + sex + log_total_counts + cmv"
             ):
                 raise SystemExit(
                     f"Single-study CMV fit for {cell_type!r} omitted its varying site term: "
                     f"{combined.get('design')}"
                 )
-            expected_n = 7
+            expected_n = 15
             if set(combined.get("study_sample_counts", {}).values()) != {expected_n}:
                 raise SystemExit(
                     f"Combined {covariate} fit for {cell_type!r} did not select the "
@@ -194,7 +198,7 @@ def check_reports(outdir: Path) -> None:
             # The age recurrence panel and one volcano per covariate are rendered
             # as images. Gene labels inside those plots are rasterized, so their
             # names are checked against the DE result CSVs in check_results().
-            expected_plots = 2 + len(expected_genes)
+            expected_plots = 3 + len(expected_genes)
             if de_section.count("<img") < expected_plots:
                 missing.append(
                     f"{expected_plots} DE plot images; found {de_section.count('<img')}"

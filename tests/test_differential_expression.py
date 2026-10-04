@@ -31,6 +31,7 @@ def test_test_mode_bypasses_cell_count_cutoff_but_keeps_adult_filter() -> None:
             "age": [35, 50, 19],
             "sex": ["female", "male", "female"],
             "n_cells": [2, 12, 2],
+            "total_counts": [200, 300, 150],
         },
         index=["pb_1", "pb_2", "pb_3"],
     )
@@ -43,6 +44,7 @@ def test_test_mode_bypasses_cell_count_cutoff_but_keeps_adult_filter() -> None:
     test, test_counts, excluded = _prepare_metadata(obs, inclusion, test_mode=True)
 
     assert standard["sample"].tolist() == ["adult_enough_cells"]
+    assert standard["log_total_counts"].tolist() == [np.log(300)]
     assert standard_counts["n_cells_filter_bypassed"] == 0
     assert standard_excluded[-1]["reasons"] == ["age_below_minimum", "n_cells_below_minimum"]
     assert test["sample"].tolist() == ["adult_low_cells", "adult_enough_cells"]
@@ -59,14 +61,15 @@ def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None
     first = ad.read_h5ad(first_path)
     second = ad.read_h5ad(second_path)
 
-    assert first.shape == (48, 91)
+    assert first.shape == (96, 91)
     assert first.obs["study"].nunique() == 3
     assert first.obs["study_site"].nunique() == 4
-    assert first.obs["sample"].nunique() == 8
+    assert first.obs["sample"].nunique() == 16
     assert first.obs["aifi_l2_majority"].nunique() == 2
     assert first.obs["n_cells"].min() == 15
     assert (first.obs["age"] >= 20).all()
-    assert first.obs.groupby(["study", "aifi_l2_majority"], observed=True).size().eq(8).all()
+    assert first.obs.groupby(["study", "aifi_l2_majority"], observed=True).size().eq(16).all()
+    assert (first.obs["total_counts"] > 0).all()
     assert first.obs.groupby("study", observed=True)["bmi"].apply(
         lambda values: values.notna().any()
     ).to_dict() == {
@@ -102,8 +105,8 @@ def test_per_study_design_uses_all_varying_covariates_once() -> None:
 
     assert covariates == ["age", "sex", "bmi", "cmv"]
     assert _design_with_covariates(
-        "~ study_site + age + sex", covariates
-    ) == "~ study_site + age + sex + bmi + cmv"
+        "~ study_site + age + sex + log_total_counts", covariates
+    ) == "~ study_site + age + sex + log_total_counts + bmi + cmv"
 
 
 def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_path) -> None:
@@ -119,11 +122,14 @@ def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_
             "sex": ["female", "male"] * 4,
             "cmv": ["no", "yes", "no", pd.NA, "no", "yes", "no", "yes"],
             "n_cells": [20] * 8,
+            "total_counts": [200 + 10 * number for number in range(8)],
+            "log_total_counts": np.log([200 + 10 * number for number in range(8)]),
         },
         index=index,
     )
     var = pd.DataFrame({"available_in_aifi": [True, True]}, index=["G1", "G2"])
-    adata = ad.AnnData(X=np.full((8, 2), 100, dtype=np.int32), obs=obs, var=var)
+    counts = np.array([[100 + 5 * number, 100 + 5 * number] for number in range(8)])
+    adata = ad.AnnData(X=counts, obs=obs, var=var)
     captured = {}
 
     def fake_fit(counts, genes, metadata, **kwargs):
@@ -146,7 +152,7 @@ def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_
         cell_type="CD14 monocyte",
         model_name="combined",
         study=None,
-        design="~ study_site + age + sex + cmv",
+        design="~ study_site + age + sex + log_total_counts + cmv",
         covariates=["cmv"],
         alpha=0.05,
         cpus=1,
@@ -158,15 +164,15 @@ def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_
     assert result["status"] == "complete"
     assert result["studies"] == ["aifi"]
     assert result["study_sample_counts"] == {"aifi": 7}
-    assert result["design"] == "~ age + sex + cmv"
-    assert captured["design"] == "~ age + sex + cmv"
+    assert result["design"] == "~ age + sex + log_total_counts + cmv"
+    assert captured["design"] == "~ age + sex + log_total_counts + cmv"
     assert result["study_sites"] == ["aifi"]
     assert result["study_site_sample_counts"] == {"aifi": 7}
     assert captured["metadata_index"] == [index[position] for position in (0, 1, 2, 4, 5, 6, 7)]
     assert result["n_samples_before_complete_case_filter"] == 8
     assert result["n_samples_excluded_missing_design_covariates"] == 1
     assert result["missing_values_by_design_covariate"] == {
-        "study_site": 0, "age": 0, "sex": 0, "cmv": 1,
+        "study_site": 0, "age": 0, "sex": 0, "log_total_counts": 0, "cmv": 1,
     }
 
 
@@ -179,6 +185,8 @@ def test_age_model_diagnostics_record_the_shared_gene_universe_and_raw_counts(tm
             "age": [30.0, 60.0],
             "sex": ["female", "male"],
             "n_cells": [20, 25],
+            "total_counts": [10, 31],
+            "log_total_counts": np.log([10, 31]),
         },
         index=["one::one_sample::T", "two::two_sample::T"],
     )
@@ -203,6 +211,7 @@ def test_age_model_diagnostics_record_the_shared_gene_universe_and_raw_counts(tm
     diagnostics = pd.read_csv(output)
     assert diagnostics["genes_in_age_intersection"].tolist() == [1, 1]
     assert diagnostics["counts_in_age_gene_intersection"].tolist() == [2, 7]
+    assert diagnostics["total_counts"].tolist() == [10, 31]
 
 
 def test_synthetic_fixture_requires_production_cell_cutoff(tmp_path) -> None:
