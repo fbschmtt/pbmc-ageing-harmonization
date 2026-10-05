@@ -18,6 +18,8 @@ def generate_cell_type_report(
         if not path.exists():
             raise FileNotFoundError(path)
     output_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("age_trajectory_clusters.csv", "age_trajectory_cluster_means.csv"):
+        (output_dir / name).unlink(missing_ok=True)
     executed, html = output_dir / "executed.ipynb", output_dir / "report.html"
     env = os.environ.copy()
     env.update({

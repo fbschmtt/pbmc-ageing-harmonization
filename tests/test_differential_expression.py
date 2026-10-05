@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import anndata as ad
 import numpy as np
 import pandas as pd
 
-from pbmc_pipeline.config import read_json
+from pbmc_pipeline.age_trajectory import prepare_age_trajectory_metadata
+from pbmc_pipeline.config import AgeTrajectorySettings, read_json
 from pbmc_pipeline.differential_expression import (
     _design_with_covariates,
     _maximal_per_study_covariates,
@@ -17,9 +19,47 @@ from pbmc_pipeline.differential_expression import (
     combine_cell_type_differential_expression,
     list_pseudobulk_cell_types,
 )
-from pbmc_pipeline.synthetic_de import create_synthetic_pseudobulk
+from pbmc_pipeline.synthetic_de import (
+    _default_samples_per_study,
+    create_synthetic_pseudobulk,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
+TRAJECTORY_SETTINGS = AgeTrajectorySettings.from_mapping(
+    read_json(ROOT / "config/pipeline.json")["differential_expression"]["age_trajectory"]
+)
+
+
+def test_age_trajectory_requires_seven_supported_bins_and_drops_sparse_bins() -> None:
+    ages = (
+        [24] * 10 + [34] * 10 + [44] * 10 + [54] * 10 + [64] * 10
+        + [74] * 10 + [84] * 10 + [94] * 9
+    )
+    metadata = pd.DataFrame({
+        "age": ages,
+        "study": ["study_a"] * len(ages),
+    })
+
+    retained, support = prepare_age_trajectory_metadata(metadata, TRAJECTORY_SETTINGS)
+
+    assert retained is not None
+    assert retained["age_bin"].cat.categories.tolist() == [
+        "20-30", "30-40", "40-50", "50-60", "60-70",
+        "70-80", "80-90",
+    ]
+    assert support["dropped_bins"] == ["90-100"]
+    assert support["samples_in_dropped_bins"] == 9
+    assert support["n_samples_retained"] == 70
+
+
+def test_age_trajectory_requires_reference_bin_and_minimum_bin_count() -> None:
+    metadata = pd.DataFrame({"age": [34] * 10 + [44] * 10, "study": ["s"] * 20})
+
+    retained, support = prepare_age_trajectory_metadata(metadata, TRAJECTORY_SETTINGS)
+
+    assert retained is None
+    assert support["status"] == "skipped"
+    assert "reference age bin '20-30'" in support["reason"]
 
 
 def test_test_mode_bypasses_cell_count_cutoff_but_keeps_adult_filter() -> None:
@@ -56,20 +96,36 @@ def test_test_mode_bypasses_cell_count_cutoff_but_keeps_adult_filter() -> None:
 
 
 def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None:
-    first_path = create_synthetic_pseudobulk(tmp_path / "first.h5ad")
-    second_path = create_synthetic_pseudobulk(tmp_path / "second.h5ad")
+    first_path = create_synthetic_pseudobulk(
+        tmp_path / "first.h5ad", trajectory_settings=TRAJECTORY_SETTINGS
+    )
+    second_path = create_synthetic_pseudobulk(
+        tmp_path / "second.h5ad", trajectory_settings=TRAJECTORY_SETTINGS
+    )
     first = ad.read_h5ad(first_path)
     second = ad.read_h5ad(second_path)
 
-    assert first.shape == (96, 91)
+    assert first.shape == (192, 96)
     assert first.obs["study"].nunique() == 3
     assert first.obs["study_site"].nunique() == 4
-    assert first.obs["sample"].nunique() == 16
+    assert first.obs["sample"].nunique() == 32
     assert first.obs["aifi_l2_majority"].nunique() == 2
     assert first.obs["n_cells"].min() == 15
     assert (first.obs["age"] >= 20).all()
-    assert first.obs.groupby(["study", "aifi_l2_majority"], observed=True).size().eq(16).all()
+    assert first.obs.groupby(["study", "aifi_l2_majority"], observed=True).size().eq(32).all()
     assert (first.obs["total_counts"] > 0).all()
+    age_bin_counts = (
+        first.obs.assign(age_bin=(first.obs["age"] // 10 * 10).astype(int))
+        .groupby(["aifi_l2_majority", "age_bin"], observed=True)
+        .size()
+    )
+    assert age_bin_counts.eq(12).all()
+    synthetic_metadata = first.uns["synthetic_test_data"]
+    assert synthetic_metadata["age_trajectory_settings"] == TRAJECTORY_SETTINGS.to_mapping()
+    assert len(synthetic_metadata["expected_age_trajectory_profiles"]) == 5
+    assert _default_samples_per_study(
+        replace(TRAJECTORY_SETTINGS, minimum_samples_per_bin=13), study_count=3
+    ) == 40
     assert first.obs.groupby("study", observed=True)["bmi"].apply(
         lambda values: values.notna().any()
     ).to_dict() == {
@@ -82,6 +138,12 @@ def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None
         "synthetic_study_b": 1,
         "synthetic_study_c": 1,
     }
+    first_study_site_sex_counts = (
+        first.obs.loc[first.obs["study"] == "synthetic_study_a"]
+        .groupby(["aifi_l2_majority", "study_site", "sex"], observed=True)
+        .size()
+    )
+    assert first_study_site_sex_counts.eq(8).all()
     assert first.obs.groupby("study", observed=True)["cmv"].apply(
         lambda values: values.notna().any()
     ).to_dict() == {
@@ -219,11 +281,17 @@ def test_synthetic_fixture_requires_production_cell_cutoff(tmp_path) -> None:
     import pytest
 
     with pytest.raises(ValueError, match="configured DE cell cutoff"):
-        create_synthetic_pseudobulk(tmp_path / "too_small.h5ad", cells_per_pseudobulk=9)
+        create_synthetic_pseudobulk(
+            tmp_path / "too_small.h5ad",
+            trajectory_settings=TRAJECTORY_SETTINGS,
+            cells_per_pseudobulk=9,
+        )
 
 
 def test_parallel_cell_type_results_rebuild_the_standard_de_manifest(tmp_path) -> None:
-    input_path = create_synthetic_pseudobulk(tmp_path / "pseudobulk.h5ad")
+    input_path = create_synthetic_pseudobulk(
+        tmp_path / "pseudobulk.h5ad", trajectory_settings=TRAJECTORY_SETTINGS
+    )
     pipeline = read_json(ROOT / "config" / "pipeline.json")
     cell_types = list_pseudobulk_cell_types(input_path, pipeline)
     assert len(cell_types) == 2

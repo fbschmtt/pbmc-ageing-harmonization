@@ -8,9 +8,15 @@ import re
 from pathlib import Path
 
 import anndata as ad
+import numpy as np
+import pandas as pd
 
 
-def _load_fixture(outdir: Path) -> tuple[list[str], dict[str, list[str]], dict[str, list[str]]]:
+def _load_fixture(
+    outdir: Path,
+) -> tuple[
+    list[str], dict[str, list[str]], dict[str, list[str]], int, dict[str, list[float]]
+]:
     fixture_path = outdir / "synthetic_de" / "pseudobulk_merged.h5ad"
     if not fixture_path.is_file():
         raise SystemExit(f"Missing generated synthetic fixture: {fixture_path}")
@@ -18,7 +24,7 @@ def _load_fixture(outdir: Path) -> tuple[list[str], dict[str, list[str]], dict[s
     metadata = fixture.uns["synthetic_test_data"]
     expected_genes = {
         covariate: metadata.get(f"expected_{covariate}_associated_genes")
-        for covariate in ("age", "sex", "bmi", "cmv")
+        for covariate in ("age", "sex", "bmi", "cmv", "age_trajectory")
     }
     if any(genes is None or len(genes) == 0 for genes in expected_genes.values()):
         raise SystemExit(f"Fixture does not declare planted covariate markers: {fixture_path}")
@@ -26,16 +32,25 @@ def _load_fixture(outdir: Path) -> tuple[list[str], dict[str, list[str]], dict[s
     if not covariate_studies:
         raise SystemExit(f"Fixture does not declare expected covariate study coverage: {fixture_path}")
     cell_types = sorted(fixture.obs["aifi_l2_majority"].astype(str).unique())
+    samples_per_study = int(metadata["samples_per_study"])
+    trajectory_profiles = metadata.get("expected_age_trajectory_profiles")
+    if not trajectory_profiles:
+        raise SystemExit(f"Fixture does not declare planted trajectory profiles: {fixture_path}")
     fixture.file.close()
     return (
         cell_types,
         {key: list(value) for key, value in expected_genes.items()},
         {key: list(value) for key, value in covariate_studies.items()},
+        samples_per_study,
+        {gene: list(profile) for gene, profile in trajectory_profiles.items()},
     )
 
 
 def check_results(outdir: Path) -> None:
-    cell_types, expected_genes, covariate_studies = _load_fixture(outdir)
+    (
+        cell_types, expected_genes, covariate_studies, samples_per_study,
+        trajectory_profiles,
+    ) = _load_fixture(outdir)
     de_dir = outdir / "differential_expression"
     manifest_path = de_dir / "differential_expression.json"
     if not manifest_path.is_file():
@@ -43,7 +58,7 @@ def check_results(outdir: Path) -> None:
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("status") != "complete":
         raise SystemExit(f"Expected complete synthetic DE run; got {manifest.get('status')!r}")
-    expected_per_cell_type = 3 + 1 + len(covariate_studies)
+    expected_per_cell_type = 3 + 1 + len(covariate_studies) + 1
     expected_completed = expected_per_cell_type * len(cell_types)
     if manifest.get("models_completed") != expected_completed or manifest.get("models_failed") != 0:
         raise SystemExit(
@@ -121,7 +136,7 @@ def check_results(outdir: Path) -> None:
                     f"Single-study CMV fit for {cell_type!r} omitted its varying site term: "
                     f"{combined.get('design')}"
                 )
-            expected_n = 15
+            expected_n = samples_per_study - 1
             if set(combined.get("study_sample_counts", {}).values()) != {expected_n}:
                 raise SystemExit(
                     f"Combined {covariate} fit for {cell_type!r} did not select the "
@@ -151,6 +166,55 @@ def check_results(outdir: Path) -> None:
                     f"Per-study {covariate} fits for {cell_type!r} used "
                     f"{completed_studies}, expected {studies}"
                 )
+
+        trajectory_model = next(
+            (model for model in models if model.get("purpose") == "age_trajectory"), None
+        )
+        if trajectory_model is None or trajectory_model.get("status") != "complete":
+            raise SystemExit(f"Missing completed age-trajectory fit for {cell_type!r}")
+        trajectory_path = de_dir / trajectory_model["results_by_covariate"]["age_bin"]
+        with trajectory_path.open(newline="") as handle:
+            trajectory_rows = list(csv.DictReader(handle))
+        trajectory_genes = {
+            row["gene"] for row in trajectory_rows
+            if row.get("omnibus_padj") and float(row["omnibus_padj"]) < 0.05
+        }
+        for gene in expected_genes["age_trajectory"]:
+            if gene not in trajectory_genes:
+                raise SystemExit(
+                    f"Planted non-linear age marker {gene!r} is not omnibus-significant "
+                    f"in {trajectory_path}"
+                )
+        for gene in expected_genes["age_trajectory"]:
+            rows = [row for row in trajectory_rows if row["gene"] == gene]
+            if not rows or len({row["age_bin"] for row in rows}) != len(
+                trajectory_model.get("retained_bins", [])
+            ):
+                raise SystemExit(f"Age trajectory for {gene!r} is missing retained bins")
+            reference = next(row for row in rows if row["age_bin"] == "20-30")
+            if float(reference["trajectory_scaled"]) != 0.0:
+                raise SystemExit(f"Age trajectory for {gene!r} is not zero at 20–30")
+            profile = np.asarray(trajectory_profiles[gene], dtype=float)
+            expected_shape = np.log2(profile / profile[0])
+            differences = np.diff(expected_shape)
+            direction_changes = np.count_nonzero(
+                np.sign(differences[1:]) != np.sign(differences[:-1])
+            )
+            if direction_changes < 2:
+                raise SystemExit(
+                    f"Planted trajectory for {gene!r} must contain multiple direction changes"
+                )
+            ordered_rows = sorted(rows, key=lambda row: int(row["age_bin"].split("-")[0]))
+            observed_shape = np.asarray(
+                [float(row["trajectory_scaled"]) for row in ordered_rows], dtype=float
+            )
+            expected_shape = expected_shape / np.std(expected_shape, ddof=0)
+            shape_correlation = float(np.corrcoef(expected_shape, observed_shape)[0, 1])
+            if not np.isfinite(shape_correlation) or shape_correlation < 0.75:
+                raise SystemExit(
+                    f"Fitted shape for {gene!r} does not recover its planted non-linear "
+                    f"trajectory (correlation={shape_correlation:.3f})"
+                )
         per_study_models = [model for model in models if model.get("model") == "per_study"]
         expected_optional_by_study = {
             study: sorted(
@@ -179,12 +243,27 @@ def check_results(outdir: Path) -> None:
 
 
 def check_reports(outdir: Path) -> None:
-    cell_types, expected_genes, _ = _load_fixture(outdir)
+    cell_types, expected_genes, _, _, _ = _load_fixture(outdir)
     for cell_type in cell_types:
         slug = "-".join(cell_type.lower().split())
-        report_path = outdir / "cell_type_analysis" / slug / "report.html"
+        cell_type_dir = outdir / "cell_type_analysis" / slug
+        report_path = cell_type_dir / "report.html"
         if not report_path.is_file():
             raise SystemExit(f"Missing standard cell-type report: {report_path}")
+        cluster_path = cell_type_dir / "age_trajectory_clusters.csv"
+        cluster_means_path = cell_type_dir / "age_trajectory_cluster_means.csv"
+        if not cluster_path.is_file() or not cluster_means_path.is_file():
+            raise SystemExit(
+                f"Missing materialized trajectory clusters or means for {cell_type!r}"
+            )
+        cluster_rows = pd.read_csv(cluster_path)
+        cluster_means = pd.read_csv(cluster_means_path)
+        if cluster_rows.empty or cluster_means.empty:
+            raise SystemExit(f"Trajectory clustering produced no export rows for {cell_type!r}")
+        if not cluster_rows["trajectory_cluster"].notna().all():
+            raise SystemExit(f"Trajectory cluster labels are missing for {cell_type!r}")
+        if cluster_rows[["umap_1", "umap_2"]].notna().all(axis=1).sum() < 4:
+            raise SystemExit(f"Per-cell-type UMAP was not materialized for {cell_type!r}")
         html = report_path.read_text(errors="replace").lower()
         required = [
             "synthetic test data", "differential expression", "shared age-model diagnostics",
@@ -226,22 +305,74 @@ def check_reports(outdir: Path) -> None:
                 and heading_positions["log10(total_counts)"] < heading_positions["sex"]
             ):
                 missing.append("depth volcano subsection after sex")
-            for covariate in expected_genes:
+            plotted_covariates = [
+                covariate for covariate in expected_genes if covariate != "age_trajectory"
+            ]
+            for covariate in plotted_covariates:
                 if f"{covariate} contrast:" not in de_section:
                     missing.append(f"{covariate} contrast summary")
             if "log10(total_counts) contrast:" not in de_section:
                 missing.append("log10(total_counts) contrast summary")
-            # The age recurrence panel and one volcano per covariate are rendered
-            # as images. Gene labels inside those plots are rasterized, so their
-            # names are checked against the DE result CSVs in check_results().
-            expected_plots = 5 + len(expected_genes)
+            if "age-bin trajectories" not in de_section:
+                missing.append("age-bin trajectory section")
+            if "show trajectory clusters and umap" not in de_section:
+                missing.append("per-cell-type trajectory clusters and UMAP")
+            if "../../differential_expression/trajectory_analysis/report.html" not in de_section:
+                missing.append("cross-cell-type trajectory report link")
+            # Includes age recurrence, shared diagnostics, trajectory clusters,
+            # one standard volcano per covariate, and age/depth color views.
+            expected_plots = 6 + len(plotted_covariates)
             if de_section.count("<img") < expected_plots:
                 missing.append(
                     f"{expected_plots} DE plot images; found {de_section.count('<img')}"
                 )
         if missing:
             raise SystemExit(f"{report_path} is missing expected DE content: {missing}")
-    print("Synthetic DE report check passed: all covariate summaries and volcano plots are present.")
+    trajectory_dir = outdir / "differential_expression" / "trajectory_analysis"
+    required_outputs = [
+        trajectory_dir / "report.html",
+        trajectory_dir / "executed.ipynb",
+        trajectory_dir / "cross_cell_type_trajectory_clusters.csv",
+        trajectory_dir / "cross_cell_type_cluster_means.csv",
+        trajectory_dir / "gene_recurrence.csv",
+        trajectory_dir / "gene_pattern_concordance.csv",
+    ]
+    missing_outputs = [str(path) for path in required_outputs if not path.is_file()]
+    if missing_outputs:
+        raise SystemExit(f"Missing cross-cell-type trajectory report outputs: {missing_outputs}")
+    obsolete_type_clusters = [
+        trajectory_dir / name for name in (
+            "cell_type_trajectory_clusters.csv", "cell_type_cluster_means.csv",
+        ) if (trajectory_dir / name).exists()
+    ]
+    if obsolete_type_clusters:
+        raise SystemExit(
+            f"Per-cell-type clusters should be exported beside their reports: "
+            f"{obsolete_type_clusters}"
+        )
+    metadata = json.loads((trajectory_dir / "analysis_metadata.json").read_text())
+    cross_trajectories = pd.read_csv(
+        trajectory_dir / "cross_cell_type_trajectory_clusters.csv"
+    )
+    finite_umap = cross_trajectories[["umap_1", "umap_2"]].notna().all(axis=1).sum()
+    if finite_umap < 4:
+        raise SystemExit(
+            "Synthetic report fixture did not exercise cross-cell-type trajectory UMAP"
+        )
+    html = (trajectory_dir / "report.html").read_text(errors="replace").lower()
+    for phrase in (
+        "cross-cell-type age trajectories", "recurrence", "each point is one gene",
+    ):
+        if phrase not in html:
+            raise SystemExit(
+                f"Cross-cell-type trajectory report is missing expected content {phrase!r}"
+            )
+    if not metadata.get("common_bins") or len(metadata.get("cell_types_in_cross_cell_type_analysis", [])) < 2:
+        raise SystemExit("Synthetic report did not combine multiple cell types on shared bins")
+    print(
+        "Synthetic DE report check passed: per-cell-type cluster exports, cross-cell-type "
+        "trajectory clusters, UMAPs, and recurrence summaries are present."
+    )
 
 
 def main() -> None:

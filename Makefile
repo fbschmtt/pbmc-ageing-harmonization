@@ -42,7 +42,7 @@ TEST_DATA_CONTAINER_PREREQS := image-python $(PRODUCTION_R_IMAGE_PREREQ)
 PYTHON_CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),image-python,)
 MERGE_ARGS = $(if $(filter true 1 yes,$(MERGE_SINGLE_CELL)),--merge_single_cell,)
 
-.PHONY: help install lint workflow-lint docs-check test-unit verify run-all-test \
+.PHONY: help install lint workflow-lint docs-check test-unit verify run-all-test run-trajectory-test \
 	validate-study validate-test validate-full test-data download-inputs images image-python \
 	download-inputs-strict check-download-inputs \
 	image-r run run-no-qc run-test run-all split-cell-types split-cell-types-test \
@@ -51,6 +51,7 @@ MERGE_ARGS = $(if $(filter true 1 yes,$(MERGE_SINGLE_CELL)),--merge_single_cell,
 	render-cell-type-reports render-cell-type-reports-test \
 	run-integration-benchmark run-integration-benchmark-test check-integration-benchmark-prerequisites check-integration-benchmark-test \
 	run-de run-de-test run-de-synthetic-test \
+	render-trajectory-report render-trajectory-report-test \
 	check-synthetic-de-results check-synthetic-de-reports check-de-prerequisites \
 	check-cell-type-prerequisites check-cell-type-analysis-test-prerequisites check-cell-type-test-prerequisites \
 	check-cell-type-render-prerequisites check-cell-type-test-render-prerequisites \
@@ -91,6 +92,12 @@ verify: lint test-unit workflow-lint docs-check run-all-test ## Run all checks a
 run-all-test: run-test ## Run the ordered core, benchmark, positive-DE, and cell-type Docker test workflows
 	$(MAKE) run-integration-benchmark-test
 	$(MAKE) check-integration-benchmark-test
+	$(MAKE) run-de-synthetic-test
+	$(MAKE) check-synthetic-de-results
+	$(MAKE) run-cell-type-analysis-test
+	$(MAKE) check-synthetic-de-reports
+
+run-trajectory-test: check-cell-type-analysis-test-prerequisites ## Exercise synthetic trajectory fits and both report levels from an existing test merge
 	$(MAKE) run-de-synthetic-test
 	$(MAKE) check-synthetic-de-results
 	$(MAKE) run-cell-type-analysis-test
@@ -187,7 +194,7 @@ check-integration-benchmark-test: $(PYTHON_CONTAINER_PREREQS) ## Check thin inte
 run-de-synthetic-test: OUTDIR = output/test
 run-de-synthetic-test: SYNTHETIC_DE_DIR = $(OUTDIR)/synthetic_de
 run-de-synthetic-test: $(PYTHON_CONTAINER_PREREQS) ## Generate a compact positive DE fixture and fit it with production filters enabled
-	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.synthetic_de --output "$(SYNTHETIC_DE_DIR)/pseudobulk_merged.h5ad"
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.synthetic_de --config config/pipeline.json --output "$(SYNTHETIC_DE_DIR)/pseudobulk_merged.h5ad"
 	$(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression,synthetic_de_test -work-dir $(WORK_DIR) --outdir "$(OUTDIR)" --pseudobulk_input "$(SYNTHETIC_DE_DIR)/pseudobulk_merged.h5ad" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
 
 check-synthetic-de-results: $(PYTHON_CONTAINER_PREREQS) ## Check completed synthetic DE fits and planted age markers
@@ -195,6 +202,21 @@ check-synthetic-de-results: $(PYTHON_CONTAINER_PREREQS) ## Check completed synth
 
 check-synthetic-de-reports: $(PYTHON_CONTAINER_PREREQS) ## Check synthetic DE warnings, markers, and plots in standard test reports
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/check_synthetic_de.py reports --outdir output/test
+
+check-trajectory-report-prerequisites:
+	@if test ! -f "$(DE_RESULTS_DIR)/differential_expression.json"; then \
+		echo "Missing DE manifest: $(DE_RESULTS_DIR)/differential_expression.json. Run make run-de first." >&2; exit 2; \
+	else \
+		echo "Ready to render the trajectory report from $(DE_RESULTS_DIR)"; \
+	fi
+
+render-trajectory-report: check-trajectory-report-prerequisites image-python ## Rerender the cross-cell-type trajectory report from existing DE results
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) pbmc-trajectory-report --differential-expression-dir "$(DE_RESULTS_DIR)" --output-dir "$(DE_RESULTS_DIR)/trajectory_analysis" --config config/pipeline.json --template reports/trajectory_analysis_report.py --project-root /work
+
+render-trajectory-report-test: OUTDIR = output/test
+render-trajectory-report-test: DE_RESULTS_DIR = $(OUTDIR)/differential_expression
+render-trajectory-report-test: check-trajectory-report-prerequisites image-python ## Rerender the test trajectory report from existing synthetic DE results
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) pbmc-trajectory-report --differential-expression-dir "$(DE_RESULTS_DIR)" --output-dir "$(DE_RESULTS_DIR)/trajectory_analysis" --config config/pipeline.json --template reports/trajectory_analysis_report.py --project-root /work
 
 split-cell-types: $(PYTHON_CONTAINER_PREREQS) ## Create reusable raw-count cell-type splits from an existing merged H5AD
 	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(MERGED_INPUT)" --split_only --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume

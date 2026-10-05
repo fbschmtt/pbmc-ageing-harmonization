@@ -3,14 +3,116 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from jsonschema import Draft202012Validator
 
 
 class ConfigurationError(ValueError):
     """Raised when pipeline configuration is incomplete or inconsistent."""
+
+
+@dataclass(frozen=True)
+class AgeTrajectorySettings:
+    """Validated, typed view of the required age-trajectory pipeline settings."""
+
+    bin_width_years: int
+    minimum_samples_per_bin: int
+    minimum_bins: int
+    reference_bin_start_age: int
+    cluster_fdr_threshold: float
+    de_fdr_threshold: float
+    max_clusters: int
+    linkage_method: str
+    distance_metric: str
+    umap_neighbors: int
+    minimum_umap_trajectories: int
+    umap_min_dist: float
+    report_top_n_genes: int
+    cross_report_top_n_genes: int
+    random_state: int
+    minimum_shared_bins: int
+
+    LINKAGE_METHODS: ClassVar[frozenset[str]] = frozenset({
+        "single", "complete", "average", "weighted", "centroid", "median", "ward",
+    })
+    DISTANCE_METRICS: ClassVar[frozenset[str]] = frozenset({
+        "euclidean", "cityblock", "cosine", "correlation",
+    })
+
+    def __post_init__(self) -> None:
+        positive_ints = (
+            "bin_width_years", "minimum_samples_per_bin", "minimum_bins",
+            "max_clusters", "umap_neighbors", "minimum_umap_trajectories",
+            "report_top_n_genes", "cross_report_top_n_genes", "minimum_shared_bins",
+        )
+        for name in positive_ints:
+            value = getattr(self, name)
+            minimum = 2 if name in {
+                "minimum_samples_per_bin", "minimum_bins", "max_clusters",
+                "umap_neighbors", "minimum_umap_trajectories", "minimum_shared_bins",
+            } else 1
+            if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+                raise ConfigurationError(
+                    f"differential_expression.age_trajectory.{name} "
+                    f"must be an integer of at least {minimum}"
+                )
+        if (
+            not isinstance(self.reference_bin_start_age, int)
+            or isinstance(self.reference_bin_start_age, bool)
+            or self.reference_bin_start_age < 0
+        ):
+            raise ConfigurationError(
+                "differential_expression.age_trajectory.reference_bin_start_age "
+                "must be a non-negative integer"
+            )
+        for name in ("cluster_fdr_threshold", "de_fdr_threshold"):
+            value = getattr(self, name)
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 < value < 1:
+                raise ConfigurationError(
+                    f"differential_expression.age_trajectory.{name} must be between 0 and 1"
+                )
+        if not isinstance(self.linkage_method, str) or self.linkage_method not in self.LINKAGE_METHODS:
+            raise ConfigurationError(
+                "differential_expression.age_trajectory.linkage_method is not supported"
+            )
+        if not isinstance(self.distance_metric, str) or self.distance_metric not in self.DISTANCE_METRICS:
+            raise ConfigurationError(
+                "differential_expression.age_trajectory.distance_metric is not supported"
+            )
+        if self.linkage_method in {"ward", "centroid", "median"} and self.distance_metric != "euclidean":
+            raise ConfigurationError(
+                "Ward, centroid, and median linkage require the Euclidean distance metric"
+            )
+        if (
+            not isinstance(self.umap_min_dist, (int, float))
+            or isinstance(self.umap_min_dist, bool)
+            or not 0 <= self.umap_min_dist <= 1
+        ):
+            raise ConfigurationError(
+                "differential_expression.age_trajectory.umap_min_dist must be between 0 and 1"
+            )
+        if not isinstance(self.random_state, int) or isinstance(self.random_state, bool) or self.random_state < 0:
+            raise ConfigurationError(
+                "differential_expression.age_trajectory.random_state must be a non-negative integer"
+            )
+
+    @classmethod
+    def from_mapping(cls, mapping: dict[str, Any]) -> AgeTrajectorySettings:
+        expected = {field.name for field in fields(cls) if field.init}
+        missing = sorted(expected - mapping.keys())
+        unexpected = sorted(mapping.keys() - expected)
+        if missing or unexpected:
+            raise ConfigurationError(
+                "differential_expression.age_trajectory must define exactly the settings "
+                f"in the configuration model (missing={missing}, unexpected={unexpected})"
+            )
+        return cls(**mapping)
+
+    def to_mapping(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -187,6 +289,22 @@ def validate_configuration(
             )
         if differential_expression.get("age_term") != "age":
             raise ConfigurationError("differential_expression.age_term must be 'age'")
+        age_trajectory = differential_expression.get("age_trajectory")
+        if not isinstance(age_trajectory, dict):
+            raise ConfigurationError(
+                "differential_expression.age_trajectory must be an object"
+            )
+        trajectory_settings = AgeTrajectorySettings.from_mapping(age_trajectory)
+        reference_start = trajectory_settings.reference_bin_start_age
+        bin_width = trajectory_settings.bin_width_years
+        minimum_age = differential_expression.get("sample_inclusion", {}).get(
+            "minimum_age_years_inclusive"
+        )
+        if reference_start != minimum_age or reference_start % bin_width:
+            raise ConfigurationError(
+                "differential_expression.age_trajectory reference bin must start at the "
+                "minimum included age and align with bin_width_years"
+            )
         optional_covariates = differential_expression.get("optional_covariates", ["bmi", "cmv"])
         if (
             not isinstance(optional_covariates, list)

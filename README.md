@@ -367,7 +367,9 @@ which validation to run.
 | One cell-type report template | `make run-cell-type-test CELL_TYPE=cd14-monocyte` | Use `make render-cell-type-test` or `make render-cell-type-reports-test` when existing analysis artifacts are sufficient. |
 | Rerender reports from existing analysis artifacts | `make render-cell-type-reports[-test]` | Use `make render-cell-type[-test] CELL_TYPE=<slug>` to refresh only one report. |
 | Cell-type splitting or shared analysis | `make run-test`, then `make run-cell-type-analysis-test` | Use `make run-all-test` when the complete ordered test workflow is needed. |
-| Positive pseudobulk DE fitting | `make run-test`, then `make run-de-synthetic-test` and `make check-synthetic-de-results` | Follow with `make run-cell-type-analysis-test` when checking that DE results reach reports. |
+| Positive pseudobulk DE fitting | `make run-de-synthetic-test` and `make check-synthetic-de-results` | This fixture is independent of the core merge. To check report integration, also run `make run-test` followed by `make run-cell-type-analysis-test` and `make check-synthetic-de-reports`. |
+| Cross-cell-type trajectory report only | `make render-trajectory-report[-test]` | Reuses existing DE results and reruns only the combined trajectory analysis and notebook. |
+| End-to-end trajectory path | `make run-trajectory-test` | Reuses an existing test merge, then runs the config-sized synthetic DE fit, both report levels, and artifact checks; skips the integration benchmark. Run `make run-test` first if the merge is missing. |
 | Core workflow for one or a few studies | `make run-test STUDIES=<list>` | Omit `STUDIES` to request all configured studies. |
 | Global integration/annotation diagnostics | `make run-integration-benchmark[-test]` | Run after an existing single-cell merge; `make run-all-test` also exercises its test form. |
 | Ordered Docker integration test | `make run-all-test` | Use `make verify` when local lint, unit, and documentation checks are also needed. |
@@ -617,8 +619,43 @@ uses the intersection of genes available across its included studies, so
 study-absent genes' synthetic outer-join zeros are excluded. The parallel
 type-fitting task is configured for one CPU, which is passed directly to
 PyDESeq2; all other CPU, time, and memory requests use the executor defaults.
-Each cell type also renders one shared-age diagnostic figure: study-site age
-support, age against raw pseudobulk depth in the tested gene intersection,
+In addition to the continuous-age fit, each cell type gets an exploratory
+all-study age-trajectory fit with 10-year bins, adjusted for study site, sex,
+and log10(total_counts). It uses 20–30 as the zero reference, retains bins with at least
+10 eligible pseudobulks in each decade, and requires at least 7 retained bins
+out of the eight possible decades from 20–30 through 90–100; trajectory
+plots and cross-cell-type summaries include only types meeting that support
+threshold. These thresholds are configurable under
+`differential_expression.age_trajectory`. A joint Wald
+omnibus test asks whether any retained bin differs from the reference, with
+FDR correction across genes. The report displays significant trajectories
+after scaling each gene's retained-bin shape by its population SD; genes whose
+shape cannot be fully estimated or has zero SD are omitted from standardized
+trajectory displays. Support and
+dropped-bin details are recorded in `run_metadata.json`, and results are written
+to `combined/age_bin.csv`.
+Each per-cell-type report also clusters trajectories with omnibus FDR ≤0.001
+using the configured linkage and distance metric (Ward and Euclidean by
+default) across the standardized bin values.
+It plots each cluster's mean trajectory and a UMAP where each point is a gene
+trajectory. The DE workflow produces a trajectory-centric notebook and HTML at
+`differential_expression/trajectory_analysis/`. Its cross-cell-type clustering
+uses only age bins retained by every included type and re-standardizes profiles
+over those shared bins; at least five shared bins are required. It also counts
+how many eligible cell types each gene is omnibus-significant in at FDR <0.05.
+This is a descriptive count across types meeting the seven-bin support
+requirement, with no additional correction across cell types. The clustering
+FDR threshold, cluster count, UMAP settings, and minimum shared-bin count are
+configurable under `differential_expression.age_trajectory`, including the
+number of displayed genes and minimum UMAP point count. Per-cell-type
+cluster assignments, standardized profiles, UMAP coordinates, and cluster
+means are also written as CSVs beside each cell-type report; the cross-type
+assignments and means are available as CSVs beside the combined report.
+The combined analysis clusters only cross-cell-type profiles; it does not
+repeat per-cell-type clustering. See [IMPLEMENTATION.md](IMPLEMENTATION.md#age-trajectory-settings)
+for the complete setting list and current defaults. Each cell type also renders
+one shared-age diagnostic figure: study-site age support, age against raw
+pseudobulk depth in the tested gene intersection,
 and a Q-Q plot of unadjusted p-values from the combined age model fitted across
 all eligible studies for that cell type and adjusted for study site, sex, age,
 and log10 total counts. Its dashed y=x line marks the null
@@ -660,8 +697,14 @@ fits: bypassing the cell cutoff does not create additional independent samples
 or fix a rank-deficient age/sex design. `make run-de-synthetic-test` creates a
 small deterministic pseudobulk H5AD directly (the fixture is generated, not
 checked in, and does not pass through single-cell pseudobulking). It contains
-three synthetic studies, eight independent samples per study and cell type,
-and at least 15 cells per pseudobulk. Its negative-binomial counts include
+three synthetic studies, 32 independent samples per study and cell type under
+the current trajectory settings, balanced across the eight age decades, and at
+least 15 cells per pseudobulk. The sample count is derived from the configured
+per-bin support requirement.
+That gives four samples per decade per study and 12 per decade pooled across
+studies before covariate-specific exclusions, enough to exercise the configured
+10-sample bin filter and seven-bin trajectory requirement.
+Its negative-binomial counts include
 known synthetic age, sex, BMI, and CMV signals and study-specific gene-
 availability flags. BMI is present in two studies; CMV is present in one.
 Missing values exercise covariate-specific study selection and complete-case
@@ -708,6 +751,18 @@ Run the workflow after creating the pseudobulk merge:
 ```bash
 make run-de
 ```
+
+When only the cross-cell-type trajectory analysis or its notebook changes,
+rerender it from the existing DE manifest and result directories without
+refitting the models:
+
+```bash
+make render-trajectory-report
+make render-trajectory-report-test
+```
+
+The test form requires `output/test/differential_expression/` from
+`make run-de-synthetic-test`; it does not require the core test merge.
 
 By default this reads `output/merged/pseudobulk_merged.h5ad`. Override the
 input or output roots with `PSEUDOBULK_INPUT=/path/to/pseudobulk_merged.h5ad`

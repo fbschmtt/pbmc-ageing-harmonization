@@ -13,6 +13,9 @@ def normalize_cmv_status(values: pd.Series) -> pd.Series:
 def categorical_levels(covariate: str, values: pd.Series) -> list[str]:
     """Return treatment levels with the intended reference level first."""
     levels = sorted(values.astype("string").dropna().unique().tolist())
+    if covariate == "age_bin":
+        levels.sort(key=lambda value: int(value.split("-", maxsplit=1)[0]))
+        return levels
     preferred = {"sex": "female", "cmv": "no"}.get(covariate)
     if preferred not in levels and covariate == "cmv" and "negative" in levels:
         preferred = "negative"

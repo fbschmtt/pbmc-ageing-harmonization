@@ -89,13 +89,24 @@ merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
   and fit per task, then result/manifest collection.
 - `src/pbmc_pipeline/differential_expression.py`: configured sample filtering,
   per-study and merged PyDESeq2 fits, task-result collection, CSV output, and
-  the result manifest.
+  the result manifest. It delegates age-bin model preparation and trajectory
+  statistics to `src/pbmc_pipeline/age_trajectory.py`.
+- `src/pbmc_pipeline/config.py`: configuration validation and the typed,
+  required `AgeTrajectorySettings` view used by the DE fit and report stages.
+- `src/pbmc_pipeline/trajectory_analysis.py` and
+  `src/pbmc_pipeline/trajectory_report.py`: support-filtered per-type and
+  shared-bin cross-type hierarchical clustering, UMAP coordinates, recurrence
+  summaries, and the trajectory notebook/HTML report.
+- `reports/trajectory_analysis_report.py`: source notebook for the combined
+  age-trajectory report.
 - `src/pbmc_pipeline/synthetic_de.py`: deterministic on-demand positive-fit
-  pseudobulk fixture generation; the generated H5AD is ignored output, not a
-  checked-in fixture.
+  pseudobulk fixture generation (32 samples per study, balanced across eight
+  age decades); the generated H5AD is ignored output, not a checked-in fixture.
 - `scripts/check_synthetic_de.py`: assertions used by `make run-all-test` and
   `make verify` for age, sex, BMI, and CMV marker detection; covariate-specific
-  study selection; complete-case counts; and report output.
+  study selection; complete-case counts; and report output. The fixture uses
+  32 independent samples per study, balanced over the eight age decades, so it
+  meets the production trajectory support threshold.
 - `src/pbmc_pipeline/reporting.py`: testable report data transformations.
 - `reports/merge_qc_report.py`: Jupytext source for the generated merge
   notebook. Report runners materialize these Python sources in a temporary
@@ -126,12 +137,15 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/cell_type_analysis/<aifi-l2-type>/analysis.h5ad` (optional derived embeddings and clusters)
 - `<outdir>/cell_type_analysis/<aifi-l2-type>/report.html` (optional self-contained static, reader-facing downstream report without implementation-cell inputs)
 - `<outdir>/cell_type_analysis/<aifi-l2-type>/executed.ipynb` (optional executed technical/audit report)
+- `<outdir>/cell_type_analysis/<aifi-l2-type>/age_trajectory_{clusters,cluster_means}.csv` (optional per-gene labels, standardized profiles, UMAP coordinates, and cluster means)
 - `<outdir>/cell_type_analysis/<aifi-l2-type>/fraction_model_diagnostics.tsv` (optional per-study fraction-model covariates, residual SD, and binomial-sampling reference)
 - `<outdir>/cell_type_analysis/cell_type_manifest.json` (optional downstream provenance and completeness contract)
 - `<outdir>/differential_expression/<cell-type-slug>/...csv` (per-study and combined covariate results)
 - `<outdir>/differential_expression/<cell-type-slug>/age_model_diagnostics.csv` (sample support and raw-count inputs for the shared age-model diagnostic figure)
 - `<outdir>/differential_expression/<cell-type-slug>/cell_type_result.json` (per-task fit record collected into the root manifest)
 - `<outdir>/differential_expression/differential_expression.json` (DE status and cell-type result index)
+- `<outdir>/differential_expression/trajectory_analysis/{report.html,executed.ipynb}` (combined trajectory report)
+- `<outdir>/differential_expression/trajectory_analysis/*.csv` (shared-bin cross-type clusters and means, gene-level DE recurrence, and cross-type pattern concordance)
 - `<outdir>/run_manifest.json` (requested, selected, and skipped studies;
   hashes of selected source inputs, metadata dependencies, and annotation models;
   selected studies are the complete requested set for explicit study lists)
@@ -209,7 +223,21 @@ independent producer: it lists labels, then each task loads the small merged
 pseudobulk H5AD and subsets its assigned type in memory (without materializing
 per-type pseudobulk inputs). A final collector writes the
 `differential_expression.json` manifest that indexes per-study and combined
-covariate results by cell-type slug. A single report-render process receives either the
+covariate results by cell-type slug. Each cell type also receives a separate
+all-study age-bin trajectory model. It uses configured decade bins, a 20–30
+reference, minimum sample support per bin, and a minimum of seven retained
+decades; support decisions are recorded in cell-type metadata. The per-bin
+coefficients are tested jointly with a Wald omnibus test and gene-level FDR
+correction, then written with standardized shapes to `combined/age_bin.csv`.
+Per-type reports cluster significant shapes with the configured linkage and
+distance metric and plot cluster means and trajectory UMAPs. Gene assignments,
+standardized profiles, and embedding coordinates are materialized beside each
+per-type report, then checksummed in its downstream manifest. Types below the
+seven-decade support threshold are omitted from trajectory figures, clustering, and cross-type
+recurrence. A subsequent report process uses only bins shared by every
+eligible type (at least five shared bins), clusters significant gene-by-type
+trajectories, and summarizes per-gene recurrence and pattern agreement.
+A single report-render process receives either the
 matching result directory or a no-DE flag and publishes only beneath
 `cell_type_analysis/`. DE results publish only beneath
 `differential_expression/`.
@@ -233,6 +261,50 @@ applied only to retained per-study L2 labels; diagnostic benchmark L2 calls are
 not used in this hierarchy. Validate the mapping against the AIFI atlas
 before using within-L1 fractions for inference.
 
+### Age-trajectory settings
+
+The `differential_expression.age_trajectory` object in
+`config/pipeline.json` is the source of truth for trajectory support,
+significance, clustering, and display choices. Current settings are:
+
+| Setting | Default | Meaning |
+| --- | ---: | --- |
+| `bin_width_years` | 10 | Width of the half-open age bins, such as `[20,30)`. |
+| `minimum_samples_per_bin` | 10 | Minimum eligible sample-by-cell-type pseudobulks for a bin to be retained. |
+| `minimum_bins` | 7 | Minimum retained bins for a cell type to enter trajectory displays and cross-type analyses. |
+| `reference_bin_start_age` | 20 | Start age of the zero-reference bin; this is `[20,30)` with the current width. |
+| `cluster_fdr_threshold` | 0.001 | Omnibus adjusted-p-value cutoff for trajectories entering clustering. |
+| `de_fdr_threshold` | 0.05 | Omnibus adjusted-p-value cutoff for cross-type significance and recurrence summaries. |
+| `max_clusters` | 5 | Upper bound on hierarchical clusters. |
+| `linkage_method` | `ward` | Hierarchical clustering linkage. Supported values are `single`, `complete`, `average`, `weighted`, `centroid`, `median`, and `ward`. |
+| `distance_metric` | `euclidean` | Profile distance. Supported values are `euclidean`, `cityblock`, `cosine`, and `correlation`; Ward, centroid, and median require Euclidean distance. |
+| `minimum_shared_bins` | 5 | Minimum common age bins required for the cross-cell-type trajectory comparison. |
+| `umap_neighbors` | 15 | UMAP neighborhood size. |
+| `minimum_umap_trajectories` | 4 | Minimum number of profiles required to compute UMAP coordinates. |
+| `umap_min_dist` | 0.15 | UMAP minimum-distance parameter. |
+| `random_state` | 413 | Seed for reproducible UMAP coordinates. |
+| `report_top_n_genes` | 30 | Maximum gene rows shown in a per-cell-type trajectory table. |
+| `cross_report_top_n_genes` | 100 | Maximum gene rows shown in cross-cell-type trajectory tables. |
+
+The omnibus test asks whether any retained age-bin coefficient differs from
+the reference bin; it tests any age-bin difference, including a monotone
+pattern, rather than only curvature beyond a linear trend. Standardized shapes
+are computed only when every retained bin is estimable and the across-bin
+population SD is non-zero. Per-cell-type clustering and its downloadable CSVs
+are produced by the cell-type report workflow. The separate trajectory report
+clusters only cross-cell-type profiles over shared bins; it does not repeat the
+per-cell-type clustering. Both sets of cluster assignments and means are
+materialized as CSVs for downstream analysis.
+
+The positive synthetic DE fixture must retain at least seven supported bins
+under these production settings. It therefore creates 32 independent samples
+per study and cell type: four in each of eight decades across three studies,
+giving 12 combined samples per bin before any covariate-specific exclusions.
+The generator derives its sample count from `minimum_samples_per_bin` and the
+number of synthetic studies, then records the active trajectory settings and
+planted profiles in the fixture metadata. Keep the synthetic workflow report
+checks enabled when changing trajectory support or filtering behavior.
+
 ## Running and verification
 
 Use Make targets rather than raw Nextflow or Docker commands:
@@ -248,6 +320,8 @@ make run-all STUDIES=all
 make split-cell-types-test
 make run-cell-type-test CELL_TYPE=cd14-monocyte
 make render-cell-type-test CELL_TYPE=cd14-monocyte
+make render-trajectory-report-test
+make run-trajectory-test
 make docs-check
 ```
 
@@ -261,6 +335,13 @@ workflow. When only the report template changes, use
 and analysis artifact without recomputing local analysis. `make docs-check`
 validates local Markdown links and documented Make targets without adding a
 documentation-tool dependency.
+`make render-trajectory-report[-test]` reruns the cross-cell-type analysis and
+notebook from an existing DE manifest; it does not refit any model or rerender
+the per-cell-type reports.
+`make run-trajectory-test` reuses an existing test single-cell merge (run
+`make run-test` if it is missing), fits the config-sized synthetic DE fixture,
+then renders and checks per-cell-type and cross-cell-type trajectory reports.
+It omits the separate integration benchmark stage from `make run-all-test`.
 `make verify` runs linting, unit tests, Nextflow lint, cached image builds, and
 non-resumed Docker workflows across all configured studies by default. After
 the core merge it runs and checks the integration benchmark report, then
