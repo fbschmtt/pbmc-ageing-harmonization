@@ -150,8 +150,8 @@ optional pseudobulk differential-expression workflow
   pseudobulk_merged.h5ad ──> list per-study AIFI-L2 labels
                               └──> one parallel task per label, each loading and
                                    subsetting the same small pseudobulk H5AD in memory
-                                     ├──> per-study ~ age + sex fits
-                                     └──> merged ~ study + age + sex fit
+                                     ├──> per-study fits with site adjustment
+                                     └──> merged ~ study_site + age + sex + log10_total_counts fit
                                            └──> collector: gene-level CSVs + indexed JSON manifest
 ```
 
@@ -364,10 +364,11 @@ which validation to run.
 |---|---|---|
 | Python library, CLI, or deterministic test change | `make lint test-unit` | Run a focused workflow too if a task contract or published artifact changed. |
 | Nextflow workflow or configuration change | `make workflow-lint` | Add `make run-test STUDIES=<study>` when task wiring must execute. |
-| One cell-type report template | `make run-cell-type-test CELL_TYPE=cd14-monocyte` | Use `make render-cell-type-test` or `make render-cell-type-reports-test` when existing analysis artifacts are sufficient. |
+| One cell-type report or analysis | `make run-cell-type-test CELL_TYPE=<slug>` (requires an existing split; create test splits with `make split-cell-types-test`) | Use `make render-cell-type-test CELL_TYPE=<slug>` to rerender one report from existing analysis artifacts, or `make render-cell-type-reports-test` to rerender all test reports. |
 | Rerender reports from existing analysis artifacts | `make render-cell-type-reports[-test]` | Use `make render-cell-type[-test] CELL_TYPE=<slug>` to refresh only one report. |
 | Cell-type splitting or shared analysis | `make run-test`, then `make run-cell-type-analysis-test` | Use `make run-all-test` when the complete ordered test workflow is needed. |
 | Positive pseudobulk DE fitting | `make run-de-synthetic-test` and `make check-synthetic-de-results` | This fixture is independent of the core merge. To check report integration, also run `make run-test` followed by `make run-cell-type-analysis-test` and `make check-synthetic-de-reports`. |
+| DE from an existing test pseudobulk merge | `make run-de-test` | Requires `make run-test` first; the small core fixture may not have enough independent samples for successful fits. Use the synthetic target above for positive fitting coverage. |
 | Cross-cell-type trajectory report only | `make render-trajectory-report[-test]` | Reuses existing DE results and reruns only the combined trajectory analysis and notebook. |
 | End-to-end trajectory path | `make run-trajectory-test` | Reuses an existing test merge, then runs the config-sized synthetic DE fit, both report levels, and artifact checks; skips the integration benchmark. Run `make run-test` first if the merge is missing. |
 | Core workflow for one or a few studies | `make run-test STUDIES=<list>` | Omit `STUDIES` to request all configured studies. |
@@ -599,14 +600,27 @@ The separate `differential_expression.nf` workflow consumes the merged
 sample-level pseudobulk H5AD. It first lists retained per-study
 `aifi_l2_majority` labels, then runs one independent task per label. Each task
 loads the same small merged pseudobulk H5AD and subsets its label in memory; it
-does not materialize a per-type pseudobulk H5AD. Each task runs one `~ age +
-sex` fit per study and one shared age-and-sex `~ study + age + sex` fit across
-studies. When present and variable, BMI and CMV each receive separate per-study
-and combined fits, with age and sex as adjustment covariates. Combined fits
-include studies with usable values for that covariate and report the studies
-and sample counts used. If only one study contributes, the fit drops the study
-term and reports that study's adjusted association. Age, sex, BMI, and CMV
-effects each have a combined-model volcano plot where estimable. A final collector writes the result
+does not materialize a per-type pseudobulk H5AD. Per-study models adjust for
+`study_site` when multiple sites remain in that study, along with age, sex, and
+available optional covariates. The merged age-and-sex model uses
+`~ study_site + age + sex + log10_total_counts` across studies. `log10(total_counts)`
+from each pseudobulk is included as a technical covariate in all DE models and
+its coefficient is shown in the combined-model results and volcano plot. When
+present and variable, BMI and CMV each receive separate combined fits adjusted
+for study site, age, sex, and log10 total counts.
+DESeq2 estimates size factors to normalize library depth, and this additional
+depth term is an empirical adjustment motivated by the observed data: pseudobulk
+depth varies with age, especially in Naive CD8 T cells where cell-type abundance
+declines strongly with age, and sample-level residuals retained depth-dependent
+patterns after fitting. Including `log10(total_counts)` explicitly adjusts for
+that age-associated technical variation beyond size-factor normalization. It
+reduces this confounding risk; it does not establish that depth explains the
+original volcano pattern or remove the need to inspect residual diagnostics.
+Combined fits include studies with usable values for that covariate and report
+the studies, sites, and sample counts used. The site term is dropped when only
+one site remains. Age, sex, BMI, CMV, and log10(total_counts) effects each have
+a combined-model volcano plot where estimable. Age and log10(total_counts) also
+have volcano plots colored by log10 of the combined-fit baseMean. A final collector writes the result
 directories and manifest. Per-study results also show significant-gene counts
 inside and outside the per-covariate intersection of genes tested by all
 available study fits. Per-study fits use genes available in that study; each combined fit
@@ -615,8 +629,8 @@ study-absent genes' synthetic outer-join zeros are excluded. The parallel
 type-fitting task is configured for one CPU, which is passed directly to
 PyDESeq2; all other CPU, time, and memory requests use the executor defaults.
 In addition to the continuous-age fit, each cell type gets an exploratory
-all-study age-trajectory fit with 10-year bins and the same study and sex
-adjustments. It uses 20–30 as the zero reference, retains bins with at least
+all-study age-trajectory fit with 10-year bins, adjusted for study site, sex,
+and log10(total_counts). It uses 20–30 as the zero reference, retains bins with at least
 10 eligible pseudobulks in each decade, and requires at least 7 retained bins
 out of the eight possible decades from 20–30 through 90–100; trajectory
 plots and cross-cell-type summaries include only types meeting that support
@@ -648,13 +662,14 @@ means are also written as CSVs beside each cell-type report; the cross-type
 assignments and means are available as CSVs beside the combined report.
 The combined analysis clusters only cross-cell-type profiles; it does not
 repeat per-cell-type clustering. See [IMPLEMENTATION.md](IMPLEMENTATION.md#age-trajectory-settings)
-for the complete setting list and current defaults.
-Each cell type also renders one shared-age diagnostic figure: study-specific
-age support, age against raw pseudobulk depth in the tested gene intersection,
+for the complete setting list and current defaults. Each cell type also renders
+one shared-age diagnostic figure: study-site age support, age against raw
+pseudobulk depth in the tested gene intersection,
 and a Q-Q plot of unadjusted p-values from the combined age model fitted across
-all eligible studies for that cell type. Its dashed y=x line marks the null
+all eligible studies for that cell type and adjusted for study site, sex, age,
+and log10 total counts. Its dashed y=x line marks the null
 reference, with independently scaled axes for readability. Combined-model
-volcano point colors show the number of available per-study fits for the same
+standard volcano point colors show the number of available per-study fits for the same
 covariate and contrast where that gene passes the FDR threshold; point position
 continues to show the combined-fit effect and adjusted p-value.
 
@@ -767,14 +782,17 @@ with `make run-test`. It uses the explicitly labeled test mode described above.
 Use `make run-de-synthetic-test` to exercise successful PyDESeq2 fits with the
 production sample-inclusion filters enabled.
 
-Each study has one maximal DE model: age and sex plus every optional covariate
-with at least two observed values. All coefficients for that study therefore
-come from one formula and complete-case sample set. A missing BMI or CMV value
+Each study has one maximal DE model: `study_site` when it varies, age, sex,
+log10 total counts, and every optional covariate with at least two observed
+values. All coefficients for that study therefore come from one formula and
+complete-case sample set.
+A missing BMI or CMV value
 excludes that pseudobulk only from models containing that term; one missing
 value removes one row. Combined models target one covariate at a time, using
-all complete-case samples from studies that recorded it and adjusting for age,
-sex, and study when more than one study contributes. A single-study combined
-fit omits the redundant study term. CMV negative/positive values are harmonized
+all complete-case samples from studies that recorded it and adjusting for
+study site, age, sex, and log10 total counts. The site term is omitted when one
+site remains. CMV
+negative/positive values are harmonized
 to no/yes. Categorical volcano plots and summaries name their comparison
 groups, including male versus female and yes CMV versus no CMV.
 

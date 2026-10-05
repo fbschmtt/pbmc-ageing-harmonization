@@ -100,8 +100,8 @@
   "differential_expression": {
     "method": "pydeseq2",
     "split_by": "aifi_l2_majority",
-    "per_study_design": "~ age + sex",
-    "merged_design": "~ study + age + sex",
+    "per_study_design": "~ study_site + age + sex + log10_total_counts",
+    "merged_design": "~ study_site + age + sex + log10_total_counts",
     "age_term": "age",
     "age_trajectory": {
       "bin_width_years": 10,

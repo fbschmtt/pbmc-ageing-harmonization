@@ -215,13 +215,25 @@ is material) and make the study design visible before downstream interpretation.
 
 ## Primary analysis: age-associated pseudobulk DE
 
-The first implementation uses **PyDESeq2** on sample × cell-type raw-count
-pseudobulks. It runs one model per study (`~ age + sex`) and one shared-slope
-merged model (`~ study + age + sex`) for each AIFI L2 type. The age coefficient
-is a linear effect per year, tested with a Wald test. Nextflow lists cell types
+The primary analysis uses **PyDESeq2** on sample × cell-type raw-count
+pseudobulks. It runs one maximal model per
+study, adding `study_site` when multiple sites remain, and one shared-slope
+merged model (`~ study_site + age + sex + log10_total_counts`) for each AIFI L2
+type. All DE models also adjust for `log10(total_counts)`
+as a technical covariate. Combined covariate models adjust for `study_site`,
+age, sex, and log10 total counts; the site term is dropped when only one site
+remains. The age coefficient is a linear effect per year, tested with a Wald
+test. Nextflow lists cell types
 then runs one task per type; each task loads and subsets the same small merged
 pseudobulk H5AD in memory, without materializing a per-type pseudobulk input.
 The final collector writes the standard result layout and root manifest.
+This explicit depth term is in addition to DESeq2's size-factor normalization.
+It was added because the production Naive CD8 T-cell age volcano coincided with
+a strong age-related decline in cell-type abundance and pseudobulk depth, while
+sample residuals retained depth-dependent patterns after fitting. The depth
+term is intended to adjust this observed age–depth confounding; its inclusion
+does not by itself demonstrate that depth caused or fully accounts for the
+unusual volcano shape.
 Per-study fits use genes available in that study; the merged fit uses the
 intersection of genes available in all studies contributing samples to that
 fit, avoiding synthetic outer-join zeros. Each parallel type task is configured
@@ -241,7 +253,8 @@ pseudobulk fixture provides the positive-fit path: it generates independent
 sample rows with adequate age/sex variation and at least 15 cells per
 pseudobulk, plants age, sex, BMI, and CMV signals, and applies the ordinary
 production filters. BMI is available in two synthetic studies and CMV in one,
-with missing values to exercise complete-case selection. Synthetic results
+with missing values to exercise complete-case selection; one synthetic study
+contains multiple sites to exercise site adjustment. Synthetic results
 carry a test-only warning throughout the CSVs, manifest, and reports. This is
 workflow-path coverage, not biological realism: sample counts are balanced,
 gene-availability differences are sparse, and effects do not vary by study.
@@ -255,12 +268,14 @@ in that sample × cell-type pseudobulk. It also requires complete sex metadata;
 all sample exclusions are recorded. Per-cell-type reports show per-study,
 per-covariate significance inside/outside the shared tested-gene intersection, and combined
 volcano plots for age, sex, BMI, and CMV where metadata support the fits. BMI
-and CMV use separate complete-case models adjusted for age and sex; a single-
-study optional-covariate model omits the study term. Each model records its
-included studies and sample counts. Categorical coefficient labels show the
-reference group (female for sex; no/negative for CMV). A separate exploratory
+and CMV use separate complete-case models adjusted for study site, age, sex,
+and log10 total counts; per-study models include site when it varies within the
+study. Each model records its included studies, sites, and sample counts.
+Categorical coefficient labels show the reference group (female for sex;
+no/negative for CMV). A separate exploratory
 all-study age-trajectory model uses decade bins, a 20–30 reference, and a joint
-Wald test for any difference across bins. Configurable support rules drop
+Wald test for any difference across bins, adjusted for study site, sex, and
+log10 total counts. Configurable support rules drop
 sparse bins and skip cell types with fewer than the required number of retained
 bins. The current rule requires at least 10 eligible pseudobulks in each bin
 and seven of the eight decades from 20–30 through 90–100. Report figures,
@@ -273,15 +288,18 @@ cross-cell-type notebook clusters significant gene-by-type trajectories over
 the bins shared by every eligible type (at least five shared bins), compares
 their shapes, and counts how many eligible types show omnibus-significant DE
 (FDR <0.05) for each gene. An age-20 sensitivity analysis remains a future
-decision. R DESeq2,
-edgeR quasi-likelihood, and limma-voom comparisons are outside this
+decision. R DESeq2, edgeR quasi-likelihood, and limma-voom comparisons are
+outside this
 implementation.
 
 ### Priority investigation: unusual Naive CD8 T-cell age signal
 
 The production age volcano for Naive CD8 T cells has an unusually strong,
-asymmetric pattern. Diagnose it against the matching production pseudobulk and
-DE outputs before treating it as a biological result:
+asymmetric pattern. Its cell-type abundance declines strongly with age, and
+sample residuals showed depth-dependent patterns after fitting. The explicit
+`log10(total_counts)` adjustment was added in response, alongside DESeq2's
+size-factor normalization. Continue assessing whether it sufficiently
+addresses the pattern before treating the association as biological:
 
 - Reproduce the fit and inspect its sample-level age, study-site, technology,
   sex, and pseudobulk cell-count distributions. Compare the pooled age
@@ -295,14 +313,14 @@ DE outputs before treating it as a biological result:
   and expression-related measurements, and run prespecified threshold
   sensitivity analyses before deciding whether the cutoff contributes to the
   signal.
-- Update the main cross-study batch adjustment from `study` to `study_site`.
-  The intended granularity is to split AIDA by country while keeping other
-  studies at one batch level, but `study_site` is also source-derived for
-  Fachrul26 (village) and Nehar-Belaid26 (collection site). Decide explicitly
-  whether to collapse those labels or retain them as additional batches; do not
-  let the raw column silently split them. Validate label uniqueness, site-level
-  sample sizes and age support, design rank, and changes in estimability before
-  updating merged and covariate-specific combined models.
+- Evaluate the experimental `study_site` batch adjustment against the current
+  study-level design before adopting it in production. This uses source labels
+  for AIDA sites/countries, Fachrul26 villages, and Nehar-Belaid26 collection
+  sites, while studies with one site retain one level. Check label uniqueness,
+  site-level sample sizes and age support, design rank, and changes in
+  estimability. In Nehar-Belaid26, the adult metadata include 32 UCHC and 9
+  HSNRI samples before cell-type cell-count filtering, so site-specific support
+  may be limited.
 
 ## Planned exploratory analysis: residual structure after pseudobulk DE
 
@@ -393,13 +411,13 @@ primary age-DE analysis, not a replacement for it.
 
 1. Reproduce and diagnose the unusual Naive CD8 T-cell age result, including
    study/site-specific fits and sensitivity to the 10-cell inclusion cutoff.
-2. Define the intended batch levels explicitly (AIDA by country, other studies
-   by study unless metadata review supports finer batches), then update merged
-   DE formulas and check site support and design estimability.
+2. Compare the experimental `study_site` DE models with the study-adjusted
+   baseline, checking site support, design estimability, and changes in which
+   cell types and covariates can be fitted.
 3. Complete the final manual metadata review for every study against its paper
    and supplements, keeping unresolved assumptions explicitly labelled.
-4. Rerun production after the metadata and DE-design updates so published
-   outputs match the reviewed inputs and model specification.
+4. If the site-adjusted fits are supported by the diagnostics, rerun production
+   so published outputs match the reviewed inputs and model specification.
 5. Add random-seed and immutable image-digest provenance to the production run
    record; input, metadata, model, artifact, and report checksums are already
    included.

@@ -276,13 +276,16 @@ def validate_configuration(
             raise ConfigurationError(
                 "differential_expression.split_by must be 'aifi_l2_majority'"
             )
-        if differential_expression.get("per_study_design") != "~ age + sex":
+        expected_de_design = "~ study_site + age + sex + log10_total_counts"
+        if differential_expression.get("per_study_design") != expected_de_design:
             raise ConfigurationError(
-                "differential_expression.per_study_design must be '~ age + sex'"
+                "differential_expression.per_study_design must be "
+                f"'{expected_de_design}'"
             )
-        if differential_expression.get("merged_design") != "~ study + age + sex":
+        if differential_expression.get("merged_design") != expected_de_design:
             raise ConfigurationError(
-                "differential_expression.merged_design must be '~ study + age + sex'"
+                "differential_expression.merged_design must be "
+                f"'{expected_de_design}'"
             )
         if differential_expression.get("age_term") != "age":
             raise ConfigurationError("differential_expression.age_term must be 'age'")

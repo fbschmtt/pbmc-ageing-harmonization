@@ -27,7 +27,7 @@ def prepare_cells(source, root):
         "include_intronic": {"source": "intronic_reads_counted", "lower": True},
         "smoking_status": {"constant": "not_provided"},
         "disease_status": {"constant": "healthy"},
-        "study_site": {"source": "Village", "lower": True},
+        "study_site": {"source": "Village", "lower": True, "prefix": "fachrul26_"},
         # inferred: source description identifies this as an Indonesian cohort.
         "country": {"constant": "indonesia"},
         "batch_single_cell": {"source": "library_id", "prefix": "fachrul26_"},

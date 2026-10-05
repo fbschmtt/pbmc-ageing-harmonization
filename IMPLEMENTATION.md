@@ -243,12 +243,27 @@ matching result directory or a no-DE flag and publishes only beneath
 `differential_expression/`.
 
 Each study is fitted once with its maximal available design: age and sex plus
-each optional covariate with at least two observed values. Its coefficients use
-one complete-case sample set. Combined fits target one covariate at a time and
-include all complete-case samples from studies that recorded it, with age, sex,
-and a study term when multiple studies contribute. Fit metadata and CSVs record
-the formula, complete-case sample count, and exclusions for missing design
-values.
+each optional covariate with at least two observed values, plus `study_site`
+when it varies within the study, and `log10(total_counts)` as a technical
+covariate. Its coefficients use one complete-case sample set.
+Combined fits target one covariate at a time and include all complete-case
+samples from studies that recorded it, adjusting for `study_site`, age, sex,
+and log10 total counts. The combined shared model also reports the depth
+coefficient as a volcano plot; age and depth have companion volcano panels
+colored by log10 of the combined-fit `baseMean`.
+The site term is omitted when only one site remains. Fit metadata and CSVs
+record the formula, included studies and sites, complete-case sample count, and
+exclusions for missing design values.
+
+The explicit depth covariate is used in addition to PyDESeq2's size-factor
+normalization. It was added after the production Naive CD8 T-cell age volcano
+showed a strong age-associated abundance/depth shift, and sample-level residual
+diagnostics showed patterns across pseudobulk depth after fitting. The observed
+age–depth relationship could confound the age coefficient despite size-factor
+normalization, so `log10(total_counts)` is included as a technical adjustment
+in every per-study and combined fit, including the age-bin trajectory model.
+This adjustment is motivated by those diagnostics; it is not evidence that
+depth alone caused or fully explains the original pattern.
 
 The configured `l2_parent_l1` mapping is an inferred taxonomy with recorded
 provenance, rather than the independent `aifi_l1_majority` predictions. It is

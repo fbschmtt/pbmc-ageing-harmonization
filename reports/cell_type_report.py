@@ -4,8 +4,8 @@ import json
 import os
 import re
 import warnings
-from io import BytesIO
 from html import escape
+from io import BytesIO
 from pathlib import Path
 
 # The report runs in a notebook kernel where ipywidgets is intentionally not a
@@ -20,6 +20,7 @@ import scanpy as sc
 import seaborn as sns
 import statsmodels.api as sm
 from IPython.display import HTML, Markdown, display
+from matplotlib.colors import Normalize
 
 sns.set_theme(style="whitegrid")
 plt.rcParams.update({"figure.dpi": 110, "savefig.dpi": 110})
@@ -75,8 +76,12 @@ summary_metrics_html = "".join(
     f"<div class=\"report-metric\"><dt>{escape(label)}</dt><dd>{escape(value)}</dd></div>"
     for label, value in summary_metrics
 )
-de_toc_link = (
+de_toc_group = (
+    '<section class="report-toc-group">'
+    '<p class="report-toc-title">Gene expression</p>'
+    '<div class="report-toc-links">'
     '<a href="#differential-expression">Pseudobulk differential expression</a>'
+    '</div></section>'
     if de_dir else ""
 )
 display(HTML(f"""
@@ -186,9 +191,9 @@ main {{ max-width: 1600px; margin: 0 auto; padding: 2rem clamp(1.25rem, 3vw, 2.5
       <div class=\"report-toc-links\">
         <a href=\"#pc-study-technology\">PCA by study and protocol</a>
         <a href=\"#pc-age\">PCA loadings and PC–age</a>
-        {de_toc_link}
       </div>
     </section>
+    {de_toc_group}
   </nav>
 </header>
 """))
@@ -1479,6 +1484,7 @@ if de_dir:
                     "design": fit_record.get("design", "—"),
                     "FDR-significant genes": int((padj < de_alpha).sum()),
                     "studies used": ", ".join(fit_record.get("studies", [])),
+                    "study sites used": ", ".join(fit_record.get("study_sites", [])),
                     "complete-case samples used": fit_record.get("n_samples", "—"),
                     "excluded for missing design values": fit_record.get(
                         "n_samples_excluded_missing_design_covariates", "—"
@@ -1488,8 +1494,9 @@ if de_dir:
             display(Markdown("### Combined covariate models"))
             display(Markdown(
                 "Each model estimates its named covariate effect using all studies with recorded "
-                "values for that covariate. It adjusts for age and sex, includes a study term when "
-                "multiple studies contribute, and uses complete cases for its displayed design."
+                "values for that covariate. It adjusts for study-site batch, age, sex, and "
+                "log10(total_counts), and "
+                "uses complete cases for its displayed design."
             ))
             display_collapsible_table(
                 pd.DataFrame(combined_covariate_summary),
@@ -1739,6 +1746,7 @@ if de_dir:
             per_study_summary = pd.DataFrame(per_study_covariate_summary)
             per_study_summary["_covariate_order"] = per_study_summary["covariate"].map({
                 "age": 0, "sex": 1, "bmi": 2, "cmv": 3,
+                "log10_total_counts": 4,
             }).fillna(99)
             per_study_summary = (
                 per_study_summary
@@ -1755,8 +1763,9 @@ if de_dir:
         display(Markdown(
             f"PyDESeq2 covariate effects; FDR threshold **{de_alpha:g}**. "
             "Per-study fits use one maximal available model. Combined fits target one covariate "
-            "at a time, adjust for age and sex, and add study adjustment when multiple studies "
-            "contribute. Missing values exclude a sample only from models whose design includes "
+                "at a time and adjust for study site, age, sex, and log10(total_counts). "
+                "Per-study fits also adjust for "
+            "site when multiple sites contribute. Missing values exclude a sample only from models whose design includes "
             "that variable. Categorical effects use female as the sex reference and no CMV "
             "(negative where that is the source label) as the CMV reference."
         ))
@@ -1776,24 +1785,27 @@ if de_dir:
             if expected_columns.issubset(age_diagnostics):
                 display(Markdown("### Shared age-model diagnostics"))
                 display(Markdown(
-                    "This single figure checks study/age support, the relation between age and "
+                "This single figure checks study-site/age support, the relation between age and "
                     "the raw pseudobulk counts used in the shared age gene intersection, and "
                     "the unadjusted age-model p-value calibration. Q-Q points are the raw "
                     "p-values (`pvalue`, before multiple-testing correction) from the combined "
-                    "age model fitted across all eligible studies for this cell type, using the "
-                    "model's shared gene intersection. The dashed y=x line is the null reference; "
+                    "age model fitted across all eligible studies for this cell type, adjusted "
+                    "for study site, sex, age, and log10(total_counts), and using the model's shared "
+                    "gene intersection. "
+                    "The dashed y=x line is the null reference; "
                     "the axes retain independent scales so departures remain readable. This is "
                     "descriptive: it does not diagnose a specific gene or replace model checks."
                 ))
-                figure, axes = plt.subplots(1, 3, figsize=(17, 4.8))
+                figure, axes = plt.subplots(1, 3, figsize=(18, 4.8))
+                support_column = "study_site" if "study_site" in age_diagnostics else "study"
                 sns.stripplot(
-                    data=age_diagnostics, x="study", y="age", hue="sex", dodge=True,
+                    data=age_diagnostics, x=support_column, y="age", hue="sex", dodge=True,
                     jitter=0.18, alpha=0.8, ax=axes[0],
                 )
-                axes[0].set_xlabel("Study")
+                axes[0].set_xlabel("Study site" if support_column == "study_site" else "Study")
                 axes[0].set_ylabel("Age (years)")
-                axes[0].set_title("Age support by study")
-                axes[0].tick_params(axis="x", rotation=45)
+                axes[0].set_title("Age support by study site")
+                axes[0].tick_params(axis="x", rotation=75, labelsize=7)
                 axes[0].legend(title="Sex", fontsize=8, title_fontsize=8)
 
                 plot_samples = age_diagnostics.loc[
@@ -1803,7 +1815,7 @@ if de_dir:
                     plot_samples["counts_in_age_gene_intersection"]
                 )
                 sns.scatterplot(
-                    data=plot_samples, x="age", y="log10_counts", hue="study", style="sex",
+                    data=plot_samples, x="age", y="log10_counts", hue=support_column, style="sex",
                     s=42, alpha=0.85, ax=axes[1],
                 )
                 axes[1].set_xlabel("Age (years)")
@@ -1883,7 +1895,22 @@ if de_dir:
                     "Show top recurring age-associated genes and per-study estimates",
                 )
 
-        for covariate, combined_results in combined_results_by_covariate.items():
+        covariate_order = {
+            "age": 0,
+            "sex": 1,
+            "bmi": 2,
+            "cmv": 3,
+            "log10_total_counts": 4,
+        }
+        ordered_combined_covariates = sorted(
+            combined_results_by_covariate.items(),
+            key=lambda item: (covariate_order.get(item[0], 99), item[0]),
+        )
+        for covariate, combined_results in ordered_combined_covariates:
+            covariate_label = {
+                "log10_total_counts": "log10(total_counts)",
+            }.get(covariate, covariate.upper())
+            display(Markdown(f"### {covariate_label}"))
             fit_record = next(
                 (model for model in combined_fit_records
                  if covariate in model.get("results_by_covariate", {})),
@@ -1948,14 +1975,16 @@ if de_dir:
                     )
                 n_samples_used = sum(sample_counts.values()) if sample_counts else "unavailable"
                 display(Markdown(
-                    f"**{covariate.upper()} contrast:** {contrast}. **Studies used:** "
+                    f"**{covariate_label} contrast:** {contrast}. **Studies used:** "
                     f"{study_summary or 'unavailable in this legacy result set'}; "
                     f"**samples used:** {n_samples_used}."
                 ))
-                figure, axis = plt.subplots(figsize=(10.5, 6.5))
                 max_associated_studies = max(
                     int(volcano["studies_associated"].max()), 1
                 )
+                # Leave room for the study-count legend while keeping these panels
+                # comparable in plot-area width to the baseMean-colored panels.
+                figure, axis = plt.subplots(figsize=(12.6, 6.5))
                 sns.scatterplot(
                     data=volcano, x="log2FoldChange", y="minus_log10_padj",
                     hue="studies_associated", palette="viridis",
@@ -1972,15 +2001,17 @@ if de_dir:
                     effect_label = "log2 fold change per year"
                 elif covariate == "bmi":
                     effect_label = "log2 fold change per BMI unit"
+                elif covariate == "log10_total_counts":
+                    effect_label = "log2 fold change per log10(total_counts) unit"
                 else:
                     effect_label = f"log2 fold change ({contrast})"
-                axis.set_xlabel(f"{covariate.upper()} effect ({effect_label})")
+                axis.set_xlabel(f"{covariate_label} effect ({effect_label})")
                 axis.set_ylabel("−log10(adjusted p-value)")
                 if len(studies_used) > 1:
-                    title = f"Combined study-adjusted {covariate.upper()} association: {contrast}"
+                    title = f"Combined site-adjusted {covariate_label} association: {contrast}"
                 else:
                     study_name = studies_used[0] if studies_used else "single study"
-                    title = f"{covariate.upper()} association in {study_name}: {contrast}"
+                    title = f"{covariate_label} association in {study_name}: {contrast}"
                 axis.set_title(title)
                 labels = volcano.loc[volcano["padj"] < de_alpha].nsmallest(12, "padj")
                 for _, row in labels.iterrows():
@@ -1991,12 +2022,50 @@ if de_dir:
                     )
                 figure.tight_layout(rect=(0, 0, 0.78, 1))
                 plt.show()
+                if covariate in {"age", "log10_total_counts"} and "baseMean" in volcano.columns:
+                    base_mean = pd.to_numeric(volcano["baseMean"], errors="coerce")
+                    finite = np.isfinite(base_mean) & (base_mean > 0)
+                    if finite.any():
+                        log_base_mean = np.log10(base_mean.loc[finite])
+                        base_mean_volcano = volcano.loc[finite]
+                        low = float(log_base_mean.min())
+                        high = float(log_base_mean.max())
+                        norm = Normalize(vmin=low, vmax=high if high > low else low + 0.01)
+                        figure, axis = plt.subplots(figsize=(10.5, 6.5))
+                        points = axis.scatter(
+                            base_mean_volcano["log2FoldChange"],
+                            base_mean_volcano["minus_log10_padj"],
+                            c=log_base_mean,
+                            cmap="viridis",
+                            norm=norm,
+                            s=16,
+                            alpha=0.7,
+                            linewidths=0,
+                        )
+                        colorbar = figure.colorbar(points, ax=axis, pad=0.02)
+                        colorbar.set_label("log10(combined-fit baseMean)")
+                        axis.axhline(
+                            -np.log10(de_alpha), color="#555555", linestyle="--", linewidth=1
+                        )
+                        axis.axvline(0, color="#555555", linewidth=0.8)
+                        axis.set_xlabel(f"{covariate_label} effect ({effect_label})")
+                        axis.set_ylabel("−log10(adjusted p-value)")
+                        axis.set_title(f"{title} (colored by log10(baseMean))")
+                        for _, row in labels.iterrows():
+                            axis.annotate(
+                                str(row["gene"]),
+                                (row["log2FoldChange"], row["minus_log10_padj"]),
+                                xytext=(3, 3), textcoords="offset points", fontsize=7,
+                            )
+                        figure.tight_layout()
+                        plt.show()
         display(Markdown(
             "_DE interpretation: the recurrence panels emphasize agreement among available per-study "
-            "models; each combined volcano summarizes all eligible samples with age and sex adjustment. "
+            "models; each combined volcano summarizes eligible samples with study-site, age, sex, "
+            "and log-total-count adjustment. "
             "Volcano point color gives the number of available per-study fits for the same covariate "
             "and contrast with FDR-significant association for that gene (using the displayed FDR "
             "threshold); the plotted effect and adjusted p-value come from the combined fit. "
-            "When only one study contributes, study adjustment is omitted and the plot describes that "
-            "study alone. Combined fits do not by themselves establish replication across studies._"
+            "The site term is omitted when only one site remains estimable. Combined fits do not "
+            "by themselves establish replication across studies._"
         ))
