@@ -44,7 +44,7 @@ def test_test_mode_bypasses_cell_count_cutoff_but_keeps_adult_filter() -> None:
     test, test_counts, excluded = _prepare_metadata(obs, inclusion, test_mode=True)
 
     assert standard["sample"].tolist() == ["adult_enough_cells"]
-    assert standard["log_total_counts"].tolist() == [np.log(300)]
+    assert standard["log10_total_counts"].tolist() == [np.log10(300)]
     assert standard_counts["n_cells_filter_bypassed"] == 0
     assert standard_excluded[-1]["reasons"] == ["age_below_minimum", "n_cells_below_minimum"]
     assert test["sample"].tolist() == ["adult_low_cells", "adult_enough_cells"]
@@ -97,16 +97,17 @@ def test_per_study_design_uses_all_varying_covariates_once() -> None:
     metadata = pd.DataFrame({
         "age": [30, 40, 50, 60, 70],
         "sex": ["female", "male", "female", "male", "female"],
+        "log10_total_counts": np.log10([100, 120, 140, 160, 180]),
         "bmi": [22.0, 24.0, np.nan, 28.0, 30.0],
         "cmv": ["no", "yes", pd.NA, "yes", "no"],
     })
 
     covariates = _maximal_per_study_covariates(metadata, ["bmi", "cmv"])
 
-    assert covariates == ["age", "sex", "bmi", "cmv"]
+    assert covariates == ["age", "sex", "log10_total_counts", "bmi", "cmv"]
     assert _design_with_covariates(
-        "~ study_site + age + sex + log_total_counts", covariates
-    ) == "~ study_site + age + sex + log_total_counts + bmi + cmv"
+        "~ study_site + age + sex + log10_total_counts", covariates
+    ) == "~ study_site + age + sex + log10_total_counts + bmi + cmv"
 
 
 def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_path) -> None:
@@ -123,7 +124,7 @@ def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_
             "cmv": ["no", "yes", "no", pd.NA, "no", "yes", "no", "yes"],
             "n_cells": [20] * 8,
             "total_counts": [200 + 10 * number for number in range(8)],
-            "log_total_counts": np.log([200 + 10 * number for number in range(8)]),
+            "log10_total_counts": np.log10([200 + 10 * number for number in range(8)]),
         },
         index=index,
     )
@@ -152,7 +153,7 @@ def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_
         cell_type="CD14 monocyte",
         model_name="combined",
         study=None,
-        design="~ study_site + age + sex + log_total_counts + cmv",
+        design="~ study_site + age + sex + log10_total_counts + cmv",
         covariates=["cmv"],
         alpha=0.05,
         cpus=1,
@@ -164,15 +165,15 @@ def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_
     assert result["status"] == "complete"
     assert result["studies"] == ["aifi"]
     assert result["study_sample_counts"] == {"aifi": 7}
-    assert result["design"] == "~ age + sex + log_total_counts + cmv"
-    assert captured["design"] == "~ age + sex + log_total_counts + cmv"
+    assert result["design"] == "~ age + sex + log10_total_counts + cmv"
+    assert captured["design"] == "~ age + sex + log10_total_counts + cmv"
     assert result["study_sites"] == ["aifi"]
     assert result["study_site_sample_counts"] == {"aifi": 7}
     assert captured["metadata_index"] == [index[position] for position in (0, 1, 2, 4, 5, 6, 7)]
     assert result["n_samples_before_complete_case_filter"] == 8
     assert result["n_samples_excluded_missing_design_covariates"] == 1
     assert result["missing_values_by_design_covariate"] == {
-        "study_site": 0, "age": 0, "sex": 0, "log_total_counts": 0, "cmv": 1,
+        "study_site": 0, "age": 0, "sex": 0, "log10_total_counts": 0, "cmv": 1,
     }
 
 
@@ -186,7 +187,7 @@ def test_age_model_diagnostics_record_the_shared_gene_universe_and_raw_counts(tm
             "sex": ["female", "male"],
             "n_cells": [20, 25],
             "total_counts": [10, 31],
-            "log_total_counts": np.log([10, 31]),
+            "log10_total_counts": np.log10([10, 31]),
         },
         index=["one::one_sample::T", "two::two_sample::T"],
     )

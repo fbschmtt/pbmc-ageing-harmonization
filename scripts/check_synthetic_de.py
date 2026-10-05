@@ -72,13 +72,18 @@ def check_results(outdir: Path) -> None:
                 f"got {len(completed)} complete, "
                 f"{sum(model.get('status') == 'failed' for model in models)} failed"
             )
-        if any("log_total_counts" not in model.get("design", "") for model in completed):
+        if any("log10_total_counts" not in model.get("design", "") for model in completed):
             raise SystemExit(
-                f"A completed DE fit for {cell_type!r} omitted the log_total_counts adjustment"
+                f"A completed DE fit for {cell_type!r} omitted the log10_total_counts adjustment"
             )
         merged = next((model for model in models if model.get("model") == "merged"), None)
         if merged is None or not merged.get("results"):
             raise SystemExit(f"Missing merged-model result for {cell_type!r}")
+        if "log10_total_counts" not in merged.get("results_by_covariate", {}):
+            raise SystemExit(f"Missing combined depth coefficient for {cell_type!r}")
+        depth_path = de_dir / merged["results_by_covariate"]["log10_total_counts"]
+        if not depth_path.is_file():
+            raise SystemExit(f"Missing combined depth results: {depth_path}")
         result_path = de_dir / merged["results"]
         with result_path.open(newline="") as handle:
             results = {row["gene"]: row for row in csv.DictReader(handle)}
@@ -110,7 +115,7 @@ def check_results(outdir: Path) -> None:
                     f"{combined.get('studies')}, expected {studies}"
                 )
             if covariate == "cmv" and combined.get("design") != (
-                "~ study_site + age + sex + log_total_counts + cmv"
+                "~ study_site + age + sex + log10_total_counts + cmv"
             ):
                 raise SystemExit(
                     f"Single-study CMV fit for {cell_type!r} omitted its varying site term: "
@@ -161,7 +166,7 @@ def check_results(outdir: Path) -> None:
                 raise SystemExit(
                     f"Expected one completed maximal per-study model for {study!r}, got {matching}"
                 )
-            expected_covariates = ["age", "sex", *optional_covariates]
+            expected_covariates = ["age", "sex", "log10_total_counts", *optional_covariates]
             if matching[0].get("covariates") != expected_covariates:
                 raise SystemExit(
                     f"Per-study model for {study!r} used {matching[0].get('covariates')}, "
@@ -192,13 +197,44 @@ def check_reports(outdir: Path) -> None:
             missing.append("DE section heading")
         else:
             de_section = html[section_heading.start():]
+            toc_link = html.find('href="#differential-expression"')
+            if toc_link < 0 or toc_link > section_heading.start():
+                missing.append("DE link in the top report contents box")
+            rendered_h3 = list(re.finditer(
+                r"<h3\b[^>]*>(.*?)</h3>", de_section, re.DOTALL
+            ))
+            heading_positions = {}
+            for heading in ("age", "sex", "log10(total_counts)"):
+                match = next(
+                    (
+                        item for item in rendered_h3
+                        if re.sub(
+                            r"<[^>]+>", "", re.sub(
+                                r"<a\b[^>]*>.*?</a>", "", item.group(1), flags=re.DOTALL
+                            )
+                        ).strip().lower() == heading
+                    ),
+                    None,
+                )
+                if match is None:
+                    missing.append(f"{heading} volcano subsection")
+                else:
+                    heading_positions[heading] = match.start()
+            if (
+                "sex" in heading_positions
+                and "log10(total_counts)" in heading_positions
+                and heading_positions["log10(total_counts)"] < heading_positions["sex"]
+            ):
+                missing.append("depth volcano subsection after sex")
             for covariate in expected_genes:
                 if f"{covariate} contrast:" not in de_section:
                     missing.append(f"{covariate} contrast summary")
+            if "log10(total_counts) contrast:" not in de_section:
+                missing.append("log10(total_counts) contrast summary")
             # The age recurrence panel and one volcano per covariate are rendered
             # as images. Gene labels inside those plots are rasterized, so their
             # names are checked against the DE result CSVs in check_results().
-            expected_plots = 3 + len(expected_genes)
+            expected_plots = 5 + len(expected_genes)
             if de_section.count("<img") < expected_plots:
                 missing.append(
                     f"{expected_plots} DE plot images; found {de_section.count('<img')}"

@@ -151,7 +151,7 @@ optional pseudobulk differential-expression workflow
                               └──> one parallel task per label, each loading and
                                    subsetting the same small pseudobulk H5AD in memory
                                      ├──> per-study fits with site adjustment
-                                     └──> merged ~ study_site + age + sex + log_total_counts fit
+                                     └──> merged ~ study_site + age + sex + log10_total_counts fit
                                            └──> collector: gene-level CSVs + indexed JSON manifest
 ```
 
@@ -600,14 +600,16 @@ loads the same small merged pseudobulk H5AD and subsets its label in memory; it
 does not materialize a per-type pseudobulk H5AD. Per-study models adjust for
 `study_site` when multiple sites remain in that study, along with age, sex, and
 available optional covariates. The merged age-and-sex model uses
-`~ study_site + age + sex + log_total_counts` across studies. The natural log
-of each pseudobulk's `total_counts` is included as a technical covariate in all
-DE models. When present and variable, BMI and CMV each receive separate
-combined fits adjusted for study site, age, sex, and log total counts.
+`~ study_site + age + sex + log10_total_counts` across studies. `log10(total_counts)`
+from each pseudobulk is included as a technical covariate in all DE models and
+its coefficient is shown in the combined-model results and volcano plot. When
+present and variable, BMI and CMV each receive separate combined fits adjusted
+for study site, age, sex, and log10 total counts.
 Combined fits include studies with usable values for that covariate and report
 the studies, sites, and sample counts used. The site term is dropped when only
-one site remains. Age, sex, BMI, and CMV
-effects each have a combined-model volcano plot where estimable. A final collector writes the result
+one site remains. Age, sex, BMI, CMV, and log10(total_counts) effects each have
+a combined-model volcano plot where estimable. Age and log10(total_counts) also
+have volcano plots colored by log10 of the combined-fit baseMean. A final collector writes the result
 directories and manifest. Per-study results also show significant-gene counts
 inside and outside the per-covariate intersection of genes tested by all
 available study fits. Per-study fits use genes available in that study; each combined fit
@@ -619,9 +621,9 @@ Each cell type also renders one shared-age diagnostic figure: study-site age
 support, age against raw pseudobulk depth in the tested gene intersection,
 and a Q-Q plot of unadjusted p-values from the combined age model fitted across
 all eligible studies for that cell type and adjusted for study site, sex, age,
-and log total counts. Its dashed y=x line marks the null
+and log10 total counts. Its dashed y=x line marks the null
 reference, with independently scaled axes for readability. Combined-model
-volcano point colors show the number of available per-study fits for the same
+standard volcano point colors show the number of available per-study fits for the same
 covariate and contrast where that gene passes the FDR threshold; point position
 continues to show the combined-fit effect and adjusted p-value.
 
@@ -717,14 +719,14 @@ Use `make run-de-synthetic-test` to exercise successful PyDESeq2 fits with the
 production sample-inclusion filters enabled.
 
 Each study has one maximal DE model: `study_site` when it varies, age, sex,
-log total counts, and every optional covariate with at least two observed
+log10 total counts, and every optional covariate with at least two observed
 values. All coefficients for that study therefore come from one formula and
 complete-case sample set.
 A missing BMI or CMV value
 excludes that pseudobulk only from models containing that term; one missing
 value removes one row. Combined models target one covariate at a time, using
 all complete-case samples from studies that recorded it and adjusting for
-study site, age, sex, and log total counts. The site term is omitted when one
+study site, age, sex, and log10 total counts. The site term is omitted when one
 site remains. CMV
 negative/positive values are harmonized
 to no/yes. Categorical volcano plots and summaries name their comparison

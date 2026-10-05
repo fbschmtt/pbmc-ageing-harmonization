@@ -174,7 +174,7 @@ def validate_configuration(
             raise ConfigurationError(
                 "differential_expression.split_by must be 'aifi_l2_majority'"
             )
-        expected_de_design = "~ study_site + age + sex + log_total_counts"
+        expected_de_design = "~ study_site + age + sex + log10_total_counts"
         if differential_expression.get("per_study_design") != expected_de_design:
             raise ConfigurationError(
                 "differential_expression.per_study_design must be "

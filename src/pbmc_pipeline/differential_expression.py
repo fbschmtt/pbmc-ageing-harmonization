@@ -63,7 +63,7 @@ def _prepare_metadata(
     metadata["n_cells"] = pd.to_numeric(metadata["n_cells"], errors="coerce")
     metadata["total_counts"] = pd.to_numeric(metadata["total_counts"], errors="coerce")
     positive_total_counts = metadata["total_counts"].where(metadata["total_counts"] > 0)
-    metadata["log_total_counts"] = np.log(positive_total_counts)
+    metadata["log10_total_counts"] = np.log10(positive_total_counts)
     if "bmi" in metadata:
         metadata["bmi"] = pd.to_numeric(metadata["bmi"], errors="coerce")
     if "cmv" in metadata:
@@ -155,14 +155,14 @@ def _availability_mask(var: pd.DataFrame, studies: list[str], *, context: str) -
 
 def _has_covariate_variation(metadata: pd.DataFrame, covariate: str) -> bool:
     values = metadata[covariate]
-    if covariate in {"age", "bmi", "log_total_counts"}:
+    if covariate in {"age", "bmi", "log10_total_counts"}:
         values = pd.to_numeric(values, errors="coerce")
     return values.nunique() >= 2
 
 
 def _maximal_per_study_covariates(metadata: pd.DataFrame, optional_covariates: list[str]) -> list[str]:
     """Select every varying covariate for one study's single DE design."""
-    candidates = ["age", "sex", *optional_covariates]
+    candidates = ["age", "sex", "log10_total_counts", *optional_covariates]
     return [
         covariate for covariate in candidates
         if covariate in metadata and _has_covariate_variation(metadata, covariate)
@@ -223,7 +223,7 @@ def _fit_covariate_model(
     design_matrix = dds.obsm["design_matrix"]
     coefficient_results = {}
     for covariate in covariates:
-        if covariate in {"age", "bmi"}:
+        if covariate in {"age", "bmi", "log10_total_counts"}:
             terms = [covariate] if covariate in design_matrix.columns else []
             levels = []
         else:
@@ -250,8 +250,12 @@ def _fit_covariate_model(
             )
             stats.summary()
             result = stats.results_df.copy()
-            if covariate in {"age", "bmi"}:
-                contrast_label = "per year" if covariate == "age" else "per BMI unit"
+            if covariate in {"age", "bmi", "log10_total_counts"}:
+                contrast_label = {
+                    "age": "per year",
+                    "bmi": "per BMI unit",
+                    "log10_total_counts": "per log10(total_counts) unit",
+                }[covariate]
             else:
                 level = term.removeprefix(f"{covariate}[T.").removesuffix("]")
                 contrast_label = f"{level} vs {levels[0]}"
@@ -305,7 +309,7 @@ def _run_model(
         missing_by_covariate["study_site"] = int((~site_observed).sum())
         valid &= site_observed
     for column in design_covariates:
-        if column in {"age", "bmi", "log_total_counts"}:
+        if column in {"age", "bmi", "log10_total_counts"}:
             values = pd.to_numeric(metadata[column], errors="coerce")
             observed = values.notna() & np.isfinite(values)
         else:
@@ -497,7 +501,7 @@ def _write_age_model_diagnostics(
     )
     diagnostics = metadata[[
         "study", "study_site", "sample", "age", "sex", "n_cells", "total_counts",
-        "log_total_counts",
+        "log10_total_counts",
     ]].copy()
     diagnostics.insert(0, "pseudobulk_id", diagnostics.index.astype(str))
     diagnostics["counts_in_age_gene_intersection"] = counts.sum(axis=1, dtype=np.int64)
@@ -614,7 +618,7 @@ def _run_cell_type_differential_expression(
             )
         )
     core_covariates = [
-        covariate for covariate in ("age", "sex")
+        covariate for covariate in ("age", "sex", "log10_total_counts")
         if _has_covariate_variation(metadata, covariate)
     ] or ["age", "sex"]
     item["models"].append(
@@ -734,13 +738,13 @@ def _write_differential_expression_manifest(
         "models": {
             "per_study": (
                 "One maximal complete-case design per study: study_site when it varies, "
-                "the configured age/sex terms, log_total_counts, and every configured "
+                "the configured age/sex terms, log10_total_counts, and every configured "
                 "optional covariate with at least two observed values."
             ),
             "merged": spec["merged_design"],
             "combined": (
                 "One combined model per target covariate, adjusted for study_site, age, sex, "
-                "and log_total_counts; it uses complete cases from studies with recorded "
+                "and log10_total_counts; it uses complete cases from studies with recorded "
                 "target values."
             ),
             "missing_values": (
@@ -751,6 +755,7 @@ def _write_differential_expression_manifest(
         "effect_scales": {
             "age": "log2 fold change per one-year increase",
             "bmi": "log2 fold change per one-unit increase in BMI",
+            "log10_total_counts": "log2 fold change per one-unit increase in log10 pseudobulk total counts",
             "sex": "log2 fold change for the listed level versus female",
             "cmv": "log2 fold change for yes versus no CMV status",
         },

@@ -215,10 +215,10 @@ is material) and make the study design visible before downstream interpretation.
 The experimental branch `experiment/study-site-de-adjustment` uses **PyDESeq2**
 on sample × cell-type raw-count pseudobulks. It runs one maximal model per
 study, adding `study_site` when multiple sites remain, and one shared-slope
-merged model (`~ study_site + age + sex + log_total_counts`) for each AIFI L2
-type. All DE models also adjust for the natural log of pseudobulk `total_counts`
+merged model (`~ study_site + age + sex + log10_total_counts`) for each AIFI L2
+type. All DE models also adjust for `log10(total_counts)`
 as a technical covariate. Combined covariate models adjust for `study_site`,
-age, sex, and log total counts; the site term is dropped when only one site
+age, sex, and log10 total counts; the site term is dropped when only one site
 remains. The age coefficient is a linear effect per year, tested with a Wald
 test. Nextflow lists cell types
 then runs one task per type; each task loads and subsets the same small merged
@@ -259,7 +259,7 @@ all sample exclusions are recorded. Per-cell-type reports show per-study,
 per-covariate significance inside/outside the shared tested-gene intersection, and combined
 volcano plots for age, sex, BMI, and CMV where metadata support the fits. BMI
 and CMV use separate complete-case models adjusted for study site, age, sex,
-and log total counts; per-study models include site when it varies within the
+and log10 total counts; per-study models include site when it varies within the
 study. Each model records its included studies, sites, and sample counts.
 Categorical coefficient labels show the
 reference group (female for sex; no/negative for CMV). Keep
