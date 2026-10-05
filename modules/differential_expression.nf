@@ -62,3 +62,23 @@ process WRITE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION_MANIFEST {
       ${test_mode_argument} ${synthetic_data_argument}
     """
 }
+
+process RENDER_CROSS_CELL_TYPE_TRAJECTORY_REPORT {
+    tag 'cross-cell-type age trajectory report'
+    publishDir "${params.outdir}/differential_expression", mode: 'copy', overwrite: true
+
+    input:
+    path differential_expression
+    path pipeline_config
+    path report_template
+
+    output:
+    path 'trajectory_analysis', emit: report
+
+    script:
+    """
+    pbmc-trajectory-report --differential-expression-dir ${differential_expression} \
+      --output-dir trajectory_analysis --config ${pipeline_config} \
+      --template ${report_template} --project-root .
+    """
+}

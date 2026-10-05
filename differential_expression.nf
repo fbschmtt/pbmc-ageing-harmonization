@@ -4,6 +4,7 @@ include {
     LIST_PSEUDOBULK_CELL_TYPES
     RUN_CELL_TYPE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION
     WRITE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION_MANIFEST
+    RENDER_CROSS_CELL_TYPE_TRAJECTORY_REPORT
 } from './modules/differential_expression'
 
 workflow {
@@ -13,6 +14,9 @@ workflow {
     }
     def pseudobulk_input = channel.value(file(params.pseudobulk_input, checkIfExists: true))
     def pipeline_config = channel.value(file(root.resolve('config/pipeline.json'), checkIfExists: true))
+    def trajectory_report_template = channel.value(
+        file(root.resolve('reports/trajectory_analysis_report.py'), checkIfExists: true)
+    )
     def de_test_mode = channel.value(params.de_test_mode as boolean)
     def synthetic_test_data = channel.value(params.de_synthetic_test_data as boolean)
     LIST_PSEUDOBULK_CELL_TYPES(pseudobulk_input, pipeline_config)
@@ -38,5 +42,10 @@ workflow {
         RUN_CELL_TYPE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION.out.results.collect(),
         de_test_mode,
         synthetic_test_data,
+    )
+    RENDER_CROSS_CELL_TYPE_TRAJECTORY_REPORT(
+        WRITE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION_MANIFEST.out.results,
+        pipeline_config,
+        trajectory_report_template,
     )
 }

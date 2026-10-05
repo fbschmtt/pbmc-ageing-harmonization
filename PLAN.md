@@ -131,6 +131,9 @@ whole-dataset single-cell merge.
 - [x] Generate a deterministic positive-fit DE fixture on demand and include
   fit, planted-marker, and report-artifact assertions in `make run-all-test`
   and `make verify`.
+- [x] Add the all-study 10-year age-bin trajectory fit, seven-bin support
+  requirement, per-type hierarchical clusters and UMAP, and shared-bin
+  cross-cell-type trajectory report with recurrence and pattern summaries.
 
 ## Current implementation state
 
@@ -255,9 +258,23 @@ volcano plots for age, sex, BMI, and CMV where metadata support the fits. BMI
 and CMV use separate complete-case models adjusted for age and sex; a single-
 study optional-covariate model omits the study term. Each model records its
 included studies and sample counts. Categorical coefficient labels show the
-reference group (female for sex; no/negative for CMV). Keep
-nonlinear age and an age-20 sensitivity analysis as future decisions. R DESeq2,
-edgeR quasi-likelihood, and limma-voom comparisons are outside this first
+reference group (female for sex; no/negative for CMV). A separate exploratory
+all-study age-trajectory model uses decade bins, a 20–30 reference, and a joint
+Wald test for any difference across bins. Configurable support rules drop
+sparse bins and skip cell types with fewer than the required number of retained
+bins. The current rule requires at least 10 eligible pseudobulks in each bin
+and seven of the eight decades from 20–30 through 90–100. Report figures,
+trajectory clustering, and gene recurrence omit types below that support
+threshold. Reported trajectory shapes are scaled by their population SD across
+all retained bins. Significant shapes (omnibus FDR ≤0.001) are hierarchically
+clustered and visualized with cluster means and a UMAP (Ward and Euclidean by
+default). Per-type assignments and mean profiles are saved beside the reports. A
+cross-cell-type notebook clusters significant gene-by-type trajectories over
+the bins shared by every eligible type (at least five shared bins), compares
+their shapes, and counts how many eligible types show omnibus-significant DE
+(FDR <0.05) for each gene. An age-20 sensitivity analysis remains a future
+decision. R DESeq2,
+edgeR quasi-likelihood, and limma-voom comparisons are outside this
 implementation.
 
 ### Priority investigation: unusual Naive CD8 T-cell age signal

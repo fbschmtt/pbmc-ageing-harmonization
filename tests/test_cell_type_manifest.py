@@ -17,6 +17,12 @@ def test_cell_type_manifest_validates_and_records_every_report(tmp_path):
     (report_dir / "analysis.h5ad").write_bytes(b"analysis")
     (report_dir / "report.html").write_text("<html></html>")
     (report_dir / "executed.ipynb").write_text("{}")
+    (report_dir / "age_trajectory_clusters.csv").write_text(
+        "gene,trajectory_cluster\nGENE1,1\n"
+    )
+    (report_dir / "age_trajectory_cluster_means.csv").write_text(
+        "trajectory_cluster,n_trajectories\n1,1\n"
+    )
     (report_dir / "report.json").write_text(json.dumps({
         "status": "complete", "cell_type": "Naive CD4 T cell", "aifi_l1_parent": "T cell",
         "n_cells": 50, "n_clusters": 2,
@@ -37,6 +43,13 @@ def test_cell_type_manifest_validates_and_records_every_report(tmp_path):
     }.items()
     assert len(record[0]["analysis_h5ad_sha256"]) == 64
     assert len(record[0]["report_html_sha256"]) == 64
+    assert set(record[0]["age_trajectory_outputs"]) == {
+        "age_trajectory_clusters.csv", "age_trajectory_cluster_means.csv",
+    }
+    assert all(
+        len(item["sha256"]) == 64
+        for item in record[0]["age_trajectory_outputs"].values()
+    )
 
 
 def test_cell_type_manifest_rejects_incomplete_report_directory(tmp_path):

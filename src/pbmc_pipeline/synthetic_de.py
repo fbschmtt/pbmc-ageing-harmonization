@@ -9,42 +9,113 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
+from .config import AgeTrajectorySettings, read_json
+
+SYNTHETIC_MAX_AGE = 100
+TRAJECTORY_PROFILE_MULTIPLIERS = [
+    [1.0, 1.8, 0.55, 2.6, 0.7, 2.0, 0.65, 1.5],
+    [1.0, 2.0, 2.0, 0.5, 0.5, 2.4, 0.75, 1.8],
+    [1.0, 0.6, 1.8, 2.2, 0.5, 2.0, 1.7, 0.55],
+    [1.0, 2.2, 0.6, 0.6, 2.5, 1.0, 2.1, 0.55],
+    [1.0, 0.5, 2.2, 0.5, 1.7, 2.5, 0.55, 1.8],
+]
+
+
+def _default_samples_per_study(settings: AgeTrajectorySettings, study_count: int) -> int:
+    """Derive balanced synthetic replication from the active trajectory support rule."""
+    age_bin_count = (
+        SYNTHETIC_MAX_AGE - settings.reference_bin_start_age
+    ) // settings.bin_width_years
+    if age_bin_count != len(TRAJECTORY_PROFILE_MULTIPLIERS[0]):
+        raise ValueError(
+            "The synthetic age-trajectory fixture plants eight bins; pipeline settings "
+            "must produce eight bins from the reference age through age 100"
+        )
+    if settings.minimum_bins > age_bin_count:
+        raise ValueError(
+            "The synthetic age-trajectory fixture cannot meet minimum_bins with its "
+            f"{age_bin_count} available bins"
+        )
+    per_study_per_bin = int(np.ceil(settings.minimum_samples_per_bin / study_count))
+    return age_bin_count * per_study_per_bin
+
 
 def create_synthetic_pseudobulk(
     output_path: Path,
     *,
+    trajectory_settings: AgeTrajectorySettings,
     seed: int = 413,
-    samples_per_study: int = 8,
+    samples_per_study: int | None = None,
     cells_per_pseudobulk: int = 15,
 ) -> Path:
-    """Write a small pseudobulk H5AD with estimable, deliberately synthetic fits."""
+    """Write a small pseudobulk H5AD with estimable, deliberately synthetic fits.
+
+    Keep the planted non-linear profiles aligned with the production age-bin model;
+    ``check_synthetic_de.py`` verifies that the fitted coefficients recover them.
+    """
+    studies = ["synthetic_study_a", "synthetic_study_b", "synthetic_study_c"]
+    if samples_per_study is None:
+        samples_per_study = _default_samples_per_study(trajectory_settings, len(studies))
     if samples_per_study < 6:
         raise ValueError("samples_per_study must be at least 6 to exercise both models")
     if cells_per_pseudobulk < 10:
         raise ValueError("cells_per_pseudobulk must meet the configured DE cell cutoff (10)")
 
     rng = np.random.default_rng(seed)
-    studies = ["synthetic_study_a", "synthetic_study_b", "synthetic_study_c"]
     cell_types = ["CD14 monocyte", "Naive CD4 T cell"]
-    ages = np.array([24, 31, 38, 45, 52, 60, 68, 76], dtype=float)
-    sexes = np.array(["female", "male", "male", "female", "female", "male", "male", "female"])
+    age_bin_starts = list(range(
+        trajectory_settings.reference_bin_start_age,
+        SYNTHETIC_MAX_AGE,
+        trajectory_settings.bin_width_years,
+    ))
+    if (
+        len(age_bin_starts) != len(TRAJECTORY_PROFILE_MULTIPLIERS[0])
+        or trajectory_settings.minimum_bins > len(age_bin_starts)
+    ):
+        raise ValueError(
+            "The synthetic age-trajectory fixture requires its eight planted bins "
+            "to cover the configured minimum-bin threshold"
+        )
+    per_bin_sample_count = samples_per_study // len(age_bin_starts)
+    if samples_per_study % len(age_bin_starts):
+        raise ValueError(
+            "samples_per_study must divide evenly across the configured synthetic age bins"
+        )
+    if per_bin_sample_count * len(studies) < trajectory_settings.minimum_samples_per_bin:
+        raise ValueError(
+            "samples_per_study is too small to meet minimum_samples_per_bin after "
+            "combining the synthetic studies"
+        )
+    ages = np.array([
+        start + offset
+        for start in age_bin_starts
+        for offset in np.linspace(
+            trajectory_settings.bin_width_years * 0.1,
+            trajectory_settings.bin_width_years * 0.9,
+            per_bin_sample_count,
+        )
+    ], dtype=float)
+    # Balance sex within each decade without aligning it with the alternating CMV labels.
+    sex_pattern = np.resize(
+        np.array(["female", "female", "male", "male"]), per_bin_sample_count
+    )
+    sexes = np.tile(sex_pattern, len(age_bin_starts))
     bmi_values = rng.permutation(np.linspace(21.0, 34.0, samples_per_study))
     cmv_values = np.resize(np.array(["negative", "positive", "negative", "positive"]), samples_per_study)
-    if samples_per_study != len(ages):
-        ages = np.linspace(22, 78, samples_per_study).round().astype(float)
-        sexes = np.resize(np.array(["female", "male"]), samples_per_study)
-        # Alternate in mirrored blocks to avoid making sex a proxy for age.
-        sexes[np.arange(samples_per_study) % 4 >= 2] = np.where(
-            sexes[np.arange(samples_per_study) % 4 >= 2] == "female", "male", "female"
-        )
 
     base_genes = [f"SYNTH_GENE_{index:03d}" for index in range(80)]
     age_genes = ["SYNTH_AGE_MARKER_1", "SYNTH_AGE_MARKER_2", "SYNTH_AGE_MARKER_3"]
+    trajectory_genes = [f"SYNTH_AGE_TRAJECTORY_MARKER_{index}" for index in range(1, 6)]
+    if len(trajectory_genes) != len(TRAJECTORY_PROFILE_MULTIPLIERS):
+        raise ValueError("Synthetic age-trajectory gene and profile counts must match")
     sex_genes = ["SYNTH_SEX_MARKER_1", "SYNTH_SEX_MARKER_2"]
     bmi_genes = ["SYNTH_BMI_MARKER_1", "SYNTH_BMI_MARKER_2"]
     cmv_genes = ["SYNTH_CMV_MARKER_1", "SYNTH_CMV_MARKER_2"]
     study_specific_genes = ["SYNTH_STUDY_A_ONLY", "SYNTH_STUDY_B_ONLY"]
-    genes = base_genes + age_genes + sex_genes + bmi_genes + cmv_genes + study_specific_genes
+    genes = (
+        base_genes + age_genes + trajectory_genes + sex_genes + bmi_genes
+        + cmv_genes + study_specific_genes
+    )
     var = pd.DataFrame(index=pd.Index(genes, name="gene"))
     for study in studies:
         var[f"available_in_{study}"] = True
@@ -73,6 +144,17 @@ def create_synthetic_pseudobulk(
                 bmi_effect = np.array([gene in bmi_genes for gene in genes])
                 cmv_effect = np.array([gene in cmv_genes for gene in genes])
                 mean[age_effect] *= np.exp(0.025 * (age - 50))
+                age_bin_start = (
+                    int(age // trajectory_settings.bin_width_years)
+                    * trajectory_settings.bin_width_years
+                )
+                bin_index = (
+                    age_bin_start - trajectory_settings.reference_bin_start_age
+                ) // trajectory_settings.bin_width_years
+                for gene, profile in zip(
+                    trajectory_genes, TRAJECTORY_PROFILE_MULTIPLIERS, strict=True
+                ):
+                    mean[genes.index(gene)] *= profile[bin_index]
                 mean[sex_effect & (sex == "male")] *= 1.7
                 if np.isfinite(bmi):
                     mean[bmi_effect] *= np.exp(0.15 * (bmi - 27.5))
@@ -112,6 +194,12 @@ def create_synthetic_pseudobulk(
         "generator": "pbmc_pipeline.synthetic_de.create_synthetic_pseudobulk",
         "not_biological_evidence": True,
         "expected_age_associated_genes": age_genes,
+        "expected_age_trajectory_associated_genes": trajectory_genes,
+        "expected_age_trajectory_profiles": {
+            gene: profile for gene, profile in zip(
+                trajectory_genes, TRAJECTORY_PROFILE_MULTIPLIERS, strict=True
+            )
+        },
         "expected_sex_associated_genes": sex_genes,
         "expected_bmi_associated_genes": bmi_genes,
         "expected_cmv_associated_genes": cmv_genes,
@@ -120,6 +208,7 @@ def create_synthetic_pseudobulk(
             "cmv": [studies[0]],
         },
         "samples_per_study": int(samples_per_study),
+        "age_trajectory_settings": trajectory_settings.to_mapping(),
         "cells_per_pseudobulk": int(cells_per_pseudobulk),
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -130,12 +219,18 @@ def create_synthetic_pseudobulk(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=413)
-    parser.add_argument("--samples-per-study", type=int, default=8)
+    parser.add_argument("--samples-per-study", type=int)
     parser.add_argument("--cells-per-pseudobulk", type=int, default=15)
     args = parser.parse_args()
+    pipeline = read_json(args.config)
+    trajectory_settings = AgeTrajectorySettings.from_mapping(
+        pipeline["differential_expression"]["age_trajectory"]
+    )
     output = create_synthetic_pseudobulk(
         args.output,
+        trajectory_settings=trajectory_settings,
         seed=args.seed,
         samples_per_study=args.samples_per_study,
         cells_per_pseudobulk=args.cells_per_pseudobulk,

@@ -23,7 +23,7 @@ from IPython.display import HTML, Markdown, display
 
 sns.set_theme(style="whitegrid")
 plt.rcParams.update({"figure.dpi": 110, "savefig.dpi": 110})
-from pbmc_pipeline.config import read_json
+from pbmc_pipeline.config import AgeTrajectorySettings, read_json
 from pbmc_pipeline.covariates import (
     categorical_contrast_label,
     categorical_levels,
@@ -34,11 +34,15 @@ from pbmc_pipeline.reporting import (
     sample_cluster_fractions,
     signed_value_at_largest_absolute_magnitude,
 )
+from pbmc_pipeline.trajectory_analysis import cluster_trajectory_profiles
 
 primitive = sc.read_h5ad(Path(os.environ["CELL_TYPE_H5AD"]))
 analysis_path = Path(os.environ["CELL_TYPE_ANALYSIS_H5AD"])
 output_dir = analysis_path.parent
 pipeline = read_json(Path(os.environ["CELL_TYPE_CONFIG"]))
+trajectory_settings = AgeTrajectorySettings.from_mapping(
+    pipeline["differential_expression"]["age_trajectory"]
+)
 sc.settings.verbosity = 0
 report = read_json(output_dir / "report.json")
 adata = sc.read_h5ad(analysis_path)
@@ -731,7 +735,7 @@ def plot_parent_fraction_coefficients(
         title="Residual diagnostic", bbox_to_anchor=(1.02, 0.53), loc="upper left",
     )
     axis.set_title(
-        f"Covariate effects on fraction of {cell_type}\nwithin {parent} (percentage points)"
+        f"Covariate effects on fraction of {cell_type}\nwithin {parent}"
     )
     figure.tight_layout()
     plt.show()
@@ -1300,6 +1304,7 @@ if de_dir:
         per_study_results.append(result)
     has_per_study = bool(per_study_results)
     combined_results_by_covariate = {}
+    age_trajectory_results = None
     if merged_file is not None and merged_file.is_file():
         result = pd.read_csv(merged_file)
         if "covariate" not in result:
@@ -1309,6 +1314,9 @@ if de_dir:
         combined_results_by_covariate["age"] = result
     for result_path in combined_files:
         result = pd.read_csv(result_path)
+        if result_path.stem == "age_bin":
+            age_trajectory_results = result
+            continue
         if "covariate" not in result:
             result["covariate"] = result_path.stem
         if "contrast" not in result:
@@ -1487,6 +1495,210 @@ if de_dir:
                 pd.DataFrame(combined_covariate_summary),
                 "Show combined-model sample and significant-gene counts",
             )
+
+        age_trajectory_fit = next(
+            (model for model in de_run_metadata.get("models", [])
+             if model.get("purpose") == "age_trajectory"),
+            {},
+        )
+        age_trajectory_info = de_run_metadata.get("age_trajectory", {})
+        if age_trajectory_fit or age_trajectory_results is not None:
+            display(Markdown("### Age-bin trajectories"))
+            if de_dir:
+                cross_type_report = (
+                    Path(de_dir).resolve().parent / "trajectory_analysis" / "report.html"
+                )
+                if cross_type_report.is_file():
+                    display(Markdown(
+                        "See the [cross-cell-type trajectory report](../../differential_expression/"
+                        "trajectory_analysis/report.html) for "
+                        "shared-pattern clusters and gene recurrence across cell types."
+                    ))
+            width = trajectory_settings.bin_width_years
+            minimum_bin_samples = trajectory_settings.minimum_samples_per_bin
+            minimum_bins = trajectory_settings.minimum_bins
+            reference_bin = age_trajectory_info.get(
+                "reference_bin",
+                f"{trajectory_settings.reference_bin_start_age}-"
+                f"{trajectory_settings.reference_bin_start_age + width}",
+            )
+            retained_bins = age_trajectory_info.get("retained_bins", [])
+            if age_trajectory_fit.get("status") != "complete" or age_trajectory_results is None:
+                display(Markdown(
+                    f"_Age-bin trajectory fit skipped: "
+                    f"{age_trajectory_fit.get('reason', 'no trajectory result was produced')}._"
+                ))
+            elif len(retained_bins) < trajectory_settings.minimum_bins:
+                display(Markdown(
+                    f"_Age-bin trajectory results omitted: only {len(retained_bins)} bins "
+                    f"meet the sample-count threshold; at least "
+                    f"{trajectory_settings.minimum_bins} "
+                    "are required._"
+                ))
+            else:
+                dropped_bins = age_trajectory_info.get("dropped_bins", [])
+                top_gene_count = trajectory_settings.report_top_n_genes
+                trajectory_de_fdr = trajectory_settings.de_fdr_threshold
+                display(Markdown(
+                    f"The combined model uses {width}-year age bins, adjusts for study and sex, "
+                    f"and uses **{reference_bin}** as the zero point. Bins with fewer than "
+                    f"{minimum_bin_samples} eligible pseudobulks are excluded; at least "
+                    f"{minimum_bins} supported bins are required. Retained bins: "
+                    f"{', '.join(retained_bins)}. "
+                    f"Dropped bins: {', '.join(dropped_bins) if dropped_bins else 'none'}. "
+                    "The omnibus joint Wald test asks whether any retained age bin differs from "
+                    "the reference, with FDR controlled across genes. Each trajectory is scaled "
+                    "by its population SD across all retained bins, including the zero reference; "
+                    "a trajectory with incomplete estimates or zero SD has no standardized shape."
+                ))
+                omnibus = age_trajectory_results.drop_duplicates("gene").copy()
+                omnibus["omnibus_padj"] = pd.to_numeric(
+                    omnibus["omnibus_padj"], errors="coerce"
+                )
+                selected_genes = omnibus.loc[
+                    omnibus["omnibus_padj"] < trajectory_de_fdr
+                ].sort_values("omnibus_padj").head(top_gene_count)
+                if selected_genes.empty:
+                    display(Markdown(
+                        f"_No genes pass the omnibus age-bin FDR threshold "
+                        f"(< {trajectory_de_fdr:g}) for this cell type._"
+                    ))
+                else:
+                    selected_names = selected_genes["gene"].astype(str).tolist()
+                    selected_shape = age_trajectory_results.loc[
+                        age_trajectory_results["gene"].astype(str).isin(selected_names)
+                    ].copy()
+                    shape_matrix = selected_shape.pivot(
+                        index="gene", columns="age_bin", values="trajectory_scaled"
+                    ).reindex(index=selected_names, columns=retained_bins)
+                    figure, axis = plt.subplots(
+                        figsize=(max(7.0, 1.1 * len(retained_bins)),
+                                 max(3.5, 0.28 * len(selected_names) + 1.5))
+                    )
+                    sns.heatmap(
+                        shape_matrix, cmap="vlag", center=0, ax=axis,
+                        cbar_kws={"label": "Trajectory shape (SD units)"},
+                    )
+                    axis.set_xlabel("Age bin (years)")
+                    axis.set_ylabel("Gene")
+                    axis.set_title("Top omnibus-significant standardized trajectories")
+                    figure.tight_layout()
+                    display_collapsible_figure(figure, "Show omnibus-significant age trajectories")
+
+                    selected_table = selected_shape.pivot(
+                        index="gene", columns="age_bin", values="trajectory_scaled"
+                    ).reindex(index=selected_names, columns=retained_bins)
+                    selected_table.insert(
+                        0, "Omnibus FDR", selected_genes.set_index("gene").loc[
+                            selected_table.index, "omnibus_padj"
+                        ].to_numpy(),
+                    )
+                    selected_table.insert(
+                        1, "Trajectory SD (log2 fold change)", selected_genes.set_index(
+                            "gene"
+                        ).loc[selected_table.index, "trajectory_sd"].to_numpy(),
+                    )
+                    selected_table.columns = [
+                        str(column) if column in {"Omnibus FDR", "Trajectory SD (log2 fold change)"}
+                        else f"Shape {column}"
+                        for column in selected_table.columns
+                    ]
+                    display_collapsible_table(
+                        selected_table.reset_index(),
+                        "Show top omnibus-significant age-bin trajectories",
+                    )
+
+                cluster_fdr = trajectory_settings.cluster_fdr_threshold
+                cluster_significant = omnibus.loc[
+                    omnibus["omnibus_padj"] <= cluster_fdr
+                ]
+                if cluster_significant.empty:
+                    display(Markdown(
+                        f"_No genes pass the trajectory clustering FDR threshold "
+                        f"({cluster_fdr:g})._"
+                    ))
+                else:
+                    profile_data = age_trajectory_results.loc[
+                        age_trajectory_results["gene"].astype(str).isin(
+                            cluster_significant["gene"].astype(str)
+                        )
+                    ].copy()
+                    profiles = profile_data.pivot(
+                        index="gene", columns="age_bin", values="trajectory_scaled"
+                    ).reindex(columns=retained_bins).dropna()
+                    cluster_labels, cluster_means = cluster_trajectory_profiles(
+                        profiles,
+                        trajectory_settings,
+                    )
+                    cluster_rows = profiles.join(cluster_labels).reset_index()
+                    cluster_rows.insert(1, "cell_type", cell_type_name)
+                    cluster_rows["omnibus_padj"] = cluster_rows["gene"].map(
+                        omnibus.set_index("gene")["omnibus_padj"]
+                    )
+                    cluster_rows.to_csv(output_dir / "age_trajectory_clusters.csv", index=False)
+                    cluster_means = cluster_means.reset_index()
+                    cluster_means.insert(0, "cell_type", cell_type_name)
+                    cluster_means.to_csv(
+                        output_dir / "age_trajectory_cluster_means.csv", index=False
+                    )
+                    figure, axes = plt.subplots(1, 2, figsize=(13, 4.8))
+                    palette = sns.color_palette(
+                        "husl", n_colors=max(len(cluster_means), 1)
+                    )
+                    cluster_colors = {
+                        str(int(row["trajectory_cluster"])): palette[index]
+                        for index, row in cluster_means.iterrows()
+                    }
+                    for index, row in cluster_means.iterrows():
+                        cluster = int(row["trajectory_cluster"])
+                        label = f"Cluster {cluster} (n={int(row['n_trajectories'])})"
+                        axes[0].plot(
+                            retained_bins,
+                            [row[age_bin] for age_bin in retained_bins],
+                            marker="o", linewidth=2, color=cluster_colors[str(cluster)],
+                            label=label,
+                        )
+                    axes[0].axhline(0, color="#555555", linestyle="--", linewidth=0.8)
+                    axes[0].set_xlabel("Age bin")
+                    axes[0].set_ylabel("Mean standardized trajectory (SD units)")
+                    axes[0].set_title("Mean trajectory by hierarchical cluster")
+                    axes[0].tick_params(axis="x", rotation=35)
+                    axes[0].legend(fontsize=8)
+                    embedded = cluster_labels.dropna(subset=["umap_1", "umap_2"])
+                    if embedded.empty:
+                        axes[1].text(
+                            0.5, 0.5,
+                            f"At least {trajectory_settings.minimum_umap_trajectories} "
+                            "trajectories are needed for UMAP",
+                            ha="center", va="center", transform=axes[1].transAxes,
+                        )
+                    else:
+                        plot_points = embedded.reset_index()
+                        plot_points["trajectory_cluster"] = plot_points[
+                            "trajectory_cluster"
+                        ].astype(str)
+                        sns.scatterplot(
+                            data=plot_points, x="umap_1", y="umap_2",
+                            hue="trajectory_cluster", palette=cluster_colors, s=24,
+                            alpha=0.8, linewidth=0, ax=axes[1], legend="brief",
+                        )
+                        axes[1].set_title(
+                            f"Trajectory UMAP ({trajectory_settings.distance_metric} "
+                            "bin distance)"
+                        )
+                        axes[1].set_xlabel("UMAP 1")
+                        axes[1].set_ylabel("UMAP 2")
+                    figure.tight_layout()
+                    display_collapsible_figure(
+                        figure,
+                        f"Show trajectory clusters and UMAP ({len(profiles):,} genes, "
+                        f"FDR ≤ {cluster_fdr:g})",
+                    )
+                    display(Markdown(
+                        "Download the [gene cluster assignments and standardized profiles]"
+                        "(age_trajectory_clusters.csv) or [cluster mean trajectories]"
+                        "(age_trajectory_cluster_means.csv)."
+                    ))
 
         per_study_covariate_summary = []
         for result in per_study_results:

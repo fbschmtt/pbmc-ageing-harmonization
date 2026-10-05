@@ -13,7 +13,12 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
-from .config import config_digest, read_json
+from .age_trajectory import (
+    age_trajectory_design,
+    attach_trajectory_statistics,
+    prepare_age_trajectory_metadata,
+)
+from .config import AgeTrajectorySettings, config_digest, read_json
 from .covariates import categorical_levels, normalize_cmv_status
 
 LOGGER = logging.getLogger(__name__)
@@ -169,7 +174,7 @@ def _fit_covariate_model(
 
     counts_df = pd.DataFrame(counts, index=metadata.index, columns=genes)
     model_metadata = metadata.copy()
-    for column in ("study", "sex", "cmv"):
+    for column in ("study", "sex", "cmv", "age_bin"):
         if column in design and column in model_metadata:
             model_metadata[column] = pd.Categorical(
                 model_metadata[column],
@@ -232,8 +237,13 @@ def _fit_covariate_model(
                 contrast_label = f"{level} vs {levels[0]}"
             result["covariate"] = covariate
             result["contrast"] = contrast_label
+            if covariate == "age_bin":
+                result["age_bin"] = level
             pieces.append(result)
-        coefficient_results[covariate] = pd.concat(pieces).rename_axis("gene").reset_index()
+        combined = pd.concat(pieces).rename_axis("gene").reset_index()
+        if covariate == "age_bin":
+            combined = attach_trajectory_statistics(combined, dds, design_matrix, levels)
+        coefficient_results[covariate] = combined
     return coefficient_results
 
 
@@ -609,6 +619,59 @@ def _run_cell_type_differential_expression(
                 synthetic_test_data=synthetic_test_data,
             )
         )
+    trajectory_settings = AgeTrajectorySettings.from_mapping(spec["age_trajectory"])
+    trajectory_metadata, trajectory_support = prepare_age_trajectory_metadata(
+        metadata, trajectory_settings
+    )
+    if trajectory_metadata is None:
+        trajectory_fit = {
+            "model": "combined",
+            "purpose": "age_trajectory",
+            "study": None,
+            "design": age_trajectory_design(spec),
+            "covariates": ["age_bin"],
+            "n_samples": trajectory_support["n_samples_retained"],
+            "status": "skipped",
+            "reason": trajectory_support["reason"],
+        }
+    else:
+        trajectory_fit = _run_model(
+            adata=type_adata,
+            obs=type_obs,
+            metadata=trajectory_metadata,
+            cell_type=cell_type,
+            model_name="combined",
+            study=None,
+            design=age_trajectory_design(spec),
+            covariates=["age_bin"],
+            alpha=spec["alpha"],
+            cpus=cpus,
+            output_dir=output_dir,
+            test_mode=test_mode,
+            synthetic_test_data=synthetic_test_data,
+        )
+        trajectory_fit["purpose"] = "age_trajectory"
+        if trajectory_fit["status"] == "complete":
+            trajectory_support["status"] = "complete"
+        else:
+            trajectory_support["status"] = "skipped"
+            trajectory_support["reason"] = trajectory_fit.get("reason", "age-bin model did not fit")
+    trajectory_fit.update({
+        key: value for key, value in trajectory_support.items()
+        if key not in {"status", "reason"}
+    })
+    item["models"].append(trajectory_fit)
+    item["age_trajectory"] = {
+        key: trajectory_support.get(key)
+        for key in (
+            "status", "reason", "reference_bin", "bin_width_years",
+            "minimum_samples_per_bin", "minimum_bins", "age_bin_counts",
+            "retained_bins", "dropped_bins", "samples_in_dropped_bins",
+            "n_samples_retained", "reference_samples_by_study",
+            "samples_by_study_and_bin",
+        )
+        if key in trajectory_support
+    }
     type_metadata = {
         "kind": "pseudobulk_differential_expression_cell_type_metadata",
         "cell_type": cell_type,
@@ -625,6 +688,7 @@ def _run_cell_type_differential_expression(
             **spec["sample_inclusion"],
             "minimum_cells_filter_enabled": not test_mode,
         },
+        "age_trajectory": item.get("age_trajectory"),
         "metadata_exclusions": exclusions,
         "models": [
             {

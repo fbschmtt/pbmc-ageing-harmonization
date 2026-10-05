@@ -28,6 +28,11 @@ def write_cell_type_manifest(*, input_path: Path, config_path: Path, model_paths
         report = json.loads((report_dir / "report.json").read_text())
         if report.get("status") not in {"complete", "insufficient_cells"}:
             raise ValueError(f"{report_dir}: unsupported report status {report.get('status')!r}")
+        trajectory_files = {}
+        for name in ("age_trajectory_clusters.csv", "age_trajectory_cluster_means.csv"):
+            path = report_dir / name
+            if path.is_file():
+                trajectory_files[name] = {"path": name, "sha256": _sha256(path)}
         types.append({
             "slug": report_dir.name,
             "cell_type": report["cell_type"],
@@ -37,6 +42,7 @@ def write_cell_type_manifest(*, input_path: Path, config_path: Path, model_paths
             "n_clusters": report.get("n_clusters"),
             "analysis_h5ad_sha256": _sha256(report_dir / "analysis.h5ad"),
             "report_html_sha256": _sha256(report_dir / "report.html"),
+            "age_trajectory_outputs": trajectory_files,
         })
     if not types:
         raise ValueError("No cell-type report directories were supplied")

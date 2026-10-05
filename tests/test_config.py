@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from pbmc_pipeline.config import (
+    AgeTrajectorySettings,
     ConfigurationError,
     load_configuration,
     read_json,
@@ -22,6 +23,32 @@ def test_configuration_is_complete():
         "terekhova23", "wang25"
     }
     assert pipeline["schema_version"] == schema["schema_version"] == 1
+
+
+def test_age_trajectory_report_and_clustering_choices_are_explicit_and_validated():
+    pipeline, studies, schema = load_configuration(ROOT, Path("config/pipeline.json"))
+    age_trajectory = pipeline["differential_expression"]["age_trajectory"]
+    settings = AgeTrajectorySettings.from_mapping(age_trajectory)
+    assert settings.to_mapping() == age_trajectory
+    assert age_trajectory["minimum_bins"] == 7
+    assert age_trajectory["cluster_fdr_threshold"] == 0.001
+    assert age_trajectory["de_fdr_threshold"] == 0.05
+    assert age_trajectory["linkage_method"] == "ward"
+    assert age_trajectory["distance_metric"] == "euclidean"
+    assert age_trajectory["minimum_umap_trajectories"] == 4
+    assert age_trajectory["report_top_n_genes"] == 30
+    assert age_trajectory["cross_report_top_n_genes"] == 100
+
+    input_sources = read_json(ROOT / pipeline["input_sources"])
+    invalid = copy.deepcopy(pipeline)
+    invalid["differential_expression"]["age_trajectory"]["umap_min_dist"] = 1.1
+    with pytest.raises(ConfigurationError, match="umap_min_dist"):
+        validate_configuration(invalid, studies, schema, input_sources)
+
+    incomplete = age_trajectory.copy()
+    incomplete.pop("umap_min_dist")
+    with pytest.raises(ConfigurationError, match="missing=.*umap_min_dist"):
+        AgeTrajectorySettings.from_mapping(incomplete)
 
 
 def test_cell_type_parent_mapping_matches_the_shipped_aifi_l2_model(tmp_path, monkeypatch):
