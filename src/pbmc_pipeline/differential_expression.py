@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import re
 from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
@@ -20,6 +19,7 @@ from .age_trajectory import (
 )
 from .config import AgeTrajectorySettings, config_digest, read_json
 from .covariates import categorical_levels, normalize_cmv_status
+from .utils import slugify
 
 LOGGER = logging.getLogger(__name__)
 _UNKNOWN = {"", "not_provided", "heterogeneous during bulk", "nan", "none", "unknown"}
@@ -36,11 +36,6 @@ _SYNTHETIC_DATA_WARNING = (
 
 class _NonEstimableModel(ValueError):
     """Expected design or sample-size condition that prevents a DE fit."""
-
-
-def _slug(value: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
-    return slug or "unnamed"
 
 
 def _matrix_to_counts(matrix, *, context: str) -> np.ndarray:
@@ -192,6 +187,7 @@ def _fit_covariate_model(
     covariates: list[str],
     alpha: float,
     cpus: int,
+    pearson_residuals_path: Path | None = None,
 ) -> dict[str, pd.DataFrame]:
     from formulaic_contrasts import FormulaicContrasts
     from pydeseq2.dds import DeseqDataSet
@@ -226,6 +222,39 @@ def _fit_covariate_model(
     )
     dds.deseq2()
     design_matrix = dds.obsm["design_matrix"]
+    if pearson_residuals_path is not None:
+        # PyDESeq2's fitted means use the complete bins-model design, including
+        # age_bin, sex, study_site when estimable, and log10_total_counts.
+        fitted_means = np.asarray(dds.obsm["_mu_LFC"], dtype=float)
+        dispersions = pd.to_numeric(dds.var["dispersions"], errors="coerce").to_numpy()
+        observed_counts = np.asarray(dds.X, dtype=float)
+        variance = fitted_means + dispersions[None, :] * np.square(fitted_means)
+        valid_genes = (
+            np.isfinite(dispersions) & (dispersions >= 0)
+            & np.isfinite(fitted_means).all(axis=0)
+            & np.isfinite(variance).all(axis=0) & (variance > 0).all(axis=0)
+        )
+        if not valid_genes.any():
+            raise ValueError("bins-model did not produce finite Pearson residuals for any gene")
+        pearson_residuals = (
+            (observed_counts[:, valid_genes] - fitted_means[:, valid_genes])
+            / np.sqrt(variance[:, valid_genes])
+        )
+        pearson_residuals_path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(
+            pearson_residuals_path,
+            residuals=pearson_residuals.astype(np.float32),
+            pseudobulk_id=np.asarray(metadata.index.astype(str), dtype=np.str_),
+            genes=np.asarray(genes[valid_genes].astype(str), dtype=np.str_),
+        )
+        sample_metadata = metadata[[
+            "study", "sample", "age", "sex", "total_counts", "log10_total_counts",
+        ]].copy()
+        sample_metadata.insert(0, "pseudobulk_id", metadata.index.astype(str))
+        sample_metadata.to_csv(
+            pearson_residuals_path.with_name("age_bin_pearson_residuals_samples.csv"),
+            index=False,
+        )
     coefficient_results = {}
     for covariate in covariates:
         if covariate in {"age", "bmi", "log10_total_counts"}:
@@ -291,6 +320,7 @@ def _run_model(
     output_dir: Path,
     test_mode: bool,
     synthetic_test_data: bool,
+    save_pearson_residuals: bool = False,
 ) -> dict:
     details: dict = {
         "model": model_name,
@@ -411,6 +441,10 @@ def _run_model(
         design = "~ " + " + ".join(design_covariates)
         details["design"] = design
     try:
+        residuals_path = (
+            output_dir / slugify(cell_type) / "combined" / "age_bin_pearson_residuals.npz"
+            if save_pearson_residuals else None
+        )
         results_by_covariate = _fit_covariate_model(
             count_values,
             genes,
@@ -419,6 +453,7 @@ def _run_model(
             covariates=covariates,
             alpha=alpha,
             cpus=cpus,
+            pearson_residuals_path=residuals_path,
         )
     except _NonEstimableModel as exc:
         details.update({"status": "skipped", "reason": str(exc)})
@@ -432,7 +467,7 @@ def _run_model(
         details.update({"status": "failed", "error": f"{type(exc).__name__}: {exc}"})
         return details
 
-    cell_type_dir = output_dir / _slug(cell_type)
+    cell_type_dir = output_dir / slugify(cell_type)
     paths = {}
     test_only = test_mode or synthetic_test_data
     for covariate, result in results_by_covariate.items():
@@ -461,9 +496,9 @@ def _run_model(
         result["n_samples_excluded_missing_design_covariates"] = int((~valid).sum())
         if model_name == "per_study":
             if covariate == "age":
-                destination = cell_type_dir / "per_study" / f"{_slug(study or 'unknown-study')}.csv"
+                destination = cell_type_dir / "per_study" / f"{slugify(study or 'unknown-study')}.csv"
             else:
-                destination = cell_type_dir / "per_study" / covariate / f"{_slug(study or 'unknown-study')}.csv"
+                destination = cell_type_dir / "per_study" / covariate / f"{slugify(study or 'unknown-study')}.csv"
         elif covariate == "age":
             destination = cell_type_dir / "merged.csv"
         else:
@@ -476,6 +511,12 @@ def _run_model(
     # indexing every fitted contrast explicitly for reports and downstream tools.
     primary_covariate = "age" if "age" in paths else next(iter(paths), None)
     details["results_by_covariate"] = paths
+    if save_pearson_residuals and residuals_path is not None:
+        details["pearson_residuals"] = str(residuals_path.relative_to(output_dir))
+        details["pearson_residual_sample_metadata"] = str(
+            residuals_path.with_name("age_bin_pearson_residuals_samples.csv")
+            .relative_to(output_dir)
+        )
     details["results"] = paths.get(primary_covariate) if primary_covariate else None
     if not paths:
         return details
@@ -516,7 +557,7 @@ def _write_age_model_diagnostics(
     diagnostics.insert(0, "pseudobulk_id", diagnostics.index.astype(str))
     diagnostics["counts_in_age_gene_intersection"] = counts.sum(axis=1, dtype=np.int64)
     diagnostics["genes_in_age_intersection"] = len(genes)
-    destination = output_dir / _slug(cell_type) / "age_model_diagnostics.csv"
+    destination = output_dir / slugify(cell_type) / "age_model_diagnostics.csv"
     destination.parent.mkdir(parents=True, exist_ok=True)
     diagnostics.to_csv(destination, index=False)
     return destination
@@ -553,7 +594,7 @@ def _cell_type_index(labels: pd.Series) -> list[tuple[str, str]]:
     cell_types = []
     for cell_type in sorted(labels.unique().tolist()):
         label = str(cell_type)
-        slug = _slug(label)
+        slug = slugify(label)
         if slug in used_slugs and used_slugs[slug] != label:
             raise ValueError(
                 f"AIFI L2 labels collide as output names: {used_slugs[slug]!r} and {label!r}"
@@ -581,7 +622,7 @@ def _run_cell_type_differential_expression(
     synthetic_test_data: bool,
 ) -> dict:
     """Fit one maximal per-study model and covariate-specific combined models."""
-    slug = _slug(cell_type)
+    slug = slugify(cell_type)
     selected = labels == cell_type
     type_adata = adata[selected.to_numpy(), :]
     type_obs = type_adata.obs.copy()
@@ -698,6 +739,7 @@ def _run_cell_type_differential_expression(
             output_dir=output_dir,
             test_mode=test_mode,
             synthetic_test_data=synthetic_test_data,
+            save_pearson_residuals=True,
         )
         trajectory_fit["purpose"] = "age_trajectory"
         if trajectory_fit["status"] == "complete":
@@ -746,6 +788,12 @@ def _run_cell_type_differential_expression(
                     covariate: str(Path(path).relative_to(slug))
                     for covariate, path in model.get("results_by_covariate", {}).items()
                 },
+                **({
+                    key: str(Path(model[key]).relative_to(slug))
+                    for key in (
+                        "pearson_residuals", "pearson_residual_sample_metadata",
+                    ) if model.get(key)
+                }),
             }
             for model in item["models"]
         ],

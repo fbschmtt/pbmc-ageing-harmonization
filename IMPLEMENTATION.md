@@ -141,11 +141,14 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/cell_type_analysis/<aifi-l2-type>/fraction_model_diagnostics.tsv` (optional per-study fraction-model covariates, residual SD, and binomial-sampling reference)
 - `<outdir>/cell_type_analysis/cell_type_manifest.json` (optional downstream provenance and completeness contract)
 - `<outdir>/differential_expression/<cell-type-slug>/...csv` (per-study and combined covariate results)
+- `<outdir>/differential_expression/<cell-type-slug>/combined/age_bin_pearson_residuals.npz` and `age_bin_pearson_residuals_samples.csv` (sample × gene residuals and sample metadata from the age-bin model)
 - `<outdir>/differential_expression/<cell-type-slug>/age_model_diagnostics.csv` (sample support and raw-count inputs for the shared age-model diagnostic figure)
 - `<outdir>/differential_expression/<cell-type-slug>/cell_type_result.json` (per-task fit record collected into the root manifest)
 - `<outdir>/differential_expression/differential_expression.json` (DE status and cell-type result index)
 - `<outdir>/differential_expression/trajectory_analysis/{report.html,executed.ipynb}` (combined trajectory report)
 - `<outdir>/differential_expression/trajectory_analysis/*.csv` (shared-bin cross-type clusters and means, gene-level DE recurrence, and cross-type pattern concordance)
+- `<outdir>/differential_expression/trajectory_analysis/*_residual_{clusters,pc_scores}.csv` (per-cell-type sample cluster assignments and PCA scores)
+- `<outdir>/differential_expression/trajectory_analysis/cross_cell_type_pearson_residuals.npz` and residual metadata/cluster CSVs (wide matrix and analysis for shared samples across full-trajectory-supported cell types)
 - `<outdir>/run_manifest.json` (requested, selected, and skipped studies;
   hashes of selected source inputs, metadata dependencies, and annotation models;
   selected studies are the complete requested set for explicit study lists)
@@ -289,6 +292,7 @@ significance, clustering, and display choices. Current settings are:
 | `linkage_method` | `ward` | Hierarchical clustering linkage. Supported values are `single`, `complete`, `average`, `weighted`, `centroid`, `median`, and `ward`. |
 | `distance_metric` | `euclidean` | Profile distance. Supported values are `euclidean`, `cityblock`, `cosine`, and `correlation`; Ward, centroid, and median require Euclidean distance. |
 | `minimum_shared_bins` | 5 | Minimum common age bins required for the cross-cell-type trajectory comparison. |
+| `residual_pca_components` | 100 | Maximum number of centered PCA components used before clustering bins-model Pearson residuals by sample. The count is capped by the available samples and genes. |
 | `umap_neighbors` | 15 | UMAP neighborhood size. |
 | `minimum_umap_trajectories` | 4 | Minimum number of profiles required to compute UMAP coordinates. |
 | `umap_min_dist` | 0.15 | UMAP minimum-distance parameter. |
@@ -300,11 +304,24 @@ The omnibus test asks whether any retained age-bin coefficient differs from
 the reference bin; it tests any age-bin difference, including a monotone
 pattern, rather than only curvature beyond a linear trend. Standardized shapes
 are computed only when every retained bin is estimable and the across-bin
-population SD is non-zero. Per-cell-type clustering and its downloadable CSVs
-are produced by the cell-type report workflow. The separate trajectory report
-clusters only cross-cell-type profiles over shared bins; it does not repeat the
-per-cell-type clustering. Both sets of cluster assignments and means are
-materialized as CSVs for downstream analysis.
+population SD is non-zero. The trajectory report also clusters samples from
+each cell type's bins-model Pearson residual matrix. For observed counts `y`,
+fitted means `mu`, and PyDESeq2 dispersions `alpha`, it stores Pearson residuals
+`(y - mu) / sqrt(mu + alpha * mu^2)` as float32 values in compressed NPZ files;
+sample identifiers and gene names are included, with sample covariates stored
+beside each matrix. The age-bin fit adjusts for age-bin, sex, log10(total
+counts), and study site when that term is estimable. Samples are clustered
+using up to `residual_pca_components` centered PCA scores, then hierarchical
+clustering and UMAP use Euclidean distances in PC space. Four UMAP panels color
+each point by sex, age, log10(total counts), or study.
+
+The cross-type matrix uses exactly the cell types supported by the
+full-trajectory merge and aligns rows on study plus sample. It retains only
+samples present in every included type; if a supported type lacks residual
+artifacts, the merged residual analysis is skipped and the report names the
+missing type. Its wide columns are labeled `cell type::gene`. Per-type and
+cross-type cluster assignments, PC scores, matrices, and sample metadata are
+materialized for downstream analysis.
 
 The positive synthetic DE fixture must retain at least seven supported bins
 under these production settings. It therefore creates 32 independent samples

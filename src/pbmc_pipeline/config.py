@@ -34,6 +34,7 @@ class AgeTrajectorySettings:
     cross_report_top_n_genes: int
     random_state: int
     minimum_shared_bins: int
+    residual_pca_components: int
 
     LINKAGE_METHODS: ClassVar[frozenset[str]] = frozenset({
         "single", "complete", "average", "weighted", "centroid", "median", "ward",
@@ -47,6 +48,7 @@ class AgeTrajectorySettings:
             "bin_width_years", "minimum_samples_per_bin", "minimum_bins",
             "max_clusters", "umap_neighbors", "minimum_umap_trajectories",
             "report_top_n_genes", "cross_report_top_n_genes", "minimum_shared_bins",
+            "residual_pca_components",
         )
         for name in positive_ints:
             value = getattr(self, name)

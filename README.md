@@ -660,8 +660,23 @@ number of displayed genes and minimum UMAP point count. Per-cell-type
 cluster assignments, standardized profiles, UMAP coordinates, and cluster
 means are also written as CSVs beside each cell-type report; the cross-type
 assignments and means are available as CSVs beside the combined report.
-The combined analysis clusters only cross-cell-type profiles; it does not
-repeat per-cell-type clustering. See [IMPLEMENTATION.md](IMPLEMENTATION.md#age-trajectory-settings)
+The combined report also analyzes sample-level Pearson residuals from the
+age-bin model. That model includes the age-bin factor, sex, log10(total counts),
+and study site when estimable, so residual patterns describe variation beyond
+the fitted age-bin means and other model covariates. It saves one compressed
+sample × gene residual matrix per cell type, then clusters samples after
+centered PCA (100 components by default, capped by the available dimensions).
+For each cell type, the report shows UMAPs colored by sex, age,
+log10(total counts), and study. The cross-type residual matrix uses exactly the
+cell types supported by the full-trajectory merge and only samples present in
+every included type. It is skipped if any required residual matrix is missing.
+Per-type matrices and their sample metadata are stored under each type's
+`combined/` directory; cluster assignments, PC scores, the cross-type matrix,
+and cross-type sample metadata are written under
+`differential_expression/trajectory_analysis/`. The combined report therefore
+clusters both cross-type gene trajectories and residual sample profiles; the
+residual analysis complements rather than replaces per-cell-type trajectory
+clustering. See [IMPLEMENTATION.md](IMPLEMENTATION.md#age-trajectory-settings)
 for the complete setting list and current defaults. Each cell type also renders
 one shared-age diagnostic figure: study-site age support, age against raw
 pseudobulk depth in the tested gene intersection,

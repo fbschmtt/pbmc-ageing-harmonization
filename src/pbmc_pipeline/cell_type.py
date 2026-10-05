@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,11 +13,7 @@ from scipy.stats import spearmanr
 
 from .config import read_json
 from .harmonize import _harmony_integrate, _normalize_nullable_strings_for_h5ad
-
-
-def _slug(value: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
-    return slug or "unnamed"
+from .utils import slugify
 
 
 def split_cell_types(input_path: Path, output_dir: Path, manifest_path: Path, pipeline: dict) -> dict:
@@ -36,7 +31,7 @@ def split_cell_types(input_path: Path, output_dir: Path, manifest_path: Path, pi
     output_dir.mkdir(parents=True, exist_ok=True)
     records, used_slugs = [], set()
     for label in sorted(labels.unique().tolist()):
-        slug = _slug(str(label))
+        slug = slugify(str(label))
         if slug in used_slugs:
             raise ValueError(f"Cell-type labels produce the same output name: {label!r} -> {slug!r}")
         used_slugs.add(slug)

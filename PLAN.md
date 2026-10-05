@@ -322,18 +322,29 @@ addresses the pattern before treating the association as biological:
   HSNRI samples before cell-type cell-count filtering, so site-specific support
   may be limited.
 
-## Planned exploratory analysis: residual structure after pseudobulk DE
+## Exploratory analysis: residual structure after pseudobulk DE
 
 After fitting the pseudobulk differential-expression model separately for each
 cell type, retain a sample × gene residual matrix: expression not explained by
 the prespecified model covariates. This is an exploratory companion to the
 primary age-DE analysis, not a replacement for it.
 
-- Prespecify the model formula and explicitly decide whether age is removed
-  before generating residuals. If age is in the model, residual structure for
-  age-DE genes represents heterogeneity beyond their fitted age trend; if it is
-  not, age-associated covariance remains in the residual matrix. Keep these
-  interpretations separate.
+The implementation uses Pearson residuals from each cell type's
+age-bin PyDESeq2 model. That design retains the configured study/site, sex, and
+`log10_total_counts` adjustments while replacing continuous age with the age-bin
+factor used for trajectory fitting. Save the sample × gene matrix alongside
+the cell-type DE outputs, cluster samples after PCA (100 components by default,
+or fewer when the matrix dimensions require it), and show UMAPs colored by sex,
+age, `log10(total_counts)`, and study. For the cross-cell-type residual view,
+use the same supported cell types as the full-trajectory merge and retain only
+samples represented in every included type before concatenating the
+cell-type-by-gene features.
+
+- The current residuals condition on age-bin means, so age-DE genes represent
+  deviations beyond their fitted bin-level age pattern. They should not be
+  interpreted as residuals from an age-free model, which would retain
+  age-associated covariance. Keep those interpretations separate if an
+  age-free sensitivity analysis is added later.
 - Inspect sample--sample correlation, clustering, and low-dimensional views of
   the residual matrix to identify reproducible participant-level patterns or
   possible ageing phenotypes. Test whether apparent groups replicate across
@@ -425,7 +436,7 @@ primary age-DE analysis, not a replacement for it.
    CPU, and elapsed-time baselines from production.
 7. Add targeted synthetic tests for metadata joins, rare labels, and conversion
    edge cases that random smoke-test subsets may omit.
-8. Continue with exploratory residual-structure analysis after its model and
-   validation design is prespecified.
+8. Extend the implemented residual sample clustering with residual correlation
+   modules, cross-study replication checks, and prespecified signature scores.
 9. Add a static manifest-driven report index before considering a custom
    project-level web frontend.

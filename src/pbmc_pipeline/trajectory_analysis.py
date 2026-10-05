@@ -8,8 +8,10 @@ import numpy as np
 import pandas as pd
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import pdist
+from sklearn.decomposition import PCA
 
 from .config import AgeTrajectorySettings
+from .utils import slugify
 
 
 def cluster_trajectory_profiles(
@@ -64,6 +66,178 @@ def cluster_trajectory_profiles(
          "trajectory_cluster": "size"}
     ).rename(columns={"trajectory_cluster": "n_trajectories"})
     return annotations, means
+
+
+def cluster_sample_residuals(
+    residuals: pd.DataFrame,
+    sample_metadata: pd.DataFrame,
+    settings: AgeTrajectorySettings,
+) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+    """Cluster samples after centered PCA of their Pearson residual profiles."""
+    values = residuals.apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    values = values.dropna(axis=0, how="any")
+    annotations = sample_metadata.reindex(values.index).copy()
+    annotations.index.name = "sample_key"
+    annotations["sample_key"] = annotations.index.astype(str)
+    if len(values) < 2 or values.shape[1] < 1:
+        annotations["residual_cluster"] = pd.Series(index=annotations.index, dtype="Int64")
+        annotations["umap_1"] = np.nan
+        annotations["umap_2"] = np.nan
+        return annotations.reset_index(drop=True), pd.DataFrame(), 0
+
+    n_components = min(
+        settings.residual_pca_components, len(values) - 1, values.shape[1]
+    )
+    scores = PCA(
+        n_components=n_components,
+        svd_solver="randomized",
+        random_state=settings.random_state,
+    ).fit_transform(values.to_numpy(dtype=float))
+    if len(scores) == 1:
+        cluster_ids = np.ones(1, dtype=int)
+    else:
+        tree = linkage(scores, method=settings.linkage_method, metric="euclidean")
+        cluster_ids = fcluster(
+            tree, t=min(settings.max_clusters, len(scores)), criterion="maxclust"
+        ).astype(int)
+    annotations["residual_cluster"] = cluster_ids
+    if len(scores) >= settings.minimum_umap_trajectories:
+        import umap
+
+        embedding = umap.UMAP(
+            n_components=2,
+            n_neighbors=min(settings.umap_neighbors, len(scores) - 1),
+            min_dist=settings.umap_min_dist,
+            metric="euclidean",
+            random_state=settings.random_state,
+            transform_seed=settings.random_state,
+            n_jobs=1,
+        ).fit_transform(scores)
+        annotations["umap_1"] = embedding[:, 0]
+        annotations["umap_2"] = embedding[:, 1]
+    else:
+        annotations["umap_1"] = np.nan
+        annotations["umap_2"] = np.nan
+    pc_columns = [f"PC{index + 1}" for index in range(scores.shape[1])]
+    pc_scores = pd.DataFrame(scores, index=values.index, columns=pc_columns)
+    pc_scores.insert(0, "residual_cluster", cluster_ids)
+    return annotations.reset_index(drop=True), pc_scores.reset_index(names="sample_key"), n_components
+
+
+def _read_cell_type_residuals(
+    differential_expression_dir: Path,
+    settings: AgeTrajectorySettings,
+    output_dir: Path,
+    cross_cell_types: list[str],
+) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, dict]]:
+    for pattern in ("*_residual_clusters.csv", "*_residual_pc_scores.csv"):
+        for stale_path in output_dir.glob(pattern):
+            stale_path.unlink()
+    for name in (
+        "cross_cell_type_pearson_residuals.npz",
+        "cross_cell_type_residual_sample_metadata.csv",
+        "cross_cell_type_residual_clusters.csv",
+        "cross_cell_type_residual_pc_scores.csv",
+    ):
+        (output_dir / name).unlink(missing_ok=True)
+    residuals_by_type: dict[str, pd.DataFrame] = {}
+    metadata_by_type: dict[str, pd.DataFrame] = {}
+    support_by_type: dict[str, dict] = {}
+    for metadata_path in sorted(differential_expression_dir.glob("*/run_metadata.json")):
+        metadata = json.loads(metadata_path.read_text())
+        fit = next((model for model in metadata.get("models", [])
+                    if model.get("purpose") == "age_trajectory"), None)
+        if (
+            fit is None or fit.get("status") != "complete"
+            or not fit.get("pearson_residuals")
+            or not fit.get("pearson_residual_sample_metadata")
+        ):
+            continue
+        residual_path = metadata_path.parent / fit["pearson_residuals"]
+        samples_path = metadata_path.parent / fit["pearson_residual_sample_metadata"]
+        if not residual_path.is_file() or not samples_path.is_file():
+            continue
+        with np.load(residual_path, allow_pickle=False) as stored:
+            residual_matrix = pd.DataFrame(
+                stored["residuals"],
+                index=stored["pseudobulk_id"].astype(str),
+                columns=stored["genes"].astype(str),
+            )
+        sample_metadata = pd.read_csv(samples_path, dtype={"pseudobulk_id": str})
+        sample_metadata["sample_key"] = (
+            sample_metadata["study"].astype(str) + "|" + sample_metadata["sample"].astype(str)
+        )
+        residual_matrix.index = sample_metadata.set_index("pseudobulk_id").loc[
+            residual_matrix.index, "sample_key"
+        ].to_numpy()
+        residual_matrix = residual_matrix.loc[~residual_matrix.index.duplicated(keep="first")]
+        sample_metadata = sample_metadata.drop_duplicates("sample_key").set_index("sample_key")
+        residuals_by_type[str(metadata["cell_type"])] = residual_matrix
+        metadata_by_type[str(metadata["cell_type"])] = sample_metadata
+        support_by_type[str(metadata["cell_type"])] = {
+            "n_samples": len(residual_matrix),
+            "n_genes": residual_matrix.shape[1],
+            "n_pcs_requested": settings.residual_pca_components,
+        }
+
+    for cell_type, matrix in residuals_by_type.items():
+        annotations, pc_scores, n_components = cluster_sample_residuals(
+            matrix, metadata_by_type[cell_type], settings
+        )
+        annotations.to_csv(
+            output_dir / f"{slugify(cell_type)}_residual_clusters.csv", index=False
+        )
+        pc_scores.to_csv(output_dir / f"{slugify(cell_type)}_residual_pc_scores.csv", index=False)
+        support_by_type[cell_type]["n_pcs_used"] = n_components
+
+    missing_cross_types = [
+        cell_type for cell_type in cross_cell_types if cell_type not in residuals_by_type
+    ]
+    cross_types = [] if missing_cross_types else list(cross_cell_types)
+    if cross_types:
+        cross_residuals = {cell_type: residuals_by_type[cell_type] for cell_type in cross_types}
+        common_samples = sorted(set.intersection(*[
+            set(matrix.index) for matrix in cross_residuals.values()
+        ]))
+        matrices = []
+        for cell_type, matrix in cross_residuals.items():
+            wide = matrix.loc[common_samples].copy()
+            wide.columns = [f"{cell_type}::{gene}" for gene in wide.columns]
+            matrices.append(wide)
+        cross_matrix = pd.concat(matrices, axis=1)
+        sample_metadata = metadata_by_type[cross_types[0]].reindex(common_samples)
+        np.savez_compressed(
+            output_dir / "cross_cell_type_pearson_residuals.npz",
+            residuals=cross_matrix.to_numpy(dtype=np.float32),
+            sample_key=np.asarray(cross_matrix.index.astype(str), dtype=np.str_),
+            genes=np.asarray(cross_matrix.columns.astype(str), dtype=np.str_),
+        )
+        sample_metadata.to_csv(output_dir / "cross_cell_type_residual_sample_metadata.csv")
+        annotations, pc_scores, n_components = cluster_sample_residuals(
+            cross_matrix, sample_metadata, settings
+        )
+        annotations.to_csv(output_dir / "cross_cell_type_residual_clusters.csv", index=False)
+        pc_scores.to_csv(output_dir / "cross_cell_type_residual_pc_scores.csv", index=False)
+        cross_support = {
+            "n_cell_types": len(cross_residuals),
+            "cell_types": cross_types,
+            "n_samples_available_by_cell_type": {
+                cell_type: len(matrix) for cell_type, matrix in cross_residuals.items()
+            },
+            "n_samples_common": len(common_samples),
+            "n_genes": cross_matrix.shape[1],
+            "n_pcs_requested": settings.residual_pca_components,
+            "n_pcs_used": n_components,
+        }
+    else:
+        cross_support = {
+            "n_cell_types": 0, "cell_types": [], "n_samples_common": 0,
+            "n_genes": 0, "missing_cell_types": missing_cross_types,
+        }
+    return residuals_by_type, metadata_by_type, {
+        "cell_types": support_by_type,
+        "cross_cell_type": cross_support,
+    }
 
 
 def _read_cell_type_trajectory_results(
@@ -257,6 +431,10 @@ def analyze_age_trajectories(
     cross = build_cross_cell_type_trajectories(
         results_by_type, metadata_by_type, settings=settings
     )
+    _, _, residual_support = _read_cell_type_residuals(
+        differential_expression_dir, settings, output_dir,
+        cross_cell_types=cross["supported_cell_types"],
+    )
     common_bins = cross["common_bins"]
     cross_profiles = cross["trajectories"]
     if not cross_profiles.empty:
@@ -332,6 +510,7 @@ def analyze_age_trajectories(
         "n_cross_cell_type_trajectories": len(cross_profiles),
         "n_genes_tested_in_cross_cell_type_analysis": int(significance["gene"].nunique())
         if not significance.empty else 0,
+        "pearson_residual_clustering": residual_support,
     }
     (output_dir / "analysis_metadata.json").write_text(
         json.dumps(analysis_metadata, indent=2) + "\n"

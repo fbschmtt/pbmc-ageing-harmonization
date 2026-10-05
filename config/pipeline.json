@@ -119,7 +119,8 @@
       "report_top_n_genes": 30,
       "cross_report_top_n_genes": 100,
       "random_state": 413,
-      "minimum_shared_bins": 5
+      "minimum_shared_bins": 5,
+      "residual_pca_components": 100
     },
     "optional_covariates": ["bmi", "cmv"],
     "alpha": 0.05,
