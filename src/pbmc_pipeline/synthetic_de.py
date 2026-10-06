@@ -11,25 +11,24 @@ from scipy import sparse
 
 from .config import AgeTrajectorySettings, read_json
 
-SYNTHETIC_MAX_AGE = 100
 TRAJECTORY_PROFILE_MULTIPLIERS = [
-    [1.0, 1.8, 0.55, 2.6, 0.7, 2.0, 0.65, 1.5],
-    [1.0, 2.0, 2.0, 0.5, 0.5, 2.4, 0.75, 1.8],
-    [1.0, 0.6, 1.8, 2.2, 0.5, 2.0, 1.7, 0.55],
-    [1.0, 2.2, 0.6, 0.6, 2.5, 1.0, 2.1, 0.55],
-    [1.0, 0.5, 2.2, 0.5, 1.7, 2.5, 0.55, 1.8],
+    [1.0, 1.8, 0.55, 2.6, 0.7, 2.0, 0.65],
+    [1.0, 2.0, 2.0, 0.5, 0.5, 2.4, 0.75],
+    [1.0, 0.6, 1.8, 2.2, 0.5, 2.0, 1.7],
+    [1.0, 2.2, 0.6, 0.6, 2.5, 1.0, 2.1],
+    [1.0, 0.5, 2.2, 0.5, 1.7, 2.5, 0.55],
 ]
 
 
 def _default_samples_per_study(settings: AgeTrajectorySettings, study_count: int) -> int:
     """Derive balanced synthetic replication from the active trajectory support rule."""
     age_bin_count = (
-        SYNTHETIC_MAX_AGE - settings.reference_bin_start_age
+        settings.strict_age_cutoff_exclusive - settings.reference_bin_start_age
     ) // settings.bin_width_years
     if age_bin_count != len(TRAJECTORY_PROFILE_MULTIPLIERS[0]):
         raise ValueError(
-            "The synthetic age-trajectory fixture plants eight bins; pipeline settings "
-            "must produce eight bins from the reference age through age 100"
+            f"The synthetic age-trajectory fixture plants {len(TRAJECTORY_PROFILE_MULTIPLIERS[0])} "
+            "bins; pipeline settings must produce that many bins below the strict age cutoff"
         )
     if settings.minimum_bins > age_bin_count:
         raise ValueError(
@@ -65,7 +64,7 @@ def create_synthetic_pseudobulk(
     cell_types = ["CD14 monocyte", "Naive CD4 T cell"]
     age_bin_starts = list(range(
         trajectory_settings.reference_bin_start_age,
-        SYNTHETIC_MAX_AGE,
+        trajectory_settings.strict_age_cutoff_exclusive,
         trajectory_settings.bin_width_years,
     ))
     if (
@@ -73,8 +72,8 @@ def create_synthetic_pseudobulk(
         or trajectory_settings.minimum_bins > len(age_bin_starts)
     ):
         raise ValueError(
-            "The synthetic age-trajectory fixture requires its eight planted bins "
-            "to cover the configured minimum-bin threshold"
+            "The synthetic age-trajectory fixture's planted bins must cover "
+            "the configured minimum-bin threshold"
         )
     per_bin_sample_count = samples_per_study // len(age_bin_starts)
     if samples_per_study % len(age_bin_starts):

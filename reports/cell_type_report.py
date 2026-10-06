@@ -35,7 +35,10 @@ from pbmc_pipeline.reporting import (
     sample_cluster_fractions,
     signed_value_at_largest_absolute_magnitude,
 )
-from pbmc_pipeline.trajectory_analysis import cluster_trajectory_profiles
+from pbmc_pipeline.trajectory_analysis import (
+    cluster_sample_residuals,
+    cluster_trajectory_profiles,
+)
 
 primitive = sc.read_h5ad(Path(os.environ["CELL_TYPE_H5AD"]))
 analysis_path = Path(os.environ["CELL_TYPE_ANALYSIS_H5AD"])
@@ -76,14 +79,107 @@ summary_metrics_html = "".join(
     f"<div class=\"report-metric\"><dt>{escape(label)}</dt><dd>{escape(value)}</dd></div>"
     for label, value in summary_metrics
 )
-de_toc_group = (
-    '<section class="report-toc-group">'
-    '<p class="report-toc-title">Gene expression</p>'
-    '<div class="report-toc-links">'
-    '<a href="#differential-expression">Pseudobulk differential expression</a>'
-    '</div></section>'
-    if de_dir else ""
-)
+de_toc_group = ""
+if de_dir:
+    de_toc_children = []
+    de_root = Path(de_dir)
+    de_models = de_run_metadata.get("models", [])
+    indexed_results = {
+        (de_root / relative_path).resolve(): (model, covariate)
+        for model in de_models
+        if model.get("status") == "complete"
+        for covariate, relative_path in model.get("results_by_covariate", {}).items()
+    }
+    if "models" in de_run_metadata:
+        per_study_outputs = [
+            path for path in (de_root / "per_study").rglob("*.csv")
+            if path.resolve() in indexed_results
+        ]
+        combined_outputs = [
+            path for folder in (de_root / "combined",)
+            for path in folder.glob("*.csv")
+            if path.resolve() in indexed_results
+        ]
+        has_merged_age = (de_root / "merged.csv").resolve() in indexed_results
+    else:
+        per_study_outputs = list((de_root / "per_study").rglob("*.csv"))
+        combined_outputs = list((de_root / "combined").glob("*.csv"))
+        has_merged_age = (de_root / "merged.csv").is_file()
+    per_study_outputs = [
+        path for path in per_study_outputs
+        if not pd.read_csv(path, nrows=1).empty
+    ]
+    combined_outputs_with_rows = [
+        path for path in combined_outputs
+        if not pd.read_csv(path, nrows=1).empty
+    ]
+    merged_age_with_rows = (
+        has_merged_age
+        and (de_root / "merged.csv").is_file()
+        and not pd.read_csv(de_root / "merged.csv", nrows=1).empty
+    )
+    combined_covariates = {
+        indexed_results[path.resolve()][1]
+        for path in combined_outputs_with_rows if path.resolve() in indexed_results
+        and path.stem != "age_bin"
+    }
+    if "models" not in de_run_metadata:
+        combined_covariates.update(
+            path.stem for path in combined_outputs_with_rows if path.stem != "age_bin"
+        )
+    if has_merged_age:
+        combined_covariates.add("age")
+    age_trajectory_available = (
+        any(model.get("purpose") == "age_trajectory" for model in de_models)
+        or any(path.stem == "age_bin" for path in combined_outputs)
+    )
+    if per_study_outputs:
+        de_toc_children.append(
+            '<li><a href="#per-study-gene-intersection">Gene intersection diagnostic</a></li>'
+        )
+    combined_summary_available = merged_age_with_rows or any(
+        path.stem != "age_bin" for path in combined_outputs_with_rows
+    )
+    if combined_summary_available:
+        de_toc_children.append(
+            '<li><a href="#combined-covariate-models">Combined covariate models</a></li>'
+        )
+        covariate_labels = {
+            "log10_total_counts": "log10(total_counts)",
+        }
+        for covariate in sorted(
+            combined_covariates,
+            key=lambda value: ({"age": 0, "sex": 1, "bmi": 2, "cmv": 3,
+                               "log10_total_counts": 4}.get(value, 99), value),
+        ):
+            label = covariate_labels.get(covariate, covariate.upper())
+            anchor_suffix = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+            de_toc_children.append(
+                f'<li><a href="#combined-{anchor_suffix}">{escape(label)} effects</a></li>'
+            )
+    if age_trajectory_available:
+        de_toc_children.append(
+            '<li><a href="#age-bin-trajectories">Age-bin trajectories</a></li>'
+        )
+        de_toc_children.append(
+            '<li><a href="#sample-residual-clustering">Residual sample clustering</a></li>'
+        )
+    if per_study_outputs:
+        de_toc_children.append(
+            '<li><a href="#per-study-covariate-models">Per-study covariate models</a></li>'
+        )
+    if (
+        (de_root / "age_model_diagnostics.csv").is_file()
+        and (has_merged_age or "age" in combined_covariates)
+    ):
+        de_toc_children.append(
+            '<li><a href="#shared-age-model-diagnostics">Shared age-model diagnostics</a></li>'
+        )
+    de_toc_group = (
+        '<li><a href="#differential-expression">Gene expression</a>'
+        + ("<ul>" + "".join(de_toc_children) + "</ul>" if de_toc_children else "")
+        + "</li>"
+    )
 display(HTML(f"""
 <style>
 :root {{
@@ -127,15 +223,20 @@ main {{ max-width: 1600px; margin: 0 auto; padding: 2rem clamp(1.25rem, 3vw, 2.5
 .report-metric {{ display: flex; align-items: baseline; gap: .55rem; padding: .62rem .78rem; border: 1px solid rgba(255,255,255,.22); border-radius: 10px; background: rgba(255,255,255,.1); }}
 .report-metric dt {{ color: #d6edf2; font-size: .9rem; font-weight: 600; }}
 .report-metric dd {{ margin: 0; color: #fff; font-size: .9rem; font-weight: 650; text-align: right; }}
-.report-toc {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: .75rem; margin-top: 1.5rem; }}
-.report-toc-group {{ padding: .7rem .8rem; border: 1px solid rgba(255,255,255,.23); border-radius: 10px; background: rgba(16, 42, 53, .15); }}
-.report-toc-title {{ margin: 0 0 .38rem; color: #cbeaf1; font-size: .72rem; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }}
-.report-toc-links {{ display: flex; flex-direction: column; gap: .25rem; }}
-.report-hero .report-toc a, .report-hero .report-toc a:visited {{
-  color: #f7fcfd; font-size: .91rem; font-weight: 600; line-height: 1.35; text-decoration: none;
-}}
-.report-hero .report-toc a::before {{ content: "›"; display: inline-block; width: .8rem; color: #bde7f0; }}
-.report-hero .report-toc a:hover {{ color: #fff; text-decoration: underline; text-underline-offset: .16em; }}
+.report-toc-shell {{ position: fixed; z-index: 1000; top: 1rem; bottom: 1rem; left: 1rem; width: 260px; }}
+.report-toc-toggle {{ position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }}
+.report-toc-toggle-label {{ display: none; }}
+.report-toc {{ height: 100%; overflow-y: auto; padding: .9rem .8rem 1.1rem; border: 1px solid var(--report-line); border-radius: 14px; background: var(--report-paper); box-shadow: 0 10px 28px rgba(24, 34, 48, .12); }}
+.report-toc-heading {{ margin: 0 0 .65rem; padding: .25rem .45rem .65rem; border-bottom: 1px solid var(--report-line); color: var(--report-muted); font-size: .72rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }}
+.report-toc-list, .report-toc-list ul {{ margin: 0; padding: 0; list-style: none; }}
+.report-toc-list > li {{ margin: .12rem 0 .45rem; }}
+.report-toc-list ul {{ margin: .2rem 0 .35rem .65rem; padding-left: .65rem; border-left: 1px solid var(--report-line); }}
+.report-toc-list ul li {{ margin: .12rem 0; }}
+.report-toc a, .report-toc a:visited {{ display: block; padding: .25rem .45rem; border-radius: 6px; color: #344454; font-size: .88rem; font-weight: 600; line-height: 1.35; text-decoration: none; }}
+.report-toc-list ul a {{ color: var(--report-muted); font-size: .82rem; font-weight: 500; }}
+.report-toc a:hover, .report-toc a:focus-visible {{ background: var(--report-accent-soft); color: var(--report-accent); outline: none; }}
+.report-toc a:focus-visible {{ box-shadow: 0 0 0 2px var(--report-accent); }}
+html {{ scroll-behavior: smooth; scroll-padding-top: 1.25rem; }}
 .report-provenance {{ padding: .75rem 1rem; border: 1px solid var(--report-line); border-radius: 10px; background: var(--report-paper); }}
 .report-provenance summary {{ cursor: pointer; color: var(--report-accent); font-weight: 700; }}
 .report-provenance table {{ margin-top: .8rem; }}
@@ -159,6 +260,24 @@ main {{ max-width: 1600px; margin: 0 auto; padding: 2rem clamp(1.25rem, 3vw, 2.5
 @media print {{
   body.jp-Notebook {{ background: #fff; }} main {{ max-width: none; padding: 0; }}
   .report-hero {{ box-shadow: none; }}
+  .report-toc-shell {{ display: none; }}
+}}
+@media (min-width: 1200px) {{
+  main {{ width: calc(100% - 320px); max-width: 1500px; margin: 0 1.5rem 0 295px; }}
+}}
+@media (max-width: 1199px) {{
+  main {{ padding-top: 5rem; }}
+  .report-toc-shell {{ top: .5rem; right: .5rem; bottom: auto; left: .5rem; width: auto; }}
+  .report-toc-toggle-label {{ display: flex; align-items: center; justify-content: space-between; min-height: 2.8rem; padding: .6rem .9rem; border: 1px solid var(--report-line); border-radius: 10px; background: var(--report-paper); box-shadow: 0 6px 18px rgba(24, 34, 48, .12); color: var(--report-accent); cursor: pointer; font-weight: 700; }}
+  .report-toc-toggle-label::after {{ content: "＋"; font-size: 1.2rem; }}
+  .report-toc-toggle:checked + .report-toc-toggle-label::after {{ content: "−"; }}
+  .report-toc {{ display: none; height: auto; max-height: min(72vh, 680px); margin-top: .35rem; border-radius: 10px; }}
+  .report-toc-toggle:checked ~ .report-toc {{ display: block; }}
+  .report-toc-list {{ columns: 2; column-gap: 1rem; }}
+  .report-toc-list > li {{ break-inside: avoid; }}
+}}
+@media (max-width: 560px) {{
+  .report-toc-list {{ columns: 1; }}
 }}
 </style>
 <header class=\"report-hero\">
@@ -166,35 +285,29 @@ main {{ max-width: 1600px; margin: 0 auto; padding: 2rem clamp(1.25rem, 3vw, 2.5
   <h1>{escape(cell_type_name)}</h1>
   <p class=\"report-subtitle\">Descriptive sample-level and single-cell diagnostics. Cell-level associations are not independent-sample inference.</p>
   <dl class=\"report-metrics\">{summary_metrics_html}</dl>
-  <nav class=\"report-toc\" aria-label=\"Report table of contents\">
-    <section class=\"report-toc-group\">
-      <p class=\"report-toc-title\">Study support</p>
-      <div class=\"report-toc-links\"><a href=\"#sample-coverage\">Sample coverage and protocol metadata</a></div>
-    </section>
-    <section class=\"report-toc-group\">
-      <p class=\"report-toc-title\">Fraction analysis</p>
-      <div class=\"report-toc-links\">
-        <a href=\"#sample-fractions\">Sample fractions across age</a>
-        <a href=\"#fraction-model-evidence\">Adjusted fraction-model evidence</a>
-      </div>
-    </section>
-    <section class=\"report-toc-group\">
-      <p class=\"report-toc-title\">Cell-state context</p>
-      <div class=\"report-toc-links\">
-        <a href=\"#local-embedding\">Local embedding</a>
-        <a href=\"#cluster-composition\">Cluster composition</a>
-        <a href=\"#cluster-markers\">Cluster markers</a>
-      </div>
-    </section>
-    <section class=\"report-toc-group\">
-      <p class=\"report-toc-title\">Technical and gene-level diagnostics</p>
-      <div class=\"report-toc-links\">
-        <a href=\"#pc-study-technology\">PCA by study and protocol</a>
-        <a href=\"#pc-age\">PCA loadings and PC–age</a>
-      </div>
-    </section>
-    {de_toc_group}
-  </nav>
+  <div class=\"report-toc-shell\">
+    <input class=\"report-toc-toggle\" type=\"checkbox\" id=\"report-toc-toggle\">
+    <label class=\"report-toc-toggle-label\" for=\"report-toc-toggle\">Contents</label>
+    <nav class=\"report-toc\" aria-label=\"Report table of contents\">
+      <p class=\"report-toc-heading\">On this page</p>
+      <ul class=\"report-toc-list\">
+        <li><a href=\"#sample-coverage\">Study support</a></li>
+        <li><a href=\"#sample-fractions\">Fraction analysis</a>
+          <ul>
+            <li><a href=\"#fraction-model-evidence\">Adjusted fraction models</a></li>
+            <li><a href=\"#additional-fraction-trends\">Descriptive fraction trends</a></li>
+          </ul>
+        </li>
+        <li><a href=\"#local-embedding\">Local embedding and clusters</a></li>
+        <li><a href=\"#cluster-composition\">Cluster composition</a></li>
+        <li><a href=\"#cluster-markers\">Cluster markers</a></li>
+        <li><a href=\"#pc-study-technology\">PCA diagnostics</a>
+          <ul><li><a href=\"#pc-age\">Loadings and PC–age</a></li></ul>
+        </li>
+        {de_toc_group}
+      </ul>
+    </nav>
+  </div>
 </header>
 """))
 provenance = pd.Series(report, name="value").to_frame()
@@ -234,6 +347,93 @@ def display_collapsible_figure(figure, summary):
     ))
 
 
+def load_residual_sample_clusters(de_dir, fit, settings):
+    """Cluster one cell type's fitted age-bin residuals for its report."""
+    if fit.get("status") != "complete":
+        return None, None, 0
+    residual_path = Path(de_dir) / fit.get("pearson_residuals", "")
+    metadata_path = Path(de_dir) / fit.get("pearson_residual_sample_metadata", "")
+    if not residual_path.is_file() or not metadata_path.is_file():
+        return None, None, 0
+    with np.load(residual_path, allow_pickle=False) as stored:
+        residuals = pd.DataFrame(
+            stored["residuals"],
+            index=stored["pseudobulk_id"].astype(str),
+            columns=stored["genes"].astype(str),
+        )
+    samples = pd.read_csv(metadata_path, dtype={"pseudobulk_id": str})
+    samples["sample_key"] = samples["study"].astype(str) + "|" + samples["sample"].astype(str)
+    sample_by_id = samples.drop_duplicates("pseudobulk_id").set_index("pseudobulk_id")
+    shared_ids = residuals.index.intersection(sample_by_id.index, sort=False)
+    residuals = residuals.loc[shared_ids]
+    sample_by_id = sample_by_id.loc[shared_ids]
+    residuals.index = sample_by_id["sample_key"].to_numpy()
+    keep = ~residuals.index.duplicated(keep="first")
+    residuals = residuals.loc[keep]
+    sample_by_key = sample_by_id.loc[~sample_by_id["sample_key"].duplicated()].set_index("sample_key")
+    annotations, pc_scores, n_components = cluster_sample_residuals(
+        residuals, sample_by_key, settings
+    )
+    return annotations, pc_scores, n_components
+
+
+def plot_residual_sample_umaps(table, *, minimum_umap_samples):
+    """Show residual clusters and sample metadata over the residual UMAP."""
+    coordinates = table.dropna(subset=["umap_1", "umap_2"])
+    if coordinates.empty:
+        display(Markdown(
+            f"_At least {minimum_umap_samples} samples are required for residual UMAPs; "
+            "the cluster assignments are still available below._"
+        ))
+        return
+    def plot_covariate_grid(covariates, title, *, categorical_covariates, figsize):
+        figure, axes = plt.subplots(2, 2, figsize=figsize)
+        for axis, covariate in zip(axes.flat, covariates):
+            if covariate not in coordinates:
+                axis.text(0.5, 0.5, "Not recorded", ha="center", va="center")
+                axis.set_axis_off()
+                continue
+            values = coordinates.dropna(subset=[covariate]).copy()
+            present = len(values)
+            if values.empty:
+                axis.text(0.5, 0.5, "No recorded values", ha="center", va="center")
+                axis.set_axis_off()
+                continue
+            categorical = covariate in categorical_covariates
+            sns.scatterplot(
+                data=values, x="umap_1", y="umap_2", hue=covariate,
+                palette="tab20" if categorical else "viridis", s=50, alpha=0.85,
+                linewidth=0, ax=axis, legend="brief",
+            )
+            axis.set_title(f"{covariate.replace('_', ' ')} · {present}/{len(coordinates)} present")
+            axis.set_xlabel("UMAP 1")
+            axis.set_ylabel("UMAP 2")
+            if axis.legend_ is not None:
+                axis.legend_.set_bbox_to_anchor((1.02, 1))
+        for axis in axes.flat[len(covariates):]:
+            axis.set_axis_off()
+        figure.suptitle(title, y=1.01)
+        figure.tight_layout()
+        display_collapsible_figure(figure, title)
+
+    plot_covariate_grid(
+        ["sex", "age", "log10_total_counts", "study"],
+        "Model covariates over residual UMAP",
+        categorical_covariates={"sex", "study"},
+        figsize=(18, 10.2),
+    )
+    optional_covariates = [
+        covariate for covariate in ("bmi", "cmv") if covariate in coordinates
+    ]
+    if optional_covariates:
+        plot_covariate_grid(
+            ["residual_cluster", *optional_covariates],
+            "BMI and CMV coverage over residual UMAP",
+            categorical_covariates={"residual_cluster", "cmv"},
+            figsize=(18, 10.2),
+        )
+
+
 def natural_sort_key(value):
     """Sort labels naturally so numbered clusters follow numeric order."""
     return tuple(
@@ -242,9 +442,11 @@ def natural_sort_key(value):
     )
 
 
-def plot_umap(adata, *, color, title=None, label_clusters=False):
+def plot_umap(adata, *, color, title=None, label_clusters=False, marker_area_scale=1.0):
     """Render comparable low-resolution, equal-aspect UMAP panels."""
-    plot_kwargs = {"color": color, "size": max(2, 100_000 / adata.n_obs), "show": False}
+    # Scanpy's size controls marker area, so 4x area gives about 2x diameter.
+    point_size = max(2, 100_000 / adata.n_obs) * marker_area_scale
+    plot_kwargs = {"color": color, "size": point_size, "show": False}
     if label_clusters:
         plot_kwargs["legend_loc"] = "on data"
     sc.pl.umap(adata, **plot_kwargs)
@@ -1110,7 +1312,9 @@ display(Markdown(
     "extending beyond the displayed range._"
 ))
 
-display(Markdown("### Additional descriptive fraction trends"))
+display(Markdown(
+    "<a id=\"additional-fraction-trends\"></a>\n### Additional descriptive fraction trends"
+))
 display(Markdown(
     "These age-trend views are secondary to the adult-only adjusted estimates above. "
     "Open a panel to review all-age and adult-only within-study trends, followed by the "
@@ -1139,7 +1343,7 @@ else:
     if "aifi_l3_majority" in adata.obs:
         colors.append("aifi_l3_majority")
     for color in colors:
-        plot_umap(adata, color=color)
+        plot_umap(adata, color=color, marker_area_scale=4.0)
 
 # %% [markdown]
 # <a id="cluster-composition"></a>
@@ -1343,7 +1547,13 @@ if de_dir:
             display(Markdown(
                 "_No estimable PyDESeq2 result files were produced for this cell type._"
             ))
-    if has_per_study or has_combined:
+    age_trajectory_fit = next(
+        (model for model in de_run_metadata.get("models", [])
+         if model.get("purpose") == "age_trajectory"),
+        {},
+    )
+    age_trajectory_info = de_run_metadata.get("age_trajectory", {})
+    if has_per_study or has_combined or age_trajectory_fit or age_trajectory_results is not None:
         de_alpha = pipeline["differential_expression"]["alpha"]
         per_study_by_covariate = {}
         for result in per_study_results:
@@ -1451,7 +1661,10 @@ if de_dir:
                 }
             )
         if not intersection_diagnostics.empty:
-            display(Markdown("### Per-study gene-intersection diagnostic"))
+            display(Markdown(
+                "<a id=\"per-study-gene-intersection\"></a>\n"
+                "### Per-study gene-intersection diagnostic"
+            ))
             display(Markdown(
                 "This table shows how much restricting a cross-study comparison to genes tested "
                 "by every available study would remove from each study's significant-gene list. "
@@ -1491,7 +1704,9 @@ if de_dir:
                     ),
                 })
         if combined_covariate_summary:
-            display(Markdown("### Combined covariate models"))
+            display(Markdown(
+                "<a id=\"combined-covariate-models\"></a>\n### Combined covariate models"
+            ))
             display(Markdown(
                 "Each model estimates its named covariate effect using all studies with recorded "
                 "values for that covariate. It adjusts for study-site batch, age, sex, and "
@@ -1503,14 +1718,10 @@ if de_dir:
                 "Show combined-model sample and significant-gene counts",
             )
 
-        age_trajectory_fit = next(
-            (model for model in de_run_metadata.get("models", [])
-             if model.get("purpose") == "age_trajectory"),
-            {},
-        )
-        age_trajectory_info = de_run_metadata.get("age_trajectory", {})
         if age_trajectory_fit or age_trajectory_results is not None:
-            display(Markdown("### Age-bin trajectories"))
+            display(Markdown(
+                "<a id=\"age-bin-trajectories\"></a>\n### Age-bin trajectories"
+            ))
             if de_dir:
                 cross_type_report = (
                     Path(de_dir).resolve().parent / "trajectory_analysis" / "report.html"
@@ -1524,12 +1735,33 @@ if de_dir:
             width = trajectory_settings.bin_width_years
             minimum_bin_samples = trajectory_settings.minimum_samples_per_bin
             minimum_bins = trajectory_settings.minimum_bins
+            strict_age_cutoff = trajectory_settings.strict_age_cutoff_exclusive
+            age_cutoff_excluded = age_trajectory_info.get(
+                "samples_excluded_by_age_cutoff", 0
+            )
+            manually_excluded_bins = age_trajectory_info.get(
+                "manually_excluded_age_bins", []
+            )
+            raw_bin_counts = age_trajectory_info.get(
+                "age_bin_counts_before_filtering", {}
+            )
+            manual_bin_counts_text = ", ".join(
+                f"{age_bin}: {raw_bin_counts.get(age_bin, 0)} eligible pseudobulks"
+                for age_bin in manually_excluded_bins
+            ) or "none"
             reference_bin = age_trajectory_info.get(
                 "reference_bin",
                 f"{trajectory_settings.reference_bin_start_age}-"
                 f"{trajectory_settings.reference_bin_start_age + width}",
             )
             retained_bins = age_trajectory_info.get("retained_bins", [])
+            display(Markdown(
+                f"Trajectory sample filtering: manually excluded age bin(s) "
+                f"{manual_bin_counts_text}. The strict age cutoff is < {strict_age_cutoff} years; "
+                f"{age_cutoff_excluded} eligible pseudobulks aged at or above it were excluded "
+                "(this total includes the manually excluded 90–100 bin). Each retained "
+                f"{width}-year bin must contain at least {minimum_bin_samples} eligible pseudobulks."
+            ))
             if age_trajectory_fit.get("status") != "complete" or age_trajectory_results is None:
                 display(Markdown(
                     f"_Age-bin trajectory fit skipped: "
@@ -1707,6 +1939,50 @@ if de_dir:
                         "(age_trajectory_cluster_means.csv)."
                     ))
 
+        display(Markdown(
+            "<a id=\"sample-residual-clustering\"></a>\n"
+            "### Sample clustering from age-bin model residuals"
+        ))
+        if de_dir and age_trajectory_fit:
+            residual_clusters, residual_pc_scores, residual_pcs = load_residual_sample_clusters(
+                de_dir, age_trajectory_fit, trajectory_settings
+            )
+        else:
+            residual_clusters, residual_pc_scores, residual_pcs = None, None, 0
+        if residual_clusters is None:
+            residual_reason = age_trajectory_fit.get(
+                "reason", "the age-bin model did not save Pearson residuals"
+            )
+            display(Markdown(f"_Residual clustering unavailable: {residual_reason}._"))
+        else:
+            residual_clusters.to_csv(output_dir / "residual_sample_clusters.csv", index=False)
+            residual_pc_scores.to_csv(
+                output_dir / "residual_sample_pc_scores.csv", index=False
+            )
+            display(Markdown(
+                f"Hierarchical clusters were fitted to centered PCA scores from the "
+                f"age-bin model's Pearson residuals for **{len(residual_clusters)} samples** "
+                f"and **{residual_pc_scores.shape[1] - 1:,} genes**, using {residual_pcs} "
+                "principal components. The residuals account for the model's fitted age-bin, "
+                "sex, study-site, and library-size effects."
+            ))
+            residual_cluster_counts = (
+                residual_clusters.groupby("residual_cluster", dropna=False)
+                .agg(samples=("sample_key", "size"))
+                .reset_index()
+            )
+            display_collapsible_table(
+                residual_cluster_counts, "Show residual cluster sample counts"
+            )
+            plot_residual_sample_umaps(
+                residual_clusters,
+                minimum_umap_samples=trajectory_settings.minimum_umap_trajectories,
+            )
+            display(Markdown(
+                "Download the [residual cluster assignments](residual_sample_clusters.csv) "
+                "or [sample PCA scores](residual_sample_pc_scores.csv)."
+            ))
+
         per_study_covariate_summary = []
         for result in per_study_results:
             for (covariate, contrast), subset in result.groupby(
@@ -1738,7 +2014,9 @@ if de_dir:
                     ),
                 })
         if per_study_covariate_summary:
-            display(Markdown("### Per-study covariate models"))
+            display(Markdown(
+                "<a id=\"per-study-covariate-models\"></a>\n### Per-study covariate models"
+            ))
             display(Markdown(
                 "Each study is fitted once with its maximal available design. Every coefficient for "
                 "that study comes from the same complete-case sample set and formula."
@@ -1783,9 +2061,11 @@ if de_dir:
                 "genes_in_age_intersection",
             }
             if expected_columns.issubset(age_diagnostics):
-                display(Markdown("### Shared age-model diagnostics"))
                 display(Markdown(
-                "This single figure checks study-site/age support, the relation between age and "
+                    "<a id=\"shared-age-model-diagnostics\"></a>\n### Shared age-model diagnostics"
+                ))
+                display(Markdown(
+                    "This single figure checks study-site/age support, the relation between age and "
                     "the raw pseudobulk counts used in the shared age gene intersection, and "
                     "the unadjusted age-model p-value calibration. Q-Q points are the raw "
                     "p-values (`pvalue`, before multiple-testing correction) from the combined "
@@ -1910,7 +2190,12 @@ if de_dir:
             covariate_label = {
                 "log10_total_counts": "log10(total_counts)",
             }.get(covariate, covariate.upper())
-            display(Markdown(f"### {covariate_label}"))
+            covariate_anchor_suffix = re.sub(
+                r"[^a-z0-9]+", "-", covariate_label.lower()
+            ).strip("-")
+            display(Markdown(
+                f'<a id="combined-{covariate_anchor_suffix}"></a>\n### {covariate_label}'
+            ))
             fit_record = next(
                 (model for model in combined_fit_records
                  if covariate in model.get("results_by_covariate", {})),

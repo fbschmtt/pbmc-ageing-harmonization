@@ -247,9 +247,11 @@ def _fit_covariate_model(
             pseudobulk_id=np.asarray(metadata.index.astype(str), dtype=np.str_),
             genes=np.asarray(genes[valid_genes].astype(str), dtype=np.str_),
         )
-        sample_metadata = metadata[[
+        residual_metadata_columns = [
             "study", "sample", "age", "sex", "total_counts", "log10_total_counts",
-        ]].copy()
+            *[covariate for covariate in ("bmi", "cmv") if covariate in metadata],
+        ]
+        sample_metadata = metadata[residual_metadata_columns].copy()
         sample_metadata.insert(0, "pseudobulk_id", metadata.index.astype(str))
         sample_metadata.to_csv(
             pearson_residuals_path.with_name("age_bin_pearson_residuals_samples.csv"),
@@ -756,6 +758,9 @@ def _run_cell_type_differential_expression(
         key: trajectory_support.get(key)
         for key in (
             "status", "reason", "reference_bin", "bin_width_years",
+            "strict_age_cutoff_exclusive", "samples_excluded_by_age_cutoff",
+            "n_samples_after_age_cutoff", "manually_excluded_age_bins",
+            "samples_in_manually_excluded_bins", "age_bin_counts_before_filtering",
             "minimum_samples_per_bin", "minimum_bins", "age_bin_counts",
             "retained_bins", "dropped_bins", "samples_in_dropped_bins",
             "n_samples_retained", "reference_samples_by_study",

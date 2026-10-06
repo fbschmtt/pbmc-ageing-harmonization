@@ -128,7 +128,6 @@ def _read_cell_type_residuals(
     differential_expression_dir: Path,
     settings: AgeTrajectorySettings,
     output_dir: Path,
-    cross_cell_types: list[str],
 ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, dict]]:
     for pattern in ("*_residual_clusters.csv", "*_residual_pc_scores.csv"):
         for stale_path in output_dir.glob(pattern):
@@ -190,15 +189,37 @@ def _read_cell_type_residuals(
         pc_scores.to_csv(output_dir / f"{slugify(cell_type)}_residual_pc_scores.csv", index=False)
         support_by_type[cell_type]["n_pcs_used"] = n_components
 
-    missing_cross_types = [
-        cell_type for cell_type in cross_cell_types if cell_type not in residuals_by_type
-    ]
-    cross_types = [] if missing_cross_types else list(cross_cell_types)
+    cross_types = sorted(residuals_by_type)
+    all_samples = set().union(*(set(matrix.index) for matrix in residuals_by_type.values()))
+    minimum_coverage = settings.cross_cell_type_residual_minimum_sample_coverage
+    removed_cell_types = []
+
+    def common_samples_for(types):
+        return set.intersection(*(set(residuals_by_type[cell_type].index) for cell_type in types))
+
+    while cross_types:
+        common_samples = common_samples_for(cross_types)
+        if not all_samples or len(common_samples) / len(all_samples) >= minimum_coverage:
+            break
+        if len(cross_types) == 1:
+            break
+        to_remove = min(
+            cross_types,
+            key=lambda cell_type: (len(residuals_by_type[cell_type]), cell_type.casefold()),
+        )
+        cross_types.remove(to_remove)
+        remaining_common = common_samples_for(cross_types)
+        removed_cell_types.append({
+            "cell_type": to_remove,
+            "n_samples_available": len(residuals_by_type[to_remove]),
+            "n_samples_common_after_removal": len(remaining_common),
+            "sample_coverage_after_removal": (
+                len(remaining_common) / len(all_samples) if all_samples else 0.0
+            ),
+        })
     if cross_types:
+        common_samples = sorted(common_samples_for(cross_types))
         cross_residuals = {cell_type: residuals_by_type[cell_type] for cell_type in cross_types}
-        common_samples = sorted(set.intersection(*[
-            set(matrix.index) for matrix in cross_residuals.values()
-        ]))
         matrices = []
         for cell_type, matrix in cross_residuals.items():
             wide = matrix.loc[common_samples].copy()
@@ -221,10 +242,20 @@ def _read_cell_type_residuals(
         cross_support = {
             "n_cell_types": len(cross_residuals),
             "cell_types": cross_types,
+            "removed_cell_types_for_sample_coverage": removed_cell_types,
             "n_samples_available_by_cell_type": {
                 cell_type: len(matrix) for cell_type, matrix in cross_residuals.items()
             },
             "n_samples_common": len(common_samples),
+            "n_samples_union": len(all_samples),
+            "sample_coverage_fraction": (
+                len(common_samples) / len(all_samples) if all_samples else 0.0
+            ),
+            "minimum_sample_coverage": minimum_coverage,
+            "minimum_sample_coverage_met": (
+                len(common_samples) / len(all_samples) >= minimum_coverage
+                if all_samples else False
+            ),
             "n_genes": cross_matrix.shape[1],
             "n_pcs_requested": settings.residual_pca_components,
             "n_pcs_used": n_components,
@@ -232,7 +263,10 @@ def _read_cell_type_residuals(
     else:
         cross_support = {
             "n_cell_types": 0, "cell_types": [], "n_samples_common": 0,
-            "n_genes": 0, "missing_cell_types": missing_cross_types,
+            "n_samples_union": len(all_samples), "n_genes": 0,
+            "minimum_sample_coverage": minimum_coverage,
+            "minimum_sample_coverage_met": False,
+            "removed_cell_types_for_sample_coverage": removed_cell_types,
         }
     return residuals_by_type, metadata_by_type, {
         "cell_types": support_by_type,
@@ -277,7 +311,11 @@ def build_cross_cell_type_trajectories(
         if cell_type not in results_by_type or support.get("status") != "complete":
             skipped_types[cell_type] = support.get("reason", "trajectory fit was not completed")
             continue
-        retained = [str(value) for value in support.get("retained_bins", [])]
+        retained = [
+            str(value) for value in support.get("retained_bins", [])
+            if int(str(value).split("-", maxsplit=1)[0])
+            < settings.strict_age_cutoff_exclusive
+        ]
         if len(retained) < settings.minimum_bins:
             skipped_types[cell_type] = (
                 f"only {len(retained)} age bins meet the sample-count threshold; "
@@ -421,6 +459,9 @@ def analyze_age_trajectories(
         cell_type_support.append({
             "cell_type": cell_type,
             "status": support.get("status", fit.get("status", "unknown")),
+            "samples_in_manually_excluded_bins": support.get(
+                "samples_in_manually_excluded_bins", 0
+            ),
             "reason": support.get("reason", fit.get("reason")) if eligible_for_reporting else (
                 f"only {len(retained_bins)} age bins meet the sample-count threshold; "
                 f"at least {settings.minimum_bins} are required"
@@ -433,7 +474,6 @@ def analyze_age_trajectories(
     )
     _, _, residual_support = _read_cell_type_residuals(
         differential_expression_dir, settings, output_dir,
-        cross_cell_types=cross["supported_cell_types"],
     )
     common_bins = cross["common_bins"]
     cross_profiles = cross["trajectories"]

@@ -22,6 +22,8 @@ class AgeTrajectorySettings:
     minimum_samples_per_bin: int
     minimum_bins: int
     reference_bin_start_age: int
+    strict_age_cutoff_exclusive: int
+    cross_cell_type_residual_minimum_sample_coverage: float
     cluster_fdr_threshold: float
     de_fdr_threshold: float
     max_clusters: int
@@ -69,6 +71,27 @@ class AgeTrajectorySettings:
             raise ConfigurationError(
                 "differential_expression.age_trajectory.reference_bin_start_age "
                 "must be a non-negative integer"
+            )
+        if (
+            not isinstance(self.strict_age_cutoff_exclusive, int)
+            or isinstance(self.strict_age_cutoff_exclusive, bool)
+            or self.strict_age_cutoff_exclusive <= self.reference_bin_start_age
+            or (
+                self.strict_age_cutoff_exclusive - self.reference_bin_start_age
+            ) % self.bin_width_years != 0
+        ):
+            raise ConfigurationError(
+                "differential_expression.age_trajectory.strict_age_cutoff_exclusive "
+                "must be greater than reference_bin_start_age and align with bin_width_years"
+            )
+        if (
+            not isinstance(self.cross_cell_type_residual_minimum_sample_coverage, (int, float))
+            or isinstance(self.cross_cell_type_residual_minimum_sample_coverage, bool)
+            or not 0 < self.cross_cell_type_residual_minimum_sample_coverage <= 1
+        ):
+            raise ConfigurationError(
+                "differential_expression.age_trajectory."
+                "cross_cell_type_residual_minimum_sample_coverage must be in (0, 1]"
             )
         for name in ("cluster_fdr_threshold", "de_fdr_threshold"):
             value = getattr(self, name)

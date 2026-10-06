@@ -30,7 +30,7 @@ TRAJECTORY_SETTINGS = AgeTrajectorySettings.from_mapping(
 )
 
 
-def test_age_trajectory_requires_seven_supported_bins_and_drops_sparse_bins() -> None:
+def test_age_trajectory_requires_seven_supported_bins_and_excludes_age_90_plus() -> None:
     ages = (
         [24] * 10 + [34] * 10 + [44] * 10 + [54] * 10 + [64] * 10
         + [74] * 10 + [84] * 10 + [94] * 9
@@ -47,8 +47,13 @@ def test_age_trajectory_requires_seven_supported_bins_and_drops_sparse_bins() ->
         "20-30", "30-40", "40-50", "50-60", "60-70",
         "70-80", "80-90",
     ]
-    assert support["dropped_bins"] == ["90-100"]
-    assert support["samples_in_dropped_bins"] == 9
+    assert support["dropped_bins"] == []
+    assert support["samples_in_dropped_bins"] == 0
+    assert support["samples_excluded_by_age_cutoff"] == 9
+    assert support["manually_excluded_age_bins"] == ["90-100"]
+    assert support["samples_in_manually_excluded_bins"] == 9
+    assert support["age_bin_counts_before_filtering"]["90-100"] == 9
+    assert support["n_samples_after_age_cutoff"] == 70
     assert support["n_samples_retained"] == 70
 
 
@@ -105,14 +110,14 @@ def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None
     first = ad.read_h5ad(first_path)
     second = ad.read_h5ad(second_path)
 
-    assert first.shape == (192, 96)
+    assert first.shape == (168, 96)
     assert first.obs["study"].nunique() == 3
     assert first.obs["study_site"].nunique() == 4
-    assert first.obs["sample"].nunique() == 32
+    assert first.obs["sample"].nunique() == 28
     assert first.obs["aifi_l2_majority"].nunique() == 2
     assert first.obs["n_cells"].min() == 15
     assert (first.obs["age"] >= 20).all()
-    assert first.obs.groupby(["study", "aifi_l2_majority"], observed=True).size().eq(32).all()
+    assert first.obs.groupby(["study", "aifi_l2_majority"], observed=True).size().eq(28).all()
     assert (first.obs["total_counts"] > 0).all()
     age_bin_counts = (
         first.obs.assign(age_bin=(first.obs["age"] // 10 * 10).astype(int))
@@ -125,7 +130,7 @@ def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None
     assert len(synthetic_metadata["expected_age_trajectory_profiles"]) == 5
     assert _default_samples_per_study(
         replace(TRAJECTORY_SETTINGS, minimum_samples_per_bin=13), study_count=3
-    ) == 40
+    ) == 35
     assert first.obs.groupby("study", observed=True)["bmi"].apply(
         lambda values: values.notna().any()
     ).to_dict() == {
@@ -143,7 +148,11 @@ def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None
         .groupby(["aifi_l2_majority", "study_site", "sex"], observed=True)
         .size()
     )
-    assert first_study_site_sex_counts.eq(8).all()
+    expected_samples_per_site_sex = (
+        TRAJECTORY_SETTINGS.strict_age_cutoff_exclusive
+        - TRAJECTORY_SETTINGS.reference_bin_start_age
+    ) // TRAJECTORY_SETTINGS.bin_width_years
+    assert first_study_site_sex_counts.eq(expected_samples_per_site_sex).all()
     assert first.obs.groupby("study", observed=True)["cmv"].apply(
         lambda values: values.notna().any()
     ).to_dict() == {

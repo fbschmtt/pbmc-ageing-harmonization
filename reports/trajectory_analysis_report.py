@@ -8,7 +8,6 @@
 # %%
 import json
 import os
-import re
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -25,7 +24,6 @@ cluster_means = pd.read_csv(analysis_dir / "cross_cell_type_cluster_means.csv")
 gene_recurrence = pd.read_csv(analysis_dir / "gene_recurrence.csv")
 pattern_concordance = pd.read_csv(analysis_dir / "gene_pattern_concordance.csv")
 cell_type_support = pd.DataFrame(metadata.get("cell_type_support", []))
-eligible_cell_types = metadata.get("cell_types_eligible_by_bin_support", [])
 common_bins = metadata.get("common_bins", [])
 cluster_fdr = metadata["cluster_fdr_threshold"]
 de_fdr = metadata["de_fdr_threshold"]
@@ -34,7 +32,6 @@ linkage_method = metadata["linkage_method"]
 minimum_umap_trajectories = metadata["minimum_umap_trajectories"]
 cross_report_top_n_genes = metadata["cross_report_top_n_genes"]
 residual_support = metadata.get("pearson_residual_clustering", {})
-residual_types = residual_support.get("cell_types", {})
 cross_residual_support = residual_support.get("cross_cell_type", {})
 
 # %% [markdown]
@@ -49,12 +46,17 @@ display(Markdown(
     f"Trajectory clustering uses omnibus FDR ≤ {cluster_fdr:g}; per-gene DE recurrence "
     f"counts use omnibus FDR < {de_fdr:g} within each cell type."
 ))
+display(Markdown(
+    f"Age-trajectory fits manually exclude the 90–100 bin and apply a strict age cutoff "
+    f"of < {metadata['strict_age_cutoff_exclusive']} years. Each retained bin must contain "
+    f"at least {metadata['minimum_samples_per_bin']} eligible pseudobulks. The support table "
+    "lists the pre-filter sample count in the manually excluded bin for every cell type."
+))
 if not cell_type_support.empty:
-    cell_type_support = cell_type_support.loc[
-        cell_type_support["cell_type"].isin(eligible_cell_types)
-    ]
-    if not cell_type_support.empty:
-        display(cell_type_support[["cell_type", "status", "retained_bins"]].fillna("—"))
+    display(cell_type_support[[
+        "cell_type", "status", "retained_bins",
+        "samples_in_manually_excluded_bins",
+    ]].fillna("—"))
 excluded = metadata.get("cell_types_excluded_from_cross_cell_type_analysis", {})
 if excluded:
     display(Markdown(
@@ -69,88 +71,102 @@ if excluded:
 # Values are Pearson residuals from the fitted age-bin model, including its
 # estimable age-bin, sex, study/site, and log10(total_counts) terms. PCA centers
 # the residual matrix and retains up to the configured number of components.
-# The cross-cell-type matrix uses the cell types that contribute to the
-# full-trajectory merge and samples present in every one of those types.
+# The cross-cell-type matrix iteratively drops the cell type with the fewest
+# fitted samples until the common sample set reaches the configured coverage.
 
 # %%
-def plot_residual_covariates(table, title, figsize=(14, 3.6)):
-    covariates = ["sex", "age", "log10_total_counts", "study"]
-    figure, axes = plt.subplots(1, 4, figsize=figsize)
-    for axis, covariate in zip(axes, covariates, strict=True):
-        values = table.dropna(subset=["umap_1", "umap_2", covariate]).copy()
-        if values.empty:
-            axis.text(0.5, 0.5, "No UMAP coordinates", ha="center", va="center")
+def plot_residual_covariates(table, title, covariates, *, categorical_covariates):
+    figure, axes = plt.subplots(2, 2, figsize=(16.8, 8.64))
+    for axis, covariate in zip(axes.flat, covariates):
+        if covariate not in table:
+            axis.text(0.5, 0.5, "Not recorded", ha="center", va="center")
             axis.set_axis_off()
             continue
-        categorical = covariate in {"sex", "study"}
+        values = table.dropna(subset=["umap_1", "umap_2", covariate]).copy()
+        if values.empty:
+            axis.text(0.5, 0.5, "No recorded values", ha="center", va="center")
+            axis.set_axis_off()
+            continue
+        categorical = covariate in categorical_covariates
         sns.scatterplot(
             data=values, x="umap_1", y="umap_2", hue=covariate,
             palette="tab20" if categorical else "viridis",
-            hue_norm=None, s=27, alpha=0.82, linewidth=0,
-            legend="brief", ax=axis,
+            s=32, alpha=0.84, linewidth=0, legend="brief", ax=axis,
         )
-        axis.set_title(covariate.replace("_", " "))
+        axis.set_title(f"{covariate.replace('_', ' ')} · {len(values)}/{len(table)} present")
         axis.set_xlabel("UMAP 1")
         axis.set_ylabel("UMAP 2")
         if categorical and axis.legend_ is not None:
             axis.legend_.set_title(covariate)
             axis.legend_.set_bbox_to_anchor((1.02, 1))
-    figure.suptitle(title, y=1.03)
+    for axis in axes.flat[len(covariates):]:
+        axis.set_axis_off()
+    figure.suptitle(title, y=1.01)
     figure.tight_layout()
     plt.show()
 
-
-if residual_types:
-    display(Markdown(
-        f"Pearson residual matrices were clustered for **{len(residual_types)} cell types**. "
-        f"PCA used up to {metadata['residual_pca_components']} components; each type's "
-        "actual component count is recorded in `analysis_metadata.json`."
-    ))
-    for cell_type, support in sorted(residual_types.items()):
-        slug = re.sub(r"[^a-z0-9]+", "-", cell_type.lower()).strip("-") or "unnamed"
-        cluster_path = analysis_dir / f"{slug}_residual_clusters.csv"
-        if not cluster_path.is_file():
-            continue
-        residual_clusters = pd.read_csv(cluster_path)
-        display(Markdown(
-            f"### {cell_type}\n\n{support['n_samples']} samples and "
-            f"{support['n_genes']:,} genes; PCA used {support.get('n_pcs_used', 0)} components. "
-            f"Cluster assignments are available in [{slug} residual clusters]"
-            f"({slug}_residual_clusters.csv)."
-        ))
-        plot_residual_covariates(residual_clusters, f"{cell_type}: residual sample UMAPs")
-else:
-    display(Markdown("_No completed age-bin fits with saved Pearson residuals are available._"))
-
 cross_residual_path = analysis_dir / "cross_cell_type_residual_clusters.csv"
-if cross_residual_path.is_file() and cross_residual_support.get("n_samples_common", 0) >= minimum_umap_trajectories:
+if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 0):
     cross_residual_clusters = pd.read_csv(cross_residual_path)
-    display(Markdown(
+    included_types = cross_residual_support.get("cell_types", [])
+    removed_types = cross_residual_support.get(
+        "removed_cell_types_for_sample_coverage", []
+    )
+    removed_summary = "; ".join(
+        f"{item['cell_type']} ({item['n_samples_available']} fitted samples; "
+        f"intersection then {item['n_samples_common_after_removal']} samples, "
+        f"{item['sample_coverage_after_removal']:.1%} coverage)"
+        for item in removed_types
+    )
+    residual_scope = (
         f"### Cross-cell-type residual clusters\n\nThe merged residual matrix uses "
-        f"{cross_residual_support['n_cell_types']} cell types that also contribute to the "
-        "full-trajectory merge and the "
-        f"{cross_residual_support['n_samples_common']} samples present in every included type. "
+        f"{cross_residual_support['n_cell_types']} cell types and "
+        f"{cross_residual_support['n_samples_common']} samples present in every included type "
+        f"({cross_residual_support.get('sample_coverage_fraction', 0):.1%} of the "
+        f"{cross_residual_support.get('n_samples_union', 0)} samples available across candidate types; "
+        f"target {cross_residual_support.get('minimum_sample_coverage', 0):.0%}). "
+        f"Included cell types: {', '.join(included_types)}. "
+        + (
+            "Types removed iteratively from lowest fitted-sample count: "
+            + removed_summary
+            + ". "
+            if removed_types else "No cell types were removed. "
+        )
+    )
+    if not cross_residual_support.get("minimum_sample_coverage_met", False):
+        residual_scope += (
+            "The coverage target was not reached after reducing to one cell type. "
+        )
+    residual_scope += (
         f"It has {cross_residual_support['n_genes']:,} cell-type × gene features; PCA used "
         f"{cross_residual_support.get('n_pcs_used', 0)} components. See the [cross-cell-type "
         "cluster assignments](cross_cell_type_residual_clusters.csv) and [wide Pearson "
         "residual matrix](cross_cell_type_pearson_residuals.npz)."
-    ))
-    plot_residual_covariates(
-        cross_residual_clusters, "Cross-cell-type residual sample UMAPs", figsize=(14, 3.8)
     )
-elif cross_residual_support.get("n_cell_types", 0):
-    display(Markdown(
-        "_The cross-cell-type residual set has fewer samples than required to compute UMAP._"
-    ))
-elif cross_residual_support.get("missing_cell_types"):
-    display(Markdown(
-        "_The cross-cell-type residual view was skipped because residual matrices are missing "
-        "for one or more cell types in the full-trajectory merge: "
-        f"{', '.join(cross_residual_support['missing_cell_types'])}._"
-    ))
+    display(Markdown(residual_scope))
+    if cross_residual_support.get("n_samples_common", 0) >= minimum_umap_trajectories:
+        plot_residual_covariates(
+            cross_residual_clusters,
+            "Cross-cell-type residual UMAPs: model covariates",
+            ["sex", "age", "log10_total_counts", "study"],
+            categorical_covariates={"sex", "study"},
+        )
+        if any(covariate in cross_residual_clusters for covariate in ("bmi", "cmv")):
+            plot_residual_covariates(
+                cross_residual_clusters,
+                "Cross-cell-type residual UMAPs: BMI and CMV coverage",
+                [covariate for covariate in ("bmi", "cmv")
+                 if covariate in cross_residual_clusters],
+                categorical_covariates={"cmv"},
+            )
+    else:
+        display(Markdown(
+            f"_The selected set has {cross_residual_support['n_samples_common']} samples; "
+            f"at least {minimum_umap_trajectories} are required to compute UMAP._"
+        ))
 else:
     display(Markdown(
-        "_No residual-bearing cell types also met the full-trajectory merge support criteria._"
+        "_No residual-bearing cell types are available for cross-cell-type clustering._"
     ))
 
 # %% [markdown]

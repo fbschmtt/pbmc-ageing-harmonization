@@ -631,10 +631,12 @@ PyDESeq2; all other CPU, time, and memory requests use the executor defaults.
 In addition to the continuous-age fit, each cell type gets an exploratory
 all-study age-trajectory fit with 10-year bins, adjusted for study site, sex,
 and log10(total_counts). It uses 20–30 as the zero reference, retains bins with at least
-10 eligible pseudobulks in each decade, and requires at least 7 retained bins
-out of the eight possible decades from 20–30 through 90–100; trajectory
-plots and cross-cell-type summaries include only types meeting that support
-threshold. These thresholds are configurable under
+10 eligible pseudobulks in each decade, explicitly removes the 90–100 bin,
+applies a strict age cutoff below 90, and requires all 7 possible bins from
+20–30 through 80–90. Reports show how many eligible pseudobulks were in the
+removed bin for each cell type. Trajectory plots and cross-cell-type summaries
+include only types meeting that support threshold. The age ceiling and support thresholds are recorded in
+`run_metadata.json` and configurable under
 `differential_expression.age_trajectory`. A joint Wald
 omnibus test asks whether any retained bin differs from the reference, with
 FDR correction across genes. The report displays significant trajectories
@@ -660,23 +662,26 @@ number of displayed genes and minimum UMAP point count. Per-cell-type
 cluster assignments, standardized profiles, UMAP coordinates, and cluster
 means are also written as CSVs beside each cell-type report; the cross-type
 assignments and means are available as CSVs beside the combined report.
-The combined report also analyzes sample-level Pearson residuals from the
-age-bin model. That model includes the age-bin factor, sex, log10(total counts),
+Each per-cell-type DE report clusters samples using Pearson residuals from its
+age-bin model. The model includes the age-bin factor, sex, log10(total counts),
 and study site when estimable, so residual patterns describe variation beyond
-the fitted age-bin means and other model covariates. It saves one compressed
-sample × gene residual matrix per cell type, then clusters samples after
-centered PCA (100 components by default, capped by the available dimensions).
-For each cell type, the report shows UMAPs colored by sex, age,
-log10(total counts), and study. The cross-type residual matrix uses exactly the
-cell types supported by the full-trajectory merge and only samples present in
-every included type. It is skipped if any required residual matrix is missing.
-Per-type matrices and their sample metadata are stored under each type's
-`combined/` directory; cluster assignments, PC scores, the cross-type matrix,
-and cross-type sample metadata are written under
-`differential_expression/trajectory_analysis/`. The combined report therefore
-clusters both cross-type gene trajectories and residual sample profiles; the
-residual analysis complements rather than replaces per-cell-type trajectory
-clustering. See [IMPLEMENTATION.md](IMPLEMENTATION.md#age-trajectory-settings)
+the fitted age-bin means and other model covariates. Clustering uses centered
+PCA (100 components by default, capped by the available dimensions); each
+report shows residual UMAPs colored by sex, age, log10(total counts), and study,
+plus a second view for residual clusters, BMI, and CMV that shows how many
+samples have each optional value. Cluster assignments and PCA scores are
+available alongside the report. The cross-cell-type trajectory report contains
+only the combined residual embedding. It starts with all cell types with
+residual fits, then drops the type with the fewest fitted samples until the
+common sample set covers at least 80% of the union of samples available across
+those types (or only one type remains). The report lists the included and
+removed types, sample counts, and achieved coverage.
+Per-type residual matrices and sample metadata are stored under each type's
+`combined/` directory; cross-type cluster assignments, PC scores, the merged
+matrix, and sample metadata are written under
+`differential_expression/trajectory_analysis/`. Residual analysis complements
+rather than replaces per-cell-type trajectory clustering. See
+[IMPLEMENTATION.md](IMPLEMENTATION.md#age-trajectory-settings)
 for the complete setting list and current defaults. Each cell type also renders
 one shared-age diagnostic figure: study-site age support, age against raw
 pseudobulk depth in the tested gene intersection,
@@ -689,10 +694,14 @@ covariate and contrast where that gene passes the FDR threshold; point position
 continues to show the combined-fit effect and adjusted p-value.
 
 Samples must be age 20 or older and have at least 10 cells in that
-sample × cell-type pseudobulk. Samples with missing/unknown sex metadata or
-zero counts over the fit's gene universe are also omitted. All sample
-exclusions and model fits that cannot estimate the configured covariates are
-recorded in the JSON manifest. CSV results and the manifest are published
+sample × cell-type pseudobulk. Samples missing required metadata or covariates,
+or with zero counts over the fit's gene universe, are also omitted. Optional
+covariate missingness receives additional handling within each study: a
+per-study model includes an optional covariate only when it varies in that
+study, and samples missing a covariate are omitted from fits that include it.
+Combined optional-covariate models use complete cases from studies that recorded
+the covariate. All sample exclusions and model fits that cannot estimate the
+configured covariates are recorded in the JSON manifest. CSV results and the manifest are published
 beneath `<outdir>/differential_expression/`; each cell-type directory also
 contains the task fit record (`cell_type_result.json`) used by the collector.
 
@@ -721,10 +730,10 @@ fits: bypassing the cell cutoff does not create additional independent samples
 or fix a rank-deficient age/sex design. `make run-de-synthetic-test` creates a
 small deterministic pseudobulk H5AD directly (the fixture is generated, not
 checked in, and does not pass through single-cell pseudobulking). It contains
-three synthetic studies, 32 independent samples per study and cell type under
-the current trajectory settings, balanced across the eight age decades, and at
-least 15 cells per pseudobulk. The sample count is derived from the configured
-per-bin support requirement.
+three synthetic studies, 28 independent samples per study and cell type under
+the current trajectory settings, balanced across seven age decades below 90.
+Each pseudobulk has at least 15 cells. The sample count is derived from the
+configured per-bin support requirement.
 That gives four samples per decade per study and 12 per decade pooled across
 studies before covariate-specific exclusions, enough to exercise the configured
 10-sample bin filter and seven-bin trajectory requirement.

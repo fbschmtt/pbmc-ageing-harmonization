@@ -100,13 +100,13 @@ merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
 - `reports/trajectory_analysis_report.py`: source notebook for the combined
   age-trajectory report.
 - `src/pbmc_pipeline/synthetic_de.py`: deterministic on-demand positive-fit
-  pseudobulk fixture generation (32 samples per study, balanced across eight
-  age decades); the generated H5AD is ignored output, not a checked-in fixture.
+  pseudobulk fixture generation (28 samples per study, balanced across seven
+  age decades below 90); the generated H5AD is ignored output, not a checked-in fixture.
 - `scripts/check_synthetic_de.py`: assertions used by `make run-all-test` and
   `make verify` for age, sex, BMI, and CMV marker detection; covariate-specific
   study selection; complete-case counts; and report output. The fixture uses
-  32 independent samples per study, balanced over the eight age decades, so it
-  meets the production trajectory support threshold.
+  28 independent samples per study, balanced over the seven age decades below
+  90, so it meets the production trajectory support threshold.
 - `src/pbmc_pipeline/reporting.py`: testable report data transformations.
 - `reports/merge_qc_report.py`: Jupytext source for the generated merge
   notebook. Report runners materialize these Python sources in a temporary
@@ -286,6 +286,8 @@ significance, clustering, and display choices. Current settings are:
 | `minimum_samples_per_bin` | 10 | Minimum eligible sample-by-cell-type pseudobulks for a bin to be retained. |
 | `minimum_bins` | 7 | Minimum retained bins for a cell type to enter trajectory displays and cross-type analyses. |
 | `reference_bin_start_age` | 20 | Start age of the zero-reference bin; this is `[20,30)` with the current width. |
+| `strict_age_cutoff_exclusive` | 90 | Samples with age ≥90 are excluded before trajectory binning and residual fitting. |
+| `cross_cell_type_residual_minimum_sample_coverage` | 0.8 | Target fraction of the union of fitted samples present in every cell type retained for the combined residual embedding. |
 | `cluster_fdr_threshold` | 0.001 | Omnibus adjusted-p-value cutoff for trajectories entering clustering. |
 | `de_fdr_threshold` | 0.05 | Omnibus adjusted-p-value cutoff for cross-type significance and recurrence summaries. |
 | `max_clusters` | 5 | Upper bound on hierarchical clusters. |
@@ -300,6 +302,11 @@ significance, clustering, and display choices. Current settings are:
 | `report_top_n_genes` | 30 | Maximum gene rows shown in a per-cell-type trajectory table. |
 | `cross_report_top_n_genes` | 100 | Maximum gene rows shown in cross-cell-type trajectory tables. |
 
+The 90–100 age bin is explicitly removed before trajectory fitting. Its sample
+count is measured before filtering and recorded per cell type in run_metadata.json;
+per-cell-type reports and the combined trajectory support table display that count.
+The strict age cutoff also excludes any eligible samples aged 100 or older.
+
 The omnibus test asks whether any retained age-bin coefficient differs from
 the reference bin; it tests any age-bin difference, including a monotone
 pattern, rather than only curvature beyond a linear trend. Standardized shapes
@@ -309,24 +316,28 @@ each cell type's bins-model Pearson residual matrix. For observed counts `y`,
 fitted means `mu`, and PyDESeq2 dispersions `alpha`, it stores Pearson residuals
 `(y - mu) / sqrt(mu + alpha * mu^2)` as float32 values in compressed NPZ files;
 sample identifiers and gene names are included, with sample covariates stored
-beside each matrix. The age-bin fit adjusts for age-bin, sex, log10(total
-counts), and study site when that term is estimable. Samples are clustered
+beside each matrix. The age-bin fit excludes samples aged 90 years or older,
+requires at least ten eligible pseudobulks in each retained bin, and adjusts for
+age-bin, sex, log10(total counts), and study site when that term is estimable. Samples are clustered
 using up to `residual_pca_components` centered PCA scores, then hierarchical
-clustering and UMAP use Euclidean distances in PC space. Four UMAP panels color
-each point by sex, age, log10(total counts), or study.
+clustering and UMAP use Euclidean distances in PC space. Each per-type report
+shows a 2 × 2 UMAP grid for sex, age, log10(total counts), and study, plus a
+second 2 × 2 grid for residual clusters, BMI, and CMV; BMI and CMV panels show
+recorded-value counts.
 
-The cross-type matrix uses exactly the cell types supported by the
-full-trajectory merge and aligns rows on study plus sample. It retains only
-samples present in every included type; if a supported type lacks residual
-artifacts, the merged residual analysis is skipped and the report names the
-missing type. Its wide columns are labeled `cell type::gene`. Per-type and
-cross-type cluster assignments, PC scores, matrices, and sample metadata are
-materialized for downstream analysis.
+The cross-type matrix starts with every cell type that has residual artifacts,
+then removes the type with the fewest fitted samples until samples present in
+every remaining type reach the configured fraction of the union sample set, or
+one type remains. Its report names included and removed types, the shared sample
+count, and achieved coverage. It contains a 2 × 2 UMAP grid for model covariates
+and a second grid for BMI and CMV coverage. Wide columns are labeled
+`cell type::gene`. Per-type and cross-type cluster assignments, PC scores,
+matrices, and sample metadata are materialized for downstream analysis.
 
 The positive synthetic DE fixture must retain at least seven supported bins
-under these production settings. It therefore creates 32 independent samples
-per study and cell type: four in each of eight decades across three studies,
-giving 12 combined samples per bin before any covariate-specific exclusions.
+under these production settings. It therefore creates 28 independent samples
+per study and cell type: four in each of seven decades below 90 across three
+studies, giving 12 combined samples per bin before any covariate-specific exclusions.
 The generator derives its sample count from `minimum_samples_per_bin` and the
 number of synthetic studies, then records the active trajectory settings and
 planted profiles in the fixture metadata. Keep the synthetic workflow report

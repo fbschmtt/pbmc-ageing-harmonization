@@ -108,6 +108,8 @@
       "minimum_samples_per_bin": 10,
       "minimum_bins": 7,
       "reference_bin_start_age": 20,
+      "strict_age_cutoff_exclusive": 90,
+      "cross_cell_type_residual_minimum_sample_coverage": 0.8,
       "cluster_fdr_threshold": 0.001,
       "de_fdr_threshold": 0.05,
       "max_clusters": 5,

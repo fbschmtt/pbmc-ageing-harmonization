@@ -195,6 +195,13 @@ def check_results(outdir: Path) -> None:
             if float(reference["trajectory_scaled"]) != 0.0:
                 raise SystemExit(f"Age trajectory for {gene!r} is not zero at 20–30")
             profile = np.asarray(trajectory_profiles[gene], dtype=float)
+            retained_indices = [
+                (int(age_bin.split("-", maxsplit=1)[0])
+                 - int(trajectory_model["reference_bin"].split("-", maxsplit=1)[0]))
+                // int(trajectory_model["bin_width_years"])
+                for age_bin in trajectory_model.get("retained_bins", [])
+            ]
+            profile = profile[retained_indices]
             expected_shape = np.log2(profile / profile[0])
             differences = np.diff(expected_shape)
             direction_changes = np.count_nonzero(

@@ -7,6 +7,8 @@ from scipy.stats import chi2
 
 from .config import AgeTrajectorySettings
 
+MANUALLY_EXCLUDED_AGE_BINS = ("90-100",)
+
 
 def benjamini_hochberg(pvalues: np.ndarray) -> np.ndarray:
     """Adjust finite p-values with Benjamini-Hochberg, preserving missing entries."""
@@ -76,10 +78,39 @@ def prepare_age_trajectory_metadata(
     metadata: pd.DataFrame,
     settings: AgeTrajectorySettings,
 ) -> tuple[pd.DataFrame | None, dict]:
-    """Retain sufficiently supported age bins and record why bins were dropped."""
+    """Apply the strict age ceiling, then retain sufficiently supported bins."""
     age = pd.to_numeric(metadata["age"], errors="coerce")
+    raw_starts = (
+        np.floor(age / settings.bin_width_years) * settings.bin_width_years
+    ).astype("Int64")
+    raw_age_bins = raw_starts.map(
+        lambda start: f"{int(start)}-{int(start) + settings.bin_width_years}"
+        if not pd.isna(start) else pd.NA
+    ).astype("string")
+    raw_observed_starts = raw_starts.dropna()
+    if raw_observed_starts.empty:
+        prefilter_bin_counts = {}
+    else:
+        raw_maximum_start = int(raw_observed_starts.max())
+        raw_candidate_bins = [
+            f"{start}-{start + settings.bin_width_years}"
+            for start in range(
+                settings.reference_bin_start_age,
+                raw_maximum_start + 1,
+                settings.bin_width_years,
+            )
+        ]
+        raw_counts = raw_age_bins.value_counts().to_dict()
+        prefilter_bin_counts = {
+            age_bin: int(raw_counts.get(age_bin, 0)) for age_bin in raw_candidate_bins
+        }
+    manually_excluded_count = int(raw_age_bins.isin(MANUALLY_EXCLUDED_AGE_BINS).sum())
+    age_cutoff_keep = age < settings.strict_age_cutoff_exclusive
+    excluded_by_age_cutoff = int((age.notna() & ~age_cutoff_keep).sum())
+    keep = age_cutoff_keep & ~raw_age_bins.isin(MANUALLY_EXCLUDED_AGE_BINS)
+    metadata = metadata.loc[keep].copy()
+    age = age.loc[keep]
     starts = (np.floor(age / settings.bin_width_years) * settings.bin_width_years).astype("Int64")
-    metadata = metadata.copy()
     metadata["age_bin"] = starts.map(
         lambda start: f"{int(start)}-{int(start) + settings.bin_width_years}"
         if not pd.isna(start) else pd.NA
@@ -94,6 +125,13 @@ def prepare_age_trajectory_metadata(
             "status": "skipped",
             "reason": "no samples have a valid age for decade binning",
             "reference_bin": reference_bin,
+            "strict_age_cutoff_exclusive": settings.strict_age_cutoff_exclusive,
+            "samples_excluded_by_age_cutoff": excluded_by_age_cutoff,
+            "n_samples_after_age_cutoff": len(metadata),
+            "minimum_samples_per_bin": settings.minimum_samples_per_bin,
+            "manually_excluded_age_bins": list(MANUALLY_EXCLUDED_AGE_BINS),
+            "samples_in_manually_excluded_bins": manually_excluded_count,
+            "age_bin_counts_before_filtering": prefilter_bin_counts,
             "age_bin_counts": {},
             "retained_bins": [],
             "dropped_bins": [],
@@ -115,6 +153,12 @@ def prepare_age_trajectory_metadata(
     dropped_bins = [age_bin for age_bin in candidate_bins if age_bin not in retained_bins]
     status = {
         "reference_bin": reference_bin,
+        "strict_age_cutoff_exclusive": settings.strict_age_cutoff_exclusive,
+        "samples_excluded_by_age_cutoff": excluded_by_age_cutoff,
+        "n_samples_after_age_cutoff": len(metadata),
+        "manually_excluded_age_bins": list(MANUALLY_EXCLUDED_AGE_BINS),
+        "samples_in_manually_excluded_bins": manually_excluded_count,
+        "age_bin_counts_before_filtering": prefilter_bin_counts,
         "bin_width_years": settings.bin_width_years,
         "minimum_samples_per_bin": settings.minimum_samples_per_bin,
         "minimum_bins": settings.minimum_bins,
