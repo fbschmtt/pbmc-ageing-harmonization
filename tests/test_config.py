@@ -36,8 +36,10 @@ def test_age_trajectory_report_and_clustering_choices_are_explicit_and_validated
     assert age_trajectory["linkage_method"] == "ward"
     assert age_trajectory["distance_metric"] == "euclidean"
     assert age_trajectory["minimum_umap_trajectories"] == 4
+    assert age_trajectory["residual_umap_neighbors"] == 50
     assert age_trajectory["report_top_n_genes"] == 30
     assert age_trajectory["cross_report_top_n_genes"] == 100
+    assert pipeline["differential_expression"]["expression_atlas"]["minimum_study_cell_type_total_counts"] == 1_000_000
 
     input_sources = read_json(ROOT / pipeline["input_sources"])
     invalid = copy.deepcopy(pipeline)

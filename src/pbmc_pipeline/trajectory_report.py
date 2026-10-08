@@ -8,7 +8,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .config import AgeTrajectorySettings, read_json
+from .config import AgeTrajectorySettings, ExpressionAtlasSettings, read_json
 from .trajectory_analysis import analyze_age_trajectories
 
 
@@ -16,6 +16,7 @@ def generate_trajectory_report(
     *,
     differential_expression_dir: Path,
     output_dir: Path,
+    pseudobulk_path: Path | None,
     config_path: Path,
     template_path: Path,
     project_root: Path,
@@ -28,6 +29,11 @@ def generate_trajectory_report(
     settings = AgeTrajectorySettings.from_mapping(
         pipeline["differential_expression"]["age_trajectory"]
     )
+    expression_atlas_settings = ExpressionAtlasSettings.from_mapping(
+        pipeline["differential_expression"]["expression_atlas"]
+    )
+    if pseudobulk_path is not None and not pseudobulk_path.exists():
+        raise FileNotFoundError(pseudobulk_path)
     output_dir.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["MPLCONFIGDIR"] = str((project_root / ".cache" / "matplotlib").resolve())
@@ -46,6 +52,9 @@ def generate_trajectory_report(
         differential_expression_dir,
         output_dir,
         settings,
+        pseudobulk_path=pseudobulk_path,
+        expression_atlas_settings=expression_atlas_settings,
+        split_by=pipeline["differential_expression"]["split_by"],
     )
     executed, html = output_dir / "executed.ipynb", output_dir / "report.html"
     with tempfile.TemporaryDirectory(prefix="pbmc-trajectory-notebook-") as temp_dir:
@@ -73,6 +82,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--differential-expression-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--pseudobulk-input", type=Path)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--template", type=Path, required=True)
     parser.add_argument("--project-root", type=Path, default=Path.cwd())
@@ -80,6 +90,7 @@ def main() -> None:
     print(generate_trajectory_report(
         differential_expression_dir=args.differential_expression_dir.resolve(),
         output_dir=args.output_dir.resolve(),
+        pseudobulk_path=args.pseudobulk_input.resolve() if args.pseudobulk_input else None,
         config_path=args.config.resolve(),
         template_path=args.template.resolve(),
         project_root=args.project_root.resolve(),

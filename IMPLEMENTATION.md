@@ -147,6 +147,7 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/differential_expression/differential_expression.json` (DE status and cell-type result index)
 - `<outdir>/differential_expression/trajectory_analysis/{report.html,executed.ipynb}` (combined trajectory report)
 - `<outdir>/differential_expression/trajectory_analysis/*.csv` (shared-bin cross-type clusters and means, gene-level DE recurrence, and cross-type pattern concordance)
+- `<outdir>/differential_expression/trajectory_analysis/expression_atlas_*.csv` (study-balanced common-gene expression matrix, depth support, gene-profile clusters, and independent 3′/5′ and intronic-read sensitivity summaries)
 - `<outdir>/differential_expression/trajectory_analysis/*_residual_{clusters,pc_scores}.csv` (per-cell-type sample cluster assignments and PCA scores)
 - `<outdir>/differential_expression/trajectory_analysis/cross_cell_type_pearson_residuals.npz` and residual metadata/cluster CSVs (wide matrix and analysis for shared samples across full-trajectory-supported cell types)
 - `<outdir>/run_manifest.json` (requested, selected, and skipped studies;
@@ -295,6 +296,7 @@ significance, clustering, and display choices. Current settings are:
 | `distance_metric` | `euclidean` | Profile distance. Supported values are `euclidean`, `cityblock`, `cosine`, and `correlation`; Ward, centroid, and median require Euclidean distance. |
 | `minimum_shared_bins` | 5 | Minimum common age bins required for the cross-cell-type trajectory comparison. |
 | `residual_pca_components` | 100 | Maximum number of centered PCA components used before clustering bins-model Pearson residuals by sample. The count is capped by the available samples and genes. |
+| `residual_umap_neighbors` | 50 | Neighbourhood size for residual-sample UMAPs; capped at one fewer than the available samples. |
 | `umap_neighbors` | 15 | UMAP neighborhood size. |
 | `minimum_umap_trajectories` | 4 | Minimum number of profiles required to compute UMAP coordinates. |
 | `umap_min_dist` | 0.15 | UMAP minimum-distance parameter. |
@@ -334,6 +336,29 @@ and a second grid for BMI and CMV coverage. Wide columns are labeled
 `cell type::gene`. Per-type and cross-type cluster assignments, PC scores,
 matrices, and sample metadata are materialized for downstream analysis.
 
+### Expression-atlas settings
+
+`differential_expression.expression_atlas` configures a descriptive,
+cross-cell-type expression summary in the combined trajectory report. It uses
+the gene intersection across all studies, pools raw counts to one study ×
+AIFI-L2 cell-type profile, applies the depth filter to that exact intersection,
+then calculates `log2(CPM + pseudocount)` and averages log values equally across
+retained studies. This is a relative expression measure, not calibrated
+absolute RNA abundance or a covariate-adjusted model.
+
+The current depth threshold is 1,000,000 counts, `cpm_pseudocount` is 1, and a
+cell type needs two retained studies. Genes with at least 1 CPM in one retained
+cell type enter average-linkage/correlation profile clustering, capped at eight
+clusters. The report separately contrasts the study-balanced 5′ and 3′
+matrices (`5′ − 3′`) and the intronic-read and non-intronic matrices
+(`intronic − non-intronic`). Both are calculated once each side has at least
+one depth-qualified study in a cell type. `minimum_studies_per_technology` is
+the two-study-per-side replication flag shown alongside each contrast, not an
+estimability gate: one-versus-one contrasts remain visible but are explicitly
+unreplicated. The two contrasts are non-interaction diagnostics; they do not
+split into technology × intronic groups. Both labels can be study-confounded,
+so neither contrast identifies a causal technical effect.
+
 The positive synthetic DE fixture must retain at least seven supported bins
 under these production settings. It therefore creates 28 independent samples
 per study and cell type: four in each of seven decades below 90 across three
@@ -341,7 +366,12 @@ studies, giving 12 combined samples per bin before any covariate-specific exclus
 The generator derives its sample count from `minimum_samples_per_bin` and the
 number of synthetic studies, then records the active trajectory settings and
 planted profiles in the fixture metadata. Keep the synthetic workflow report
-checks enabled when changing trajectory support or filtering behavior.
+checks enabled when changing trajectory support or filtering behavior. Its raw
+count scale makes each study × cell-type group pass the expression atlas's 1M
+gate; it labels two studies as 3′ and one as 5′, which exercises the atlas but
+only supports an explicitly unreplicated 3′/5′ contrast. It also labels one
+study as intronic and one as non-intronic for an independent, explicitly
+unreplicated intronic-read contrast.
 
 ## Running and verification
 

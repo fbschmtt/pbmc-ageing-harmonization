@@ -10,7 +10,8 @@ from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import pdist
 from sklearn.decomposition import PCA
 
-from .config import AgeTrajectorySettings
+from .config import AgeTrajectorySettings, ExpressionAtlasSettings
+from .expression_atlas import analyze_expression_atlas
 from .utils import slugify
 
 
@@ -106,7 +107,7 @@ def cluster_sample_residuals(
 
         embedding = umap.UMAP(
             n_components=2,
-            n_neighbors=min(settings.umap_neighbors, len(scores) - 1),
+            n_neighbors=min(settings.residual_umap_neighbors, len(scores) - 1),
             min_dist=settings.umap_min_dist,
             metric="euclidean",
             random_state=settings.random_state,
@@ -436,6 +437,10 @@ def analyze_age_trajectories(
     differential_expression_dir: Path,
     output_dir: Path,
     settings: AgeTrajectorySettings,
+    *,
+    pseudobulk_path: Path | None = None,
+    expression_atlas_settings: ExpressionAtlasSettings | None = None,
+    split_by: str = "aifi_l2_majority",
 ) -> dict:
     """Write shared-bin cross-type clusters, recurrence, and support summaries."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -475,6 +480,15 @@ def analyze_age_trajectories(
     _, _, residual_support = _read_cell_type_residuals(
         differential_expression_dir, settings, output_dir,
     )
+    if pseudobulk_path is not None and expression_atlas_settings is not None:
+        expression_atlas = analyze_expression_atlas(
+            pseudobulk_path, output_dir, expression_atlas_settings, split_by=split_by,
+        )
+    else:
+        expression_atlas = {
+            "status": "not_run",
+            "reason": "merged pseudobulk input was not supplied to the trajectory report",
+        }
     common_bins = cross["common_bins"]
     cross_profiles = cross["trajectories"]
     if not cross_profiles.empty:
@@ -551,6 +565,7 @@ def analyze_age_trajectories(
         "n_genes_tested_in_cross_cell_type_analysis": int(significance["gene"].nunique())
         if not significance.empty else 0,
         "pearson_residual_clustering": residual_support,
+        "expression_atlas": expression_atlas,
     }
     (output_dir / "analysis_metadata.json").write_text(
         json.dumps(analysis_metadata, indent=2) + "\n"

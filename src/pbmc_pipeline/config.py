@@ -37,6 +37,7 @@ class AgeTrajectorySettings:
     random_state: int
     minimum_shared_bins: int
     residual_pca_components: int
+    residual_umap_neighbors: int
 
     LINKAGE_METHODS: ClassVar[frozenset[str]] = frozenset({
         "single", "complete", "average", "weighted", "centroid", "median", "ward",
@@ -50,13 +51,14 @@ class AgeTrajectorySettings:
             "bin_width_years", "minimum_samples_per_bin", "minimum_bins",
             "max_clusters", "umap_neighbors", "minimum_umap_trajectories",
             "report_top_n_genes", "cross_report_top_n_genes", "minimum_shared_bins",
-            "residual_pca_components",
+            "residual_pca_components", "residual_umap_neighbors",
         )
         for name in positive_ints:
             value = getattr(self, name)
             minimum = 2 if name in {
                 "minimum_samples_per_bin", "minimum_bins", "max_clusters",
-                "umap_neighbors", "minimum_umap_trajectories", "minimum_shared_bins",
+                "umap_neighbors", "residual_umap_neighbors", "minimum_umap_trajectories",
+                "minimum_shared_bins",
             } else 1
             if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
                 raise ConfigurationError(
@@ -132,6 +134,55 @@ class AgeTrajectorySettings:
         if missing or unexpected:
             raise ConfigurationError(
                 "differential_expression.age_trajectory must define exactly the settings "
+                f"in the configuration model (missing={missing}, unexpected={unexpected})"
+            )
+        return cls(**mapping)
+
+    def to_mapping(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ExpressionAtlasSettings:
+    """Validated settings for descriptive cross-cell-type expression summaries."""
+
+    minimum_study_cell_type_total_counts: int
+    cpm_pseudocount: float
+    minimum_studies_per_cell_type: int
+    minimum_studies_per_technology: int
+    minimum_cpm_for_clustering: float
+    max_clusters: int
+    report_top_n_genes: int
+
+    def __post_init__(self) -> None:
+        for name, minimum in (
+            ("minimum_study_cell_type_total_counts", 1),
+            ("minimum_studies_per_cell_type", 2),
+            ("minimum_studies_per_technology", 2),
+            ("max_clusters", 2),
+            ("report_top_n_genes", 1),
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+                raise ConfigurationError(
+                    f"differential_expression.expression_atlas.{name} "
+                    f"must be an integer of at least {minimum}"
+                )
+        for name in ("cpm_pseudocount", "minimum_cpm_for_clustering"):
+            value = getattr(self, name)
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+                raise ConfigurationError(
+                    f"differential_expression.expression_atlas.{name} must be positive"
+                )
+
+    @classmethod
+    def from_mapping(cls, mapping: dict[str, Any]) -> ExpressionAtlasSettings:
+        expected = {field.name for field in fields(cls) if field.init}
+        missing = sorted(expected - mapping.keys())
+        unexpected = sorted(mapping.keys() - expected)
+        if missing or unexpected:
+            raise ConfigurationError(
+                "differential_expression.expression_atlas must define exactly the settings "
                 f"in the configuration model (missing={missing}, unexpected={unexpected})"
             )
         return cls(**mapping)
@@ -320,6 +371,12 @@ def validate_configuration(
                 "differential_expression.age_trajectory must be an object"
             )
         trajectory_settings = AgeTrajectorySettings.from_mapping(age_trajectory)
+        expression_atlas = differential_expression.get("expression_atlas")
+        if not isinstance(expression_atlas, dict):
+            raise ConfigurationError(
+                "differential_expression.expression_atlas must be an object"
+            )
+        ExpressionAtlasSettings.from_mapping(expression_atlas)
         reference_start = trajectory_settings.reference_bin_start_age
         bin_width = trajectory_settings.bin_width_years
         minimum_age = differential_expression.get("sample_inclusion", {}).get(

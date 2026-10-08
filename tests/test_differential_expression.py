@@ -115,10 +115,24 @@ def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None
     assert first.obs["study_site"].nunique() == 4
     assert first.obs["sample"].nunique() == 28
     assert first.obs["aifi_l2_majority"].nunique() == 2
+    assert first.obs.groupby("study", observed=True)["technology"].first().to_dict() == {
+        "synthetic_study_a": "10X3'v2",
+        "synthetic_study_b": "10X5'v2",
+        "synthetic_study_c": "10X3'v3",
+    }
+    assert first.obs.groupby("study", observed=True)["include_intronic"].first().to_dict() == {
+        "synthetic_study_a": "yes",
+        "synthetic_study_b": "no",
+        "synthetic_study_c": "not_provided",
+    }
     assert first.obs["n_cells"].min() == 15
     assert (first.obs["age"] >= 20).all()
     assert first.obs.groupby(["study", "aifi_l2_majority"], observed=True).size().eq(28).all()
     assert (first.obs["total_counts"] > 0).all()
+    assert (
+        first.obs.groupby(["study", "aifi_l2_majority"], observed=True)["total_counts"]
+        .sum().ge(1_000_000).all()
+    )
     age_bin_counts = (
         first.obs.assign(age_bin=(first.obs["age"] // 10 * 10).astype(int))
         .groupby(["aifi_l2_majority", "age_bin"], observed=True)
@@ -127,6 +141,7 @@ def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None
     assert age_bin_counts.eq(12).all()
     synthetic_metadata = first.uns["synthetic_test_data"]
     assert synthetic_metadata["age_trajectory_settings"] == TRAJECTORY_SETTINGS.to_mapping()
+    assert synthetic_metadata["count_scale_factor"] == 5
     assert len(synthetic_metadata["expected_age_trajectory_profiles"]) == 5
     assert _default_samples_per_study(
         replace(TRAJECTORY_SETTINGS, minimum_samples_per_bin=13), study_count=3

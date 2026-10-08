@@ -211,12 +211,12 @@ check-trajectory-report-prerequisites:
 	fi
 
 render-trajectory-report: check-trajectory-report-prerequisites image-python ## Rerender the cross-cell-type trajectory report from existing DE results
-	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) pbmc-trajectory-report --differential-expression-dir "$(DE_RESULTS_DIR)" --output-dir "$(DE_RESULTS_DIR)/trajectory_analysis" --config config/pipeline.json --template reports/trajectory_analysis_report.py --project-root /work
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) pbmc-trajectory-report --differential-expression-dir "$(DE_RESULTS_DIR)" --pseudobulk-input "$(PSEUDOBULK_INPUT)" --output-dir "$(DE_RESULTS_DIR)/trajectory_analysis" --config config/pipeline.json --template reports/trajectory_analysis_report.py --project-root /work
 
 render-trajectory-report-test: OUTDIR = output/test
 render-trajectory-report-test: DE_RESULTS_DIR = $(OUTDIR)/differential_expression
-render-trajectory-report-test: check-trajectory-report-prerequisites image-python ## Rerender the test trajectory report from existing synthetic DE results
-	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) pbmc-trajectory-report --differential-expression-dir "$(DE_RESULTS_DIR)" --output-dir "$(DE_RESULTS_DIR)/trajectory_analysis" --config config/pipeline.json --template reports/trajectory_analysis_report.py --project-root /work
+render-trajectory-report-test: check-trajectory-report-prerequisites image-python ## Rerender the test trajectory report from existing DE results
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) pbmc-trajectory-report --differential-expression-dir "$(DE_RESULTS_DIR)" --pseudobulk-input "$(PSEUDOBULK_INPUT)" --output-dir "$(DE_RESULTS_DIR)/trajectory_analysis" --config config/pipeline.json --template reports/trajectory_analysis_report.py --project-root /work
 
 split-cell-types: $(PYTHON_CONTAINER_PREREQS) ## Create reusable raw-count cell-type splits from an existing merged H5AD
 	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(MERGED_INPUT)" --split_only --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume

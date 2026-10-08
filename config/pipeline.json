@@ -122,7 +122,17 @@
       "cross_report_top_n_genes": 100,
       "random_state": 413,
       "minimum_shared_bins": 5,
-      "residual_pca_components": 100
+      "residual_pca_components": 100,
+      "residual_umap_neighbors": 50
+    },
+    "expression_atlas": {
+      "minimum_study_cell_type_total_counts": 1000000,
+      "cpm_pseudocount": 1.0,
+      "minimum_studies_per_cell_type": 2,
+      "minimum_studies_per_technology": 2,
+      "minimum_cpm_for_clustering": 1.0,
+      "max_clusters": 8,
+      "report_top_n_genes": 200
     },
     "optional_covariates": ["bmi", "cmv"],
     "alpha": 0.05,

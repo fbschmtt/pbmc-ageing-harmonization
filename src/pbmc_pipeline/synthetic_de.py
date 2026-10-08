@@ -18,6 +18,19 @@ TRAJECTORY_PROFILE_MULTIPLIERS = [
     [1.0, 2.2, 0.6, 0.6, 2.5, 1.0, 2.1],
     [1.0, 0.5, 2.2, 0.5, 1.7, 2.5, 0.55],
 ]
+SYNTHETIC_STUDY_TECHNOLOGIES = {
+    "synthetic_study_a": "10X3'v2",
+    "synthetic_study_b": "10X5'v2",
+    "synthetic_study_c": "10X3'v3",
+}
+SYNTHETIC_STUDY_INTRONIC_STATUS = {
+    "synthetic_study_a": "yes",
+    "synthetic_study_b": "no",
+    "synthetic_study_c": "not_provided",
+}
+# This fixture also exercises the production 1M-count expression-atlas gate.
+# Scaling after sampling preserves the original seeded DE signal exactly.
+SYNTHETIC_COUNT_SCALE_FACTOR = 5
 
 
 def _default_samples_per_study(settings: AgeTrajectorySettings, study_count: int) -> int:
@@ -52,7 +65,7 @@ def create_synthetic_pseudobulk(
     Keep the planted non-linear profiles aligned with the production age-bin model;
     ``check_synthetic_de.py`` verifies that the fitted coefficients recover them.
     """
-    studies = ["synthetic_study_a", "synthetic_study_b", "synthetic_study_c"]
+    studies = list(SYNTHETIC_STUDY_TECHNOLOGIES)
     if samples_per_study is None:
         samples_per_study = _default_samples_per_study(trajectory_settings, len(studies))
     if samples_per_study < 6:
@@ -171,10 +184,15 @@ def create_synthetic_pseudobulk(
                 mean[unavailable] = 0
                 size = 1.0 / alpha
                 probability = size / (size + mean)
-                counts = rng.negative_binomial(size, probability).astype(np.int32)
+                counts = (
+                    rng.negative_binomial(size, probability).astype(np.int32)
+                    * SYNTHETIC_COUNT_SCALE_FACTOR
+                )
                 rows.append(
                     {
                         "study": study,
+                        "technology": SYNTHETIC_STUDY_TECHNOLOGIES[study],
+                        "include_intronic": SYNTHETIC_STUDY_INTRONIC_STATUS[study],
                         "study_site": study_site,
                         "sample": sample,
                         "age": float(age),
@@ -215,6 +233,9 @@ def create_synthetic_pseudobulk(
         "samples_per_study": int(samples_per_study),
         "age_trajectory_settings": trajectory_settings.to_mapping(),
         "cells_per_pseudobulk": int(cells_per_pseudobulk),
+        "study_technologies": SYNTHETIC_STUDY_TECHNOLOGIES,
+        "study_intronic_status": SYNTHETIC_STUDY_INTRONIC_STATUS,
+        "count_scale_factor": SYNTHETIC_COUNT_SCALE_FACTOR,
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
     adata.write_h5ad(output_path, compression="gzip")

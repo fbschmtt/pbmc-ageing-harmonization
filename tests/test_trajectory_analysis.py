@@ -4,10 +4,13 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
+import anndata as ad
 import numpy as np
 import pandas as pd
+from scipy import sparse
 
-from pbmc_pipeline.config import AgeTrajectorySettings, read_json
+from pbmc_pipeline.config import AgeTrajectorySettings, ExpressionAtlasSettings, read_json
+from pbmc_pipeline.expression_atlas import analyze_expression_atlas
 from pbmc_pipeline.trajectory_analysis import (
     analyze_age_trajectories,
     build_cross_cell_type_trajectories,
@@ -18,6 +21,87 @@ ROOT = Path(__file__).resolve().parents[1]
 SETTINGS = AgeTrajectorySettings.from_mapping(
     read_json(ROOT / "config/pipeline.json")["differential_expression"]["age_trajectory"]
 )
+ATLAS_SETTINGS = ExpressionAtlasSettings.from_mapping(
+    read_json(ROOT / "config/pipeline.json")["differential_expression"]["expression_atlas"]
+)
+
+
+def test_expression_atlas_uses_common_genes_depth_gate_and_technology_contrast(tmp_path) -> None:
+    rows = []
+    counts = []
+    for study, technology, cell_type, values in [
+        ("three_a", "10X3'v2", "Type A", [80, 20, 0]),
+        ("three_b", "10X3'v2", "Type A", [60, 40, 0]),
+        ("five_a", "10X5'v2", "Type A", [20, 80, 0]),
+        ("five_b", "10X5'v2", "Type A", [30, 70, 0]),
+        ("three_a", "10X3'v2", "Type B", [20, 80, 0]),
+        ("three_b", "10X3'v2", "Type B", [30, 70, 0]),
+        ("five_a", "10X5'v2", "Type B", [80, 20, 0]),
+        ("five_b", "10X5'v2", "Type B", [60, 40, 0]),
+    ]:
+        rows.append({"study": study, "technology": technology, "aifi_l2_majority": cell_type})
+        counts.append(values)
+    pseudobulk = ad.AnnData(
+        X=sparse.csr_matrix(np.asarray(counts)),
+        obs=pd.DataFrame(rows),
+        var=pd.DataFrame(
+            {f"available_in_{study}": [True, True, True] for study in sorted({row["study"] for row in rows})},
+            index=["G1", "G2", "G3"],
+        ),
+    )
+    pseudobulk_path = tmp_path / "pseudobulk.h5ad"
+    pseudobulk.write_h5ad(pseudobulk_path)
+    output_dir = tmp_path / "atlas"
+
+    metadata = analyze_expression_atlas(
+        pseudobulk_path,
+        output_dir,
+        replace(
+            ATLAS_SETTINGS,
+            minimum_study_cell_type_total_counts=100,
+            report_top_n_genes=10,
+        ),
+        split_by="aifi_l2_majority",
+    )
+
+    assert metadata["status"] == "complete"
+    assert metadata["n_depth_qualified_groups"] == 8
+    matrix = pd.read_csv(output_dir / "expression_atlas_matrix.csv", index_col="gene")
+    expected = np.mean(np.log2(np.array([800_000, 600_000, 200_000, 300_000]) + 1))
+    assert np.isclose(matrix.loc["G1", "Type A"], expected)
+    support = pd.read_csv(output_dir / "expression_atlas_study_support.csv")
+    assert support["retained_by_depth_gate"].all()
+    contrast = pd.read_csv(output_dir / "expression_atlas_technology_contrast.csv")
+    assert (contrast.loc[(contrast["gene"] == "G1") & (contrast["cell_type"] == "Type A"), "log2_cpm_difference_5_prime_minus_3_prime"] < 0).all()
+    assert (output_dir / "expression_atlas_gene_clusters.csv").is_file()
+
+    skipped_output_dir = tmp_path / "skipped_atlas"
+    skipped = analyze_expression_atlas(
+        pseudobulk_path,
+        skipped_output_dir,
+        replace(ATLAS_SETTINGS, minimum_study_cell_type_total_counts=10_000),
+        split_by="aifi_l2_majority",
+    )
+    assert skipped["status"] == "skipped"
+    assert pd.read_csv(skipped_output_dir / "expression_atlas_gene_clusters.csv").empty
+    assert pd.read_csv(skipped_output_dir / "expression_atlas_technology_contrast.csv").empty
+
+    missing_technology = pseudobulk.copy()
+    missing_technology.obs = missing_technology.obs.drop(columns=["technology"])
+    missing_technology_path = tmp_path / "pseudobulk_without_technology.h5ad"
+    missing_technology.write_h5ad(missing_technology_path)
+    unknown_technology_output_dir = tmp_path / "unknown_technology_atlas"
+    unknown_technology = analyze_expression_atlas(
+        missing_technology_path,
+        unknown_technology_output_dir,
+        replace(ATLAS_SETTINGS, minimum_study_cell_type_total_counts=100),
+        split_by="aifi_l2_majority",
+    )
+    assert unknown_technology["status"] == "complete"
+    assert unknown_technology["technology_available"] is False
+    assert pd.read_csv(
+        unknown_technology_output_dir / "expression_atlas_technology_contrast.csv"
+    ).empty
 
 
 def test_hierarchical_trajectory_clusters_and_umap_use_complete_profiles() -> None:

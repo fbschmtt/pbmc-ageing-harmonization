@@ -45,6 +45,7 @@ workflow {
     )
     RENDER_CROSS_CELL_TYPE_TRAJECTORY_REPORT(
         WRITE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION_MANIFEST.out.results,
+        pseudobulk_input,
         pipeline_config,
         trajectory_report_template,
     )

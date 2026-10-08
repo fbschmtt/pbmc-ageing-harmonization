@@ -33,6 +33,29 @@ minimum_umap_trajectories = metadata["minimum_umap_trajectories"]
 cross_report_top_n_genes = metadata["cross_report_top_n_genes"]
 residual_support = metadata.get("pearson_residual_clustering", {})
 cross_residual_support = residual_support.get("cross_cell_type", {})
+expression_atlas_support = metadata.get("expression_atlas", {})
+expression_matrix_path = analysis_dir / "expression_atlas_matrix.csv"
+expression_clusters_path = analysis_dir / "expression_atlas_gene_clusters.csv"
+expression_cluster_means_path = analysis_dir / "expression_atlas_cluster_means.csv"
+expression_technology_contrast_path = analysis_dir / "expression_atlas_technology_contrast.csv"
+expression_technology_summary_path = analysis_dir / "expression_atlas_technology_summary.csv"
+expression_intronic_contrast_path = analysis_dir / "expression_atlas_intronic_contrast.csv"
+expression_intronic_summary_path = analysis_dir / "expression_atlas_intronic_summary.csv"
+
+
+def read_optional_csv(path, **kwargs):
+    if not path.is_file() or not path.stat().st_size:
+        return pd.DataFrame()
+    return pd.read_csv(path, **kwargs)
+
+
+expression_matrix = read_optional_csv(expression_matrix_path, index_col="gene")
+expression_clusters = read_optional_csv(expression_clusters_path)
+expression_cluster_means = read_optional_csv(expression_cluster_means_path)
+expression_technology_contrast = read_optional_csv(expression_technology_contrast_path)
+expression_technology_summary = read_optional_csv(expression_technology_summary_path)
+expression_intronic_contrast = read_optional_csv(expression_intronic_contrast_path)
+expression_intronic_summary = read_optional_csv(expression_intronic_summary_path)
 
 # %% [markdown]
 # ## Support and scope
@@ -65,6 +88,208 @@ if excluded:
     ))
 
 # %% [markdown]
+# ## Study-balanced cell-type expression atlas
+#
+# This descriptive atlas is separate from differential expression. It uses only
+# genes present in every study, sums counts within each study × cell type, drops
+# groups below the configured depth threshold, computes `log2(CPM + pseudocount)`,
+# and then averages those values equally across studies.
+
+# %%
+if expression_atlas_support.get("status") == "complete" and not expression_matrix.empty:
+    display(Markdown(
+        f"The atlas uses **{expression_atlas_support['n_shared_genes']:,} genes** shared by every "
+        f"study. It retained **{expression_atlas_support['n_depth_qualified_groups']:,}** of "
+        f"{expression_atlas_support['n_study_cell_type_groups']:,} study × cell-type groups with at least "
+        f"{expression_atlas_support['minimum_study_cell_type_total_counts']:,} counts in that gene "
+        f"intersection. Values are `log2(CPM + {expression_atlas_support['cpm_pseudocount']:g})`, "
+        f"averaged equally over studies; each displayed cell type has at least "
+        f"{expression_atlas_support['minimum_studies_per_cell_type']} retained studies. "
+        "They are relative, study-balanced expression summaries rather than calibrated absolute RNA abundance."
+    ))
+    if not expression_clusters.empty:
+        display(Markdown(
+            f"Genes with CPM ≥ {expression_atlas_support['minimum_cpm_for_clustering']:g} in at least one "
+            f"cell type were row-standardized and grouped into up to "
+            f"{expression_atlas_support['max_clusters']} average-linkage correlation clusters. "
+            f"Showing the {min(expression_atlas_support['report_top_n_genes'], len(expression_clusters)):,} "
+            "most variable clustered genes."
+        ))
+        z_columns = [f"z_{column}" for column in expression_matrix.columns if f"z_{column}" in expression_clusters]
+        heatmap_rows = expression_clusters.sort_values(
+            ["expression_cluster", "profile_sd", "gene"], ascending=[True, False, True], kind="stable"
+        ).head(expression_atlas_support["report_top_n_genes"])
+        if z_columns and not heatmap_rows.empty:
+            figure, axis = plt.subplots(
+                figsize=(max(8, 0.95 * len(z_columns) + 3), max(5, 0.18 * len(heatmap_rows) + 2)),
+            )
+            sns.heatmap(
+                heatmap_rows.set_index("gene")[z_columns].rename(columns=lambda name: name.removeprefix("z_")),
+                cmap="vlag", center=0, yticklabels=True,
+                cbar_kws={"label": "Expression profile (within-gene SD units)"}, ax=axis,
+            )
+            axis.set_xlabel("Cell type")
+            axis.set_ylabel("Gene")
+            axis.set_title("Cell-type expression-profile clusters")
+            figure.tight_layout()
+            plt.show()
+        if not expression_cluster_means.empty:
+            display(expression_cluster_means)
+    display(Markdown(
+        "Download the [study-balanced expression matrix](expression_atlas_matrix.csv), "
+        "[study × cell-type depth support](expression_atlas_study_support.csv), and "
+        "[gene-cluster assignments](expression_atlas_gene_clusters.csv)."
+    ))
+else:
+    display(Markdown(
+        "_The expression atlas was not produced: "
+        + expression_atlas_support.get("reason", "no merged pseudobulk input was supplied")
+        + "_"
+    ))
+
+# %% [markdown]
+# ### 3′/5′ technology-associated contrast
+#
+# This sensitivity analysis calculates the difference between separately
+# study-balanced 5′ and 3′ matrices. Technology is commonly study-confounded,
+# so the contrast is descriptive and not an identified causal technology effect.
+
+# %%
+if not expression_technology_summary.empty and not expression_technology_contrast.empty:
+    technology_support = expression_technology_contrast[[
+        "cell_type", "n_studies_3_prime", "n_studies_5_prime",
+        "meets_configured_study_replication",
+    ]].drop_duplicates().sort_values("cell_type", kind="stable")
+    display(Markdown(
+        "This contrast is computed whenever at least one depth-qualified study exists in "
+        "each technology family. The configured two-study threshold is a replication flag, "
+        "not an estimability gate."
+    ))
+    display(technology_support)
+    figure, axis = plt.subplots(figsize=(7.5, 4.8))
+    sns.scatterplot(
+        data=expression_technology_summary,
+        x="mean_log2_cpm_across_technologies",
+        y="median_log2_cpm_difference_5_prime_minus_3_prime",
+        size="n_cell_types_with_technology_contrast",
+        sizes=(8, 42), alpha=0.6, linewidth=0, legend=False, ax=axis,
+    )
+    axis.axhline(0, color="#555555", linestyle="--", linewidth=0.8)
+    axis.set_xlabel("Mean log2(CPM + pseudocount)")
+    axis.set_ylabel("Median 5′ − 3′ log2(CPM + pseudocount)")
+    axis.set_title("Technology-associated expression contrast")
+    figure.tight_layout()
+    plt.show()
+    top_contrast_genes = expression_technology_summary.assign(
+        absolute_difference=lambda table: table["median_log2_cpm_difference_5_prime_minus_3_prime"].abs()
+    ).sort_values("absolute_difference", ascending=False, kind="stable").head(
+        expression_atlas_support.get("report_top_n_genes", 200)
+    )["gene"]
+    contrast_heatmap = expression_technology_contrast.loc[
+        expression_technology_contrast["gene"].isin(top_contrast_genes)
+    ].pivot(index="gene", columns="cell_type", values="log2_cpm_difference_5_prime_minus_3_prime")
+    if not contrast_heatmap.empty:
+        contrast_heatmap = contrast_heatmap.reindex(top_contrast_genes.drop_duplicates())
+        figure, axis = plt.subplots(
+            figsize=(max(8, 0.95 * contrast_heatmap.shape[1] + 3), max(5, 0.18 * contrast_heatmap.shape[0] + 2)),
+        )
+        sns.heatmap(
+            contrast_heatmap, cmap="vlag", center=0,
+            cbar_kws={"label": "5′ − 3′ log2(CPM + pseudocount)"}, ax=axis,
+        )
+        axis.set_xlabel("Cell type")
+        axis.set_ylabel("Gene")
+        axis.set_title("Largest technology-associated contrasts")
+        figure.tight_layout()
+        plt.show()
+    display(Markdown(
+        "Download the [cell-type contrast matrix](expression_atlas_technology_contrast.csv) "
+        "and [per-gene contrast/profile-concordance summary](expression_atlas_technology_summary.csv)."
+    ))
+else:
+    technology_contrast_reason = expression_atlas_support.get("technology_contrast_reason")
+    if not technology_contrast_reason:
+        technology_contrast_reason = (
+            "fewer than the configured number of depth-qualified studies supported one or both "
+            "technology families for the same cell type"
+        )
+    display(Markdown(
+        f"_No 3′/5′ contrast is available: {technology_contrast_reason}._"
+    ))
+
+# %% [markdown]
+# ### Intronic-read inclusion contrast
+#
+# This is a separate, non-interaction sensitivity analysis: it contrasts studies
+# whose alignment counted intronic reads with those that did not. It does not
+# condition on or combine that label with the 3′/5′ technology contrast.
+
+# %%
+if not expression_intronic_summary.empty and not expression_intronic_contrast.empty:
+    intronic_support = expression_intronic_contrast[[
+        "cell_type", "n_studies_intronic", "n_studies_non_intronic",
+        "meets_configured_study_replication",
+    ]].drop_duplicates().sort_values("cell_type", kind="stable")
+    display(Markdown(
+        "This independent contrast is `intronic − non-intronic` on separately "
+        "study-balanced log2(CPM + pseudocount) matrices. As for 3′/5′, a one-versus-one "
+        "comparison is estimable but is flagged as unreplicated."
+    ))
+    display(intronic_support)
+    figure, axis = plt.subplots(figsize=(7.5, 4.8))
+    sns.scatterplot(
+        data=expression_intronic_summary,
+        x="mean_log2_cpm_across_intronic_status",
+        y="median_log2_cpm_difference_intronic_minus_non_intronic",
+        size="n_cell_types_with_intronic_contrast",
+        sizes=(8, 42), alpha=0.6, linewidth=0, legend=False, ax=axis,
+    )
+    axis.axhline(0, color="#555555", linestyle="--", linewidth=0.8)
+    axis.set_xlabel("Mean log2(CPM + pseudocount)")
+    axis.set_ylabel("Median intronic − non-intronic log2(CPM + pseudocount)")
+    axis.set_title("Intronic-read inclusion expression contrast")
+    figure.tight_layout()
+    plt.show()
+    top_intronic_genes = expression_intronic_summary.assign(
+        absolute_difference=lambda table: table[
+            "median_log2_cpm_difference_intronic_minus_non_intronic"
+        ].abs()
+    ).sort_values("absolute_difference", ascending=False, kind="stable").head(
+        expression_atlas_support.get("report_top_n_genes", 200)
+    )["gene"]
+    intronic_heatmap = expression_intronic_contrast.loc[
+        expression_intronic_contrast["gene"].isin(top_intronic_genes)
+    ].pivot(
+        index="gene", columns="cell_type",
+        values="log2_cpm_difference_intronic_minus_non_intronic",
+    )
+    if not intronic_heatmap.empty:
+        intronic_heatmap = intronic_heatmap.reindex(top_intronic_genes.drop_duplicates())
+        figure, axis = plt.subplots(
+            figsize=(max(8, 0.95 * intronic_heatmap.shape[1] + 3), max(5, 0.18 * intronic_heatmap.shape[0] + 2)),
+        )
+        sns.heatmap(
+            intronic_heatmap, cmap="vlag", center=0,
+            cbar_kws={"label": "Intronic − non-intronic log2(CPM + pseudocount)"}, ax=axis,
+        )
+        axis.set_xlabel("Cell type")
+        axis.set_ylabel("Gene")
+        axis.set_title("Largest intronic-read inclusion contrasts")
+        figure.tight_layout()
+        plt.show()
+    display(Markdown(
+        "Download the [cell-type intronic contrast matrix](expression_atlas_intronic_contrast.csv) "
+        "and [per-gene intronic contrast summary](expression_atlas_intronic_summary.csv)."
+    ))
+else:
+    intronic_contrast_reason = expression_atlas_support.get("intronic_contrast_reason")
+    if not intronic_contrast_reason:
+        intronic_contrast_reason = "no cell type had both depth-qualified intronic and non-intronic studies"
+    display(Markdown(
+        f"_No intronic-read inclusion contrast is available: {intronic_contrast_reason}._"
+    ))
+
+# %% [markdown]
 # ## Sample clustering from bins-model Pearson residuals
 #
 # Per-cell-type matrices contain one sample per row and one gene per column.
@@ -73,6 +298,16 @@ if excluded:
 # the residual matrix and retains up to the configured number of components.
 # The cross-cell-type matrix iteratively drops the cell type with the fewest
 # fitted samples until the common sample set reaches the configured coverage.
+
+# %%
+residual_parameters = pd.DataFrame([
+    ("Residual model", "Age bin + sex + log10(total counts) + study site when estimable"),
+    ("Residual feature filter", "Finite fitted mean/dispersion and positive fitted variance; no HVG filter"),
+    ("PCA", f"Centered, unscaled Pearson residuals; up to {metadata['residual_pca_components']} components"),
+    ("Hierarchical clustering", f"{linkage_method} linkage; Euclidean distance in PC space; at most {metadata['max_clusters']} clusters"),
+    ("Residual UMAP", f"2D Euclidean PC-space UMAP; {metadata['residual_umap_neighbors']} neighbors (capped at samples − 1); min_dist={metadata['umap_min_dist']}; seed={metadata['random_state']}"),
+], columns=["Parameter", "Current value"])
+display(residual_parameters)
 
 # %%
 def plot_residual_covariates(table, title, covariates, *, categorical_covariates):
@@ -144,7 +379,34 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
         "residual matrix](cross_cell_type_pearson_residuals.npz)."
     )
     display(Markdown(residual_scope))
+    residual_cluster_sizes = (
+        cross_residual_clusters["residual_cluster"].value_counts(sort=False)
+        .rename_axis("residual_cluster").reset_index(name="n_samples")
+        .sort_values("n_samples", ascending=False, kind="stable")
+    )
+    residual_cluster_sizes["fraction_of_samples"] = (
+        residual_cluster_sizes["n_samples"] / len(cross_residual_clusters)
+    )
+    display(Markdown(
+        "Residual-cluster sizes are shown explicitly so very small outlier groups can be "
+        "distinguished from broad structure. They remain descriptive unless a measured "
+        "covariate or follow-up QC supports an explanation."
+    ))
+    display(residual_cluster_sizes)
     if cross_residual_support.get("n_samples_common", 0) >= minimum_umap_trajectories:
+        figure, axis = plt.subplots(figsize=(6.6, 4.8))
+        sns.scatterplot(
+            data=cross_residual_clusters, x="umap_1", y="umap_2", hue="residual_cluster",
+            palette="tab20", s=32, alpha=0.84, linewidth=0, ax=axis,
+        )
+        axis.set_title("Cross-cell-type residual UMAP: residual clusters")
+        axis.set_xlabel("UMAP 1")
+        axis.set_ylabel("UMAP 2")
+        if axis.legend_ is not None:
+            axis.legend_.set_title("Residual cluster")
+            axis.legend_.set_bbox_to_anchor((1.02, 1))
+        figure.tight_layout()
+        plt.show()
         plot_residual_covariates(
             cross_residual_clusters,
             "Cross-cell-type residual UMAPs: model covariates",

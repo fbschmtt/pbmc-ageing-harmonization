@@ -343,6 +343,11 @@ def check_reports(outdir: Path) -> None:
         trajectory_dir / "cross_cell_type_cluster_means.csv",
         trajectory_dir / "gene_recurrence.csv",
         trajectory_dir / "gene_pattern_concordance.csv",
+        trajectory_dir / "expression_atlas_matrix.csv",
+        trajectory_dir / "expression_atlas_gene_clusters.csv",
+        trajectory_dir / "expression_atlas_study_support.csv",
+        trajectory_dir / "expression_atlas_technology_contrast.csv",
+        trajectory_dir / "expression_atlas_intronic_contrast.csv",
     ]
     missing_outputs = [str(path) for path in required_outputs if not path.is_file()]
     if missing_outputs:
@@ -358,6 +363,21 @@ def check_reports(outdir: Path) -> None:
             f"{obsolete_type_clusters}"
         )
     metadata = json.loads((trajectory_dir / "analysis_metadata.json").read_text())
+    expression_atlas = metadata.get("expression_atlas", {})
+    if expression_atlas.get("status") != "complete":
+        raise SystemExit(f"Synthetic report did not produce an expression atlas: {expression_atlas}")
+    if not expression_atlas.get("technology_available"):
+        raise SystemExit("Synthetic report did not retain its technology labels")
+    if len(expression_atlas.get("technology_contrast_cell_types", [])) != 2:
+        raise SystemExit(
+            "Synthetic report did not calculate one-versus-two study 3′/5′ contrasts "
+            "for both cell types"
+        )
+    if len(expression_atlas.get("intronic_contrast_cell_types", [])) != 2:
+        raise SystemExit(
+            "Synthetic report did not calculate one-versus-one intronic contrasts "
+            "for both cell types"
+        )
     cross_trajectories = pd.read_csv(
         trajectory_dir / "cross_cell_type_trajectory_clusters.csv"
     )
@@ -378,7 +398,7 @@ def check_reports(outdir: Path) -> None:
         raise SystemExit("Synthetic report did not combine multiple cell types on shared bins")
     print(
         "Synthetic DE report check passed: per-cell-type cluster exports, cross-cell-type "
-        "trajectory clusters, UMAPs, and recurrence summaries are present."
+        "trajectory clusters, UMAPs, recurrence summaries, and the expression atlas are present."
     )
 
 

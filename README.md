@@ -650,7 +650,19 @@ using the configured linkage and distance metric (Ward and Euclidean by
 default) across the standardized bin values.
 It plots each cluster's mean trajectory and a UMAP where each point is a gene
 trajectory. The DE workflow produces a trajectory-centric notebook and HTML at
-`differential_expression/trajectory_analysis/`. Its cross-cell-type clustering
+`differential_expression/trajectory_analysis/`. The same report also contains
+a descriptive expression atlas: it restricts to genes available in every study,
+sums raw counts within each study × cell type, retains groups with at least
+1,000,000 counts over that intersection, calculates `log2(CPM + 1)`, and
+averages those values equally across studies. It is a study-balanced
+relative-expression summary, not calibrated absolute RNA abundance or a
+covariate-adjusted estimate. It writes the full matrix, depth-support table,
+gene-profile clusters, plus independent 3′/5′ and intronic-read inclusion
+contrasts. A contrast is calculated with one depth-qualified study on each
+side, while the report flags whether each side has the configured two-study
+replication support; both remain descriptive because their labels can be
+study-confounded. The contrasts do not form technology × intronic interaction
+groups. Its cross-cell-type clustering
 uses only age bins retained by every included type and re-standardizes profiles
 over those shared bins; at least five shared bins are required. It also counts
 how many eligible cell types each gene is omnibus-significant in at FDR <0.05.
@@ -666,7 +678,9 @@ Each per-cell-type DE report clusters samples using Pearson residuals from its
 age-bin model. The model includes the age-bin factor, sex, log10(total counts),
 and study site when estimable, so residual patterns describe variation beyond
 the fitted age-bin means and other model covariates. Clustering uses centered
-PCA (100 components by default, capped by the available dimensions); each
+PCA (100 components by default, capped by the available dimensions). Residual
+UMAP uses a separate 50-neighbour setting (also capped by available samples),
+while trajectory-profile UMAP retains its 15-neighbour setting; each
 report shows residual UMAPs colored by sex, age, log10(total counts), and study,
 plus a second view for residual clusters, BMI, and CMV that shows how many
 samples have each optional value. Cluster assignments and PCA scores are
@@ -739,7 +753,13 @@ studies before covariate-specific exclusions, enough to exercise the configured
 10-sample bin filter and seven-bin trajectory requirement.
 Its negative-binomial counts include
 known synthetic age, sex, BMI, and CMV signals and study-specific gene-
-availability flags. BMI is present in two studies; CMV is present in one.
+availability flags. It also labels two studies as 3′ and one as 5′, and uses a
+count scale that makes every study × cell-type group pass the production 1M
+expression-atlas gate. This exercises the study-balanced atlas and gene-profile
+clustering, including an estimable but explicitly unreplicated 3′/5′ contrast.
+It also includes one intronic and one non-intronic study for an independent,
+explicitly unreplicated intronic-read sensitivity contrast. BMI is present in two studies;
+CMV is present in one.
 Missing values exercise covariate-specific study selection and complete-case
 sample counts, including the single-study combined-fit path. This exercises the
 normal age and cell-count filters and produces positive per-study and combined
