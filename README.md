@@ -657,8 +657,12 @@ sums raw counts within each study × cell type, retains groups with at least
 averages those values equally across studies. It is a study-balanced
 relative-expression summary, not calibrated absolute RNA abundance or a
 covariate-adjusted estimate. It writes the full matrix, depth-support table,
-gene-profile clusters, plus independent 3′/5′ and intronic-read inclusion
-contrasts. A contrast is calculated with one depth-qualified study on each
+gene-expression UMAP, plus independent 3′/5′ and intronic-read inclusion
+contrasts. The gene UMAP centers and scales each gene only for its internal PCA
+(up to 100 PCs) and UMAP computation (50 neighbors); it reports both the
+unscaled mean expression and the per-gene SD used for that scaling. It also
+shows, for each represented AIFI L1 class, the mean scaled expression across
+its retained L2 types. A contrast is calculated with one depth-qualified study on each
 side, while the report flags whether each side has the configured two-study
 replication support; both remain descriptive because their labels can be
 study-confounded. The contrasts do not form technology × intronic interaction
@@ -680,7 +684,8 @@ and study site when estimable, so residual patterns describe variation beyond
 the fitted age-bin means and other model covariates. Clustering uses centered
 PCA (100 components by default, capped by the available dimensions). Residual
 UMAP uses a separate 50-neighbour setting (also capped by available samples),
-while trajectory-profile UMAP retains its 15-neighbour setting; each
+then silhouette-selected K-means groups its coordinates while excluding clusters
+smaller than three samples. Trajectory-profile UMAP retains its 15-neighbour setting; each
 report shows residual UMAPs colored by sex, age, log10(total counts), and study,
 plus a second view for residual clusters, BMI, and CMV that shows how many
 samples have each optional value. Cluster assignments and PCA scores are

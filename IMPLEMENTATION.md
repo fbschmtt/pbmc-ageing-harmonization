@@ -147,9 +147,9 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/differential_expression/differential_expression.json` (DE status and cell-type result index)
 - `<outdir>/differential_expression/trajectory_analysis/{report.html,executed.ipynb}` (combined trajectory report)
 - `<outdir>/differential_expression/trajectory_analysis/*.csv` (shared-bin cross-type clusters and means, gene-level DE recurrence, and cross-type pattern concordance)
-- `<outdir>/differential_expression/trajectory_analysis/expression_atlas_*.csv` (study-balanced common-gene expression matrix, depth support, gene-profile clusters, and independent 3′/5′ and intronic-read sensitivity summaries)
+- `<outdir>/differential_expression/trajectory_analysis/expression_atlas_*.csv` (study-balanced common-gene expression matrix, gene UMAP, depth support, and independent 3′/5′ and intronic-read sensitivity summaries)
 - `<outdir>/differential_expression/trajectory_analysis/*_residual_{clusters,pc_scores}.csv` (per-cell-type sample cluster assignments and PCA scores)
-- `<outdir>/differential_expression/trajectory_analysis/cross_cell_type_pearson_residuals.npz` and residual metadata/cluster CSVs (wide matrix and analysis for shared samples across full-trajectory-supported cell types)
+- `<outdir>/differential_expression/trajectory_analysis/cross_cell_type_pearson_residuals.npz` and residual metadata/cluster CSVs (wide matrix, UMAP K-means assignments, marker contrasts, and cell-type feature composition for shared samples across full-trajectory-supported cell types)
 - `<outdir>/run_manifest.json` (requested, selected, and skipped studies;
   hashes of selected source inputs, metadata dependencies, and annotation models;
   selected studies are the complete requested set for explicit study lists)
@@ -295,7 +295,7 @@ significance, clustering, and display choices. Current settings are:
 | `linkage_method` | `ward` | Hierarchical clustering linkage. Supported values are `single`, `complete`, `average`, `weighted`, `centroid`, `median`, and `ward`. |
 | `distance_metric` | `euclidean` | Profile distance. Supported values are `euclidean`, `cityblock`, `cosine`, and `correlation`; Ward, centroid, and median require Euclidean distance. |
 | `minimum_shared_bins` | 5 | Minimum common age bins required for the cross-cell-type trajectory comparison. |
-| `residual_pca_components` | 100 | Maximum number of centered PCA components used before clustering bins-model Pearson residuals by sample. The count is capped by the available samples and genes. |
+| `residual_pca_components` | 100 | Maximum number of centered PCA components used before residual UMAP. The count is capped by the available samples and genes. |
 | `residual_umap_neighbors` | 50 | Neighbourhood size for residual-sample UMAPs; capped at one fewer than the available samples. |
 | `umap_neighbors` | 15 | UMAP neighborhood size. |
 | `minimum_umap_trajectories` | 4 | Minimum number of profiles required to compute UMAP coordinates. |
@@ -321,8 +321,9 @@ sample identifiers and gene names are included, with sample covariates stored
 beside each matrix. The age-bin fit excludes samples aged 90 years or older,
 requires at least ten eligible pseudobulks in each retained bin, and adjusts for
 age-bin, sex, log10(total counts), and study site when that term is estimable. Samples are clustered
-using up to `residual_pca_components` centered PCA scores, then hierarchical
-clustering and UMAP use Euclidean distances in PC space. Each per-type report
+using up to `residual_pca_components` centered PCA scores. UMAP uses Euclidean
+distance in PC space, then silhouette-selected K-means clusters its coordinates
+while excluding solutions with clusters smaller than three samples. Each per-type report
 shows a 2 × 2 UMAP grid for sex, age, log10(total counts), and study, plus a
 second 2 × 2 grid for residual clusters, BMI, and CMV; BMI and CMV panels show
 recorded-value counts.
@@ -348,8 +349,11 @@ absolute RNA abundance or a covariate-adjusted model.
 
 The current depth threshold is 1,000,000 counts, `cpm_pseudocount` is 1, and a
 cell type needs two retained studies. Genes with at least 1 CPM in one retained
-cell type enter average-linkage/correlation profile clustering, capped at eight
-clusters. The report separately contrasts the study-balanced 5′ and 3′
+cell type enter the gene-expression UMAP. Each gene is centered and scaled only
+for its PCA (up to 100 components) and UMAP (50 neighbors); the report shows
+the unscaled mean expression and the per-gene SD used for that scaling, then
+uses the scaled values only for its requested AIFI-L1 summaries (mean across
+each L1 class's retained L2 types). The report separately contrasts the study-balanced 5′ and 3′
 matrices (`5′ − 3′`) and the intronic-read and non-intronic matrices
 (`intronic − non-intronic`). Both are calculated once each side has at least
 one depth-qualified study in a cell type. `minimum_studies_per_technology` is

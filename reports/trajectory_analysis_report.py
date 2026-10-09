@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from IPython.display import Markdown, display
+from IPython.display import HTML, Markdown, display
 
 sns.set_theme(style="whitegrid")
 analysis_dir = Path(os.environ["TRAJECTORY_ANALYSIS_DIR"])
@@ -22,6 +22,7 @@ metadata = json.loads((analysis_dir / "analysis_metadata.json").read_text())
 cross_trajectories = pd.read_csv(analysis_dir / "cross_cell_type_trajectory_clusters.csv")
 cluster_means = pd.read_csv(analysis_dir / "cross_cell_type_cluster_means.csv")
 gene_recurrence = pd.read_csv(analysis_dir / "gene_recurrence.csv")
+gene_cell_type_significance = pd.read_csv(analysis_dir / "gene_cell_type_significance.csv")
 pattern_concordance = pd.read_csv(analysis_dir / "gene_pattern_concordance.csv")
 cell_type_support = pd.DataFrame(metadata.get("cell_type_support", []))
 common_bins = metadata.get("common_bins", [])
@@ -35,6 +36,7 @@ residual_support = metadata.get("pearson_residual_clustering", {})
 cross_residual_support = residual_support.get("cross_cell_type", {})
 expression_atlas_support = metadata.get("expression_atlas", {})
 expression_matrix_path = analysis_dir / "expression_atlas_matrix.csv"
+expression_gene_umap_path = analysis_dir / "expression_atlas_gene_umap.csv"
 expression_clusters_path = analysis_dir / "expression_atlas_gene_clusters.csv"
 expression_cluster_means_path = analysis_dir / "expression_atlas_cluster_means.csv"
 expression_technology_contrast_path = analysis_dir / "expression_atlas_technology_contrast.csv"
@@ -50,12 +52,87 @@ def read_optional_csv(path, **kwargs):
 
 
 expression_matrix = read_optional_csv(expression_matrix_path, index_col="gene")
+expression_gene_umap = read_optional_csv(expression_gene_umap_path)
 expression_clusters = read_optional_csv(expression_clusters_path)
 expression_cluster_means = read_optional_csv(expression_cluster_means_path)
 expression_technology_contrast = read_optional_csv(expression_technology_contrast_path)
 expression_technology_summary = read_optional_csv(expression_technology_summary_path)
 expression_intronic_contrast = read_optional_csv(expression_intronic_contrast_path)
 expression_intronic_summary = read_optional_csv(expression_intronic_summary_path)
+
+display(HTML("""
+<style>
+:root {
+  --report-ink: #182230;
+  --report-muted: #5f6b7a;
+  --report-line: #d8e0e8;
+  --report-paper: #ffffff;
+  --report-page: #f5f7fa;
+  --report-accent: #176b87;
+  --report-accent-soft: #e6f3f7;
+}
+body.jp-Notebook { background: var(--report-page); color: var(--report-ink); }
+main { max-width: 1600px; margin: 0 auto; padding: 2rem clamp(1.25rem, 3vw, 2.5rem) 4rem; }
+.jp-Cell-outputWrapper, .jp-OutputArea { width: 100%; }
+.jp-RenderedImage img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.report-toc-shell { position: fixed; z-index: 1000; top: 1rem; bottom: 1rem; left: 1rem; width: 260px; }
+.report-toc-toggle { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
+.report-toc-toggle-label { display: none; }
+.report-toc { height: 100%; overflow-y: auto; padding: .9rem .8rem 1.1rem; border: 1px solid var(--report-line); border-radius: 14px; background: var(--report-paper); box-shadow: 0 10px 28px rgba(24, 34, 48, .12); }
+.report-toc-heading { margin: 0 0 .65rem; padding: .25rem .45rem .65rem; border-bottom: 1px solid var(--report-line); color: var(--report-muted); font-size: .72rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.report-toc-list, .report-toc-list ul { margin: 0; padding: 0; list-style: none; }
+.report-toc-list > li { margin: .12rem 0 .45rem; }
+.report-toc-list ul { margin: .2rem 0 .35rem .65rem; padding-left: .65rem; border-left: 1px solid var(--report-line); }
+.report-toc-list ul li { margin: .12rem 0; }
+.report-toc a, .report-toc a:visited { display: block; padding: .25rem .45rem; border-radius: 6px; color: #344454; font-size: .88rem; font-weight: 600; line-height: 1.35; text-decoration: none; }
+.report-toc-list ul a { color: var(--report-muted); font-size: .82rem; font-weight: 500; }
+.report-toc a:hover, .report-toc a:focus-visible { background: var(--report-accent-soft); color: var(--report-accent); outline: none; }
+html { scroll-behavior: smooth; scroll-padding-top: 1.25rem; }
+@media print {
+  body.jp-Notebook { background: #fff; }
+  main { max-width: none; padding: 0; }
+  .report-toc-shell { display: none; }
+}
+@media (min-width: 1200px) {
+  main { width: calc(100% - 320px); max-width: 1500px; margin: 0 1.5rem 0 295px; }
+}
+@media (max-width: 1199px) {
+  main { padding-top: 5rem; }
+  .report-toc-shell { top: .5rem; right: .5rem; bottom: auto; left: .5rem; width: auto; }
+  .report-toc-toggle-label { display: flex; align-items: center; justify-content: space-between; min-height: 2.8rem; padding: .6rem .9rem; border: 1px solid var(--report-line); border-radius: 10px; background: var(--report-paper); box-shadow: 0 6px 18px rgba(24, 34, 48, .12); color: var(--report-accent); cursor: pointer; font-weight: 700; }
+  .report-toc-toggle-label::after { content: "＋"; font-size: 1.2rem; }
+  .report-toc-toggle:checked + .report-toc-toggle-label::after { content: "−"; }
+  .report-toc { display: none; height: auto; max-height: min(72vh, 680px); margin-top: .35rem; border-radius: 10px; }
+  .report-toc-toggle:checked ~ .report-toc { display: block; }
+  .report-toc-list { columns: 2; column-gap: 1rem; }
+  .report-toc-list > li { break-inside: avoid; }
+}
+@media (max-width: 560px) { .report-toc-list { columns: 1; } }
+</style>
+<div class="report-toc-shell">
+  <input class="report-toc-toggle" type="checkbox" id="cross-report-toc-toggle">
+  <label class="report-toc-toggle-label" for="cross-report-toc-toggle">Contents</label>
+  <nav class="report-toc" aria-label="Cross-cell-type report table of contents">
+    <p class="report-toc-heading">On this page</p>
+    <ul class="report-toc-list">
+      <li><a href="#Support-and-scope">Support and scope</a></li>
+      <li><a href="#Study-balanced-cell-type-expression-atlas">Expression atlas</a>
+        <ul>
+          <li><a href="#AIFI-L1-mean-scaled-expression">AIFI L1 scaled expression</a></li>
+          <li><a href="#3%E2%80%B2/5%E2%80%B2-technology-associated-contrast">3′/5′ contrast</a></li>
+          <li><a href="#Intronic-read-inclusion-contrast">Intronic contrast</a></li>
+        </ul>
+      </li>
+      <li><a href="#Sample-clustering-from-bins-model-Pearson-residuals">Residual clustering</a>
+        <ul><li><a href="#Cluster-focused-residual-characterization">Cluster characterization</a></li></ul>
+      </li>
+      <li><a href="#Age-bin-DE-genes-recurring-in-multiple-cell-types">Recurring age-bin DE genes</a></li>
+      <li><a href="#Cross-cell-type-trajectory-clusters">Trajectory clusters</a></li>
+      <li><a href="#Do-recurring-genes-share-trajectory-shapes?">Trajectory-shape concordance</a></li>
+    </ul>
+  </nav>
+</div>
+"""))
 
 # %% [markdown]
 # ## Support and scope
@@ -70,16 +147,10 @@ display(Markdown(
     f"counts use omnibus FDR < {de_fdr:g} within each cell type."
 ))
 display(Markdown(
-    f"Age-trajectory fits manually exclude the 90–100 bin and apply a strict age cutoff "
-    f"of < {metadata['strict_age_cutoff_exclusive']} years. Each retained bin must contain "
-    f"at least {metadata['minimum_samples_per_bin']} eligible pseudobulks. The support table "
-    "lists the pre-filter sample count in the manually excluded bin for every cell type."
+    f"Age-trajectory fits exclude the 90–100 bin and apply a strict age cutoff "
+    f"of < {metadata['strict_age_cutoff_exclusive']} years; each retained bin has at least "
+    f"{metadata['minimum_samples_per_bin']} eligible pseudobulks."
 ))
-if not cell_type_support.empty:
-    display(cell_type_support[[
-        "cell_type", "status", "retained_bins",
-        "samples_in_manually_excluded_bins",
-    ]].fillna("—"))
 excluded = metadata.get("cell_types_excluded_from_cross_cell_type_analysis", {})
 if excluded:
     display(Markdown(
@@ -107,38 +178,112 @@ if expression_atlas_support.get("status") == "complete" and not expression_matri
         f"{expression_atlas_support['minimum_studies_per_cell_type']} retained studies. "
         "They are relative, study-balanced expression summaries rather than calibrated absolute RNA abundance."
     ))
-    if not expression_clusters.empty:
+    if not expression_gene_umap.empty:
+        expression_umap_plot = expression_gene_umap.merge(
+            expression_matrix.mean(axis=1).rename("mean_log2_cpm"), left_on="gene", right_index=True
+        )
+        if not expression_technology_summary.empty:
+            expression_umap_plot = expression_umap_plot.merge(
+                expression_technology_summary[[
+                    "gene", "median_log2_cpm_difference_5_prime_minus_3_prime"
+                ]], on="gene", how="left"
+            )
+        if not expression_intronic_summary.empty:
+            expression_umap_plot = expression_umap_plot.merge(
+                expression_intronic_summary[[
+                    "gene", "median_log2_cpm_difference_intronic_minus_non_intronic"
+                ]], on="gene", how="left"
+            )
+        atlas_pseudocount = expression_atlas_support["cpm_pseudocount"]
+        color_columns = [
+            ("scaling_sd_log2_cpm", "Cross-L2 SD used for scaling"),
+            ("mean_log2_cpm", f"Mean log2(CPM + {atlas_pseudocount:g})"),
+            ("median_log2_cpm_difference_5_prime_minus_3_prime", "5′ − 3′ contrast"),
+            ("median_log2_cpm_difference_intronic_minus_non_intronic", "Intronic − non-intronic contrast"),
+        ]
+        figure, axes = plt.subplots(1, len(color_columns), figsize=(5.5 * len(color_columns), 4.8))
+        for axis, (column, title) in zip(np.atleast_1d(axes), color_columns):
+            if column not in expression_umap_plot or expression_umap_plot[column].notna().sum() == 0:
+                axis.text(0.5, 0.5, "Not available", ha="center", va="center")
+                axis.set_axis_off()
+                continue
+            points = expression_umap_plot.dropna(subset=[column])
+            scatter = axis.scatter(
+                points["umap_1"], points["umap_2"], c=points[column], s=8,
+                cmap="viridis" if column in {"mean_log2_cpm", "scaling_sd_log2_cpm"} else "vlag",
+                vmin=None if column in {"mean_log2_cpm", "scaling_sd_log2_cpm"} else -np.nanmax(np.abs(points[column])),
+                vmax=None if column in {"mean_log2_cpm", "scaling_sd_log2_cpm"} else np.nanmax(np.abs(points[column])),
+                linewidths=0, alpha=0.8,
+            )
+            figure.colorbar(scatter, ax=axis, label=title)
+            axis.set_title(title)
+            axis.set_xlabel("Gene-expression UMAP 1")
+            axis.set_ylabel("Gene-expression UMAP 2")
+        figure.suptitle(
+            f"Gene expression UMAP: per-gene standardized only for PCA ({expression_atlas_support.get('n_gene_expression_umap_pcs', 0)} PCs) and UMAP; colors use unscaled values",
+            y=1.03,
+        )
+        figure.tight_layout()
+        plt.show()
+    display(Markdown("### AIFI L1 mean scaled expression"))
+    l1_parent_by_l2 = expression_atlas_support.get("l1_parent_by_l2", {})
+    l1_groups = {}
+    for cell_type in expression_matrix.columns:
+        l1_parent = l1_parent_by_l2.get(str(cell_type))
+        if l1_parent:
+            l1_groups.setdefault(str(l1_parent), []).append(str(cell_type))
+    if l1_groups and not expression_gene_umap.empty:
+        l1_expression = expression_matrix.reindex(expression_gene_umap["gene"]).astype(float)
+        scaling_sd = expression_gene_umap.set_index("gene").get("scaling_sd_log2_cpm")
+        if scaling_sd is None:
+            scaling_sd = l1_expression.std(axis=1, ddof=0)
+        scaling_sd = scaling_sd.reindex(l1_expression.index).replace(0, np.nan)
+        scaled_expression = l1_expression.sub(l1_expression.mean(axis=1), axis=0).div(
+            scaling_sd, axis=0
+        )
+        l1_values = {
+            l1_parent: scaled_expression[cell_types].mean(axis=1)
+            for l1_parent, cell_types in sorted(l1_groups.items())
+        }
+        l1_limit = np.nanmax(np.abs(np.concatenate([
+            values.to_numpy(dtype=float) for values in l1_values.values()
+        ])))
+        l1_limit = l1_limit if np.isfinite(l1_limit) and l1_limit > 0 else 1.0
+        n_l1_columns = min(3, len(l1_values))
+        n_l1_rows = int(np.ceil(len(l1_values) / n_l1_columns))
+        figure, axes = plt.subplots(
+            n_l1_rows, n_l1_columns,
+            figsize=(5.4 * n_l1_columns, 4.6 * n_l1_rows),
+            layout="constrained",
+        )
+        axes = np.atleast_1d(axes).ravel()
+        scatter = None
+        for axis, (l1_parent, values) in zip(axes, l1_values.items()):
+            scatter = axis.scatter(
+                expression_gene_umap["umap_1"], expression_gene_umap["umap_2"],
+                c=values.to_numpy(dtype=float), s=8, cmap="vlag",
+                vmin=-l1_limit, vmax=l1_limit, linewidths=0, alpha=0.8,
+            )
+            axis.set_title(f"{l1_parent} ({len(l1_groups[l1_parent])} L2 types)")
+            axis.set_xlabel("Gene-expression UMAP 1")
+            axis.set_ylabel("Gene-expression UMAP 2")
+        for axis in axes[len(l1_values):]:
+            axis.set_axis_off()
+        if scatter is not None:
+            figure.colorbar(
+                scatter, ax=axes[:len(l1_values)],
+                label="Mean scaled expression across member L2 types",
+            )
+        plt.show()
+    elif l1_parent_by_l2:
+        display(Markdown("_No gene-expression UMAP coordinates are available for L1 summaries._"))
+    else:
         display(Markdown(
-            f"Genes with CPM ≥ {expression_atlas_support['minimum_cpm_for_clustering']:g} in at least one "
-            f"cell type were row-standardized and grouped into up to "
-            f"{expression_atlas_support['max_clusters']} average-linkage correlation clusters. "
-            f"Showing the {min(expression_atlas_support['report_top_n_genes'], len(expression_clusters)):,} "
-            "most variable clustered genes."
+            "_No AIFI L2-to-L1 mapping was recorded with this atlas; L1 summaries are unavailable._"
         ))
-        z_columns = [f"z_{column}" for column in expression_matrix.columns if f"z_{column}" in expression_clusters]
-        heatmap_rows = expression_clusters.sort_values(
-            ["expression_cluster", "profile_sd", "gene"], ascending=[True, False, True], kind="stable"
-        ).head(expression_atlas_support["report_top_n_genes"])
-        if z_columns and not heatmap_rows.empty:
-            figure, axis = plt.subplots(
-                figsize=(max(8, 0.95 * len(z_columns) + 3), max(5, 0.18 * len(heatmap_rows) + 2)),
-            )
-            sns.heatmap(
-                heatmap_rows.set_index("gene")[z_columns].rename(columns=lambda name: name.removeprefix("z_")),
-                cmap="vlag", center=0, yticklabels=True,
-                cbar_kws={"label": "Expression profile (within-gene SD units)"}, ax=axis,
-            )
-            axis.set_xlabel("Cell type")
-            axis.set_ylabel("Gene")
-            axis.set_title("Cell-type expression-profile clusters")
-            figure.tight_layout()
-            plt.show()
-        if not expression_cluster_means.empty:
-            display(expression_cluster_means)
     display(Markdown(
-        "Download the [study-balanced expression matrix](expression_atlas_matrix.csv), "
-        "[study × cell-type depth support](expression_atlas_study_support.csv), and "
-        "[gene-cluster assignments](expression_atlas_gene_clusters.csv)."
+        "Download the [study-balanced expression matrix](expression_atlas_matrix.csv) and "
+        "[gene-expression UMAP coordinates](expression_atlas_gene_umap.csv)."
     ))
 else:
     display(Markdown(
@@ -155,36 +300,44 @@ else:
 # so the contrast is descriptive and not an identified causal technology effect.
 
 # %%
+def plot_labeled_expression_effect(table, *, x, y, title, y_label):
+    labels = table.dropna(subset=[x, y]).assign(
+        absolute_effect=lambda values: values[y].abs()
+    ).sort_values("absolute_effect", ascending=False, kind="stable").head(
+        20
+    )
+    figure, axis = plt.subplots(figsize=(9, 6))
+    x_margin = max(0.05, 0.06 * (labels[x].max() - labels[x].min()))
+    y_margin = max(0.03, 0.08 * (labels[y].max() - labels[y].min()))
+    axis.set_xlim(labels[x].min() - x_margin, labels[x].max() + x_margin)
+    axis.set_ylim(labels[y].min() - y_margin, labels[y].max() + y_margin)
+    for _, row in labels.iterrows():
+        axis.text(row[x], row[y], str(row["gene"]), fontsize=7, alpha=0.85)
+    axis.axhline(0, color="#555555", linestyle="--", linewidth=0.8)
+    axis.set_xlabel("Mean log2(CPM + pseudocount)")
+    axis.set_ylabel(y_label)
+    axis.set_title(title + f" (top {len(labels)} absolute effects)")
+    figure.tight_layout()
+    plt.show()
+
+
+# %%
 if not expression_technology_summary.empty and not expression_technology_contrast.empty:
-    technology_support = expression_technology_contrast[[
-        "cell_type", "n_studies_3_prime", "n_studies_5_prime",
-        "meets_configured_study_replication",
-    ]].drop_duplicates().sort_values("cell_type", kind="stable")
     display(Markdown(
         "This contrast is computed whenever at least one depth-qualified study exists in "
         "each technology family. The configured two-study threshold is a replication flag, "
         "not an estimability gate."
     ))
-    display(technology_support)
-    figure, axis = plt.subplots(figsize=(7.5, 4.8))
-    sns.scatterplot(
-        data=expression_technology_summary,
+    plot_labeled_expression_effect(
+        expression_technology_summary,
         x="mean_log2_cpm_across_technologies",
         y="median_log2_cpm_difference_5_prime_minus_3_prime",
-        size="n_cell_types_with_technology_contrast",
-        sizes=(8, 42), alpha=0.6, linewidth=0, legend=False, ax=axis,
+        title="Technology-associated expression contrast",
+        y_label="Median 5′ − 3′ log2(CPM + pseudocount)",
     )
-    axis.axhline(0, color="#555555", linestyle="--", linewidth=0.8)
-    axis.set_xlabel("Mean log2(CPM + pseudocount)")
-    axis.set_ylabel("Median 5′ − 3′ log2(CPM + pseudocount)")
-    axis.set_title("Technology-associated expression contrast")
-    figure.tight_layout()
-    plt.show()
     top_contrast_genes = expression_technology_summary.assign(
         absolute_difference=lambda table: table["median_log2_cpm_difference_5_prime_minus_3_prime"].abs()
-    ).sort_values("absolute_difference", ascending=False, kind="stable").head(
-        expression_atlas_support.get("report_top_n_genes", 200)
-    )["gene"]
+    ).sort_values("absolute_difference", ascending=False, kind="stable").head(20)["gene"]
     contrast_heatmap = expression_technology_contrast.loc[
         expression_technology_contrast["gene"].isin(top_contrast_genes)
     ].pivot(index="gene", columns="cell_type", values="log2_cpm_difference_5_prime_minus_3_prime")
@@ -226,37 +379,23 @@ else:
 
 # %%
 if not expression_intronic_summary.empty and not expression_intronic_contrast.empty:
-    intronic_support = expression_intronic_contrast[[
-        "cell_type", "n_studies_intronic", "n_studies_non_intronic",
-        "meets_configured_study_replication",
-    ]].drop_duplicates().sort_values("cell_type", kind="stable")
     display(Markdown(
         "This independent contrast is `intronic − non-intronic` on separately "
         "study-balanced log2(CPM + pseudocount) matrices. As for 3′/5′, a one-versus-one "
         "comparison is estimable but is flagged as unreplicated."
     ))
-    display(intronic_support)
-    figure, axis = plt.subplots(figsize=(7.5, 4.8))
-    sns.scatterplot(
-        data=expression_intronic_summary,
+    plot_labeled_expression_effect(
+        expression_intronic_summary,
         x="mean_log2_cpm_across_intronic_status",
         y="median_log2_cpm_difference_intronic_minus_non_intronic",
-        size="n_cell_types_with_intronic_contrast",
-        sizes=(8, 42), alpha=0.6, linewidth=0, legend=False, ax=axis,
+        title="Intronic-read inclusion expression contrast",
+        y_label="Median intronic − non-intronic log2(CPM + pseudocount)",
     )
-    axis.axhline(0, color="#555555", linestyle="--", linewidth=0.8)
-    axis.set_xlabel("Mean log2(CPM + pseudocount)")
-    axis.set_ylabel("Median intronic − non-intronic log2(CPM + pseudocount)")
-    axis.set_title("Intronic-read inclusion expression contrast")
-    figure.tight_layout()
-    plt.show()
     top_intronic_genes = expression_intronic_summary.assign(
         absolute_difference=lambda table: table[
             "median_log2_cpm_difference_intronic_minus_non_intronic"
         ].abs()
-    ).sort_values("absolute_difference", ascending=False, kind="stable").head(
-        expression_atlas_support.get("report_top_n_genes", 200)
-    )["gene"]
+    ).sort_values("absolute_difference", ascending=False, kind="stable").head(20)["gene"]
     intronic_heatmap = expression_intronic_contrast.loc[
         expression_intronic_contrast["gene"].isin(top_intronic_genes)
     ].pivot(
@@ -300,14 +439,16 @@ else:
 # fitted samples until the common sample set reaches the configured coverage.
 
 # %%
-residual_parameters = pd.DataFrame([
-    ("Residual model", "Age bin + sex + log10(total counts) + study site when estimable"),
-    ("Residual feature filter", "Finite fitted mean/dispersion and positive fitted variance; no HVG filter"),
-    ("PCA", f"Centered, unscaled Pearson residuals; up to {metadata['residual_pca_components']} components"),
-    ("Hierarchical clustering", f"{linkage_method} linkage; Euclidean distance in PC space; at most {metadata['max_clusters']} clusters"),
-    ("Residual UMAP", f"2D Euclidean PC-space UMAP; {metadata['residual_umap_neighbors']} neighbors (capped at samples − 1); min_dist={metadata['umap_min_dist']}; seed={metadata['random_state']}"),
-], columns=["Parameter", "Current value"])
-display(residual_parameters)
+display(Markdown(
+    "Residuals use the age-bin model with sex, log10(total counts), and estimable study-site terms; "
+    f"PCA is centered and unscaled (up to {metadata['residual_pca_components']} PCs). "
+    f"Residual UMAP uses {metadata['residual_umap_neighbors']} neighbors (capped at samples − 1), "
+    f"min_dist={metadata['umap_min_dist']}, Euclidean PC distance, and seed={metadata['random_state']}. "
+    "Clusters are silhouette-selected K-means groups on those UMAP coordinates, with a three-sample minimum. "
+    f"Trajectory UMAP separately uses {metadata['umap_neighbors']} neighbors; gene-expression UMAP uses "
+    f"{expression_atlas_support.get('umap_neighbors', 'not run')} neighbors after up to "
+    f"{expression_atlas_support.get('umap_pca_components', 'not run')} per-gene-standardized PCs."
+))
 
 # %%
 def plot_residual_covariates(table, title, covariates, *, categorical_covariates):
@@ -341,6 +482,8 @@ def plot_residual_covariates(table, title, covariates, *, categorical_covariates
     plt.show()
 
 cross_residual_path = analysis_dir / "cross_cell_type_residual_clusters.csv"
+cross_residual_markers_path = analysis_dir / "cross_cell_type_residual_cluster_markers.csv"
+cross_residual_composition_path = analysis_dir / "cross_cell_type_residual_cluster_feature_composition.csv"
 if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 0):
     cross_residual_clusters = pd.read_csv(cross_residual_path)
     included_types = cross_residual_support.get("cell_types", [])
@@ -379,24 +522,21 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
         "residual matrix](cross_cell_type_pearson_residuals.npz)."
     )
     display(Markdown(residual_scope))
-    residual_cluster_sizes = (
-        cross_residual_clusters["residual_cluster"].value_counts(sort=False)
-        .rename_axis("residual_cluster").reset_index(name="n_samples")
-        .sort_values("n_samples", ascending=False, kind="stable")
-    )
-    residual_cluster_sizes["fraction_of_samples"] = (
-        residual_cluster_sizes["n_samples"] / len(cross_residual_clusters)
-    )
     display(Markdown(
-        "Residual-cluster sizes are shown explicitly so very small outlier groups can be "
-        "distinguished from broad structure. They remain descriptive unless a measured "
-        "covariate or follow-up QC supports an explanation."
+        "Residual cluster sizes are encoded in the UMAP legend. Marker contrasts use each cluster's "
+        "mean residual against the largest cluster; feature-origin fractions summarize the top/bottom "
+        "500 residual differences by cell type."
     ))
-    display(residual_cluster_sizes)
+    residual_markers = read_optional_csv(cross_residual_markers_path)
+    residual_composition = read_optional_csv(cross_residual_composition_path)
     if cross_residual_support.get("n_samples_common", 0) >= minimum_umap_trajectories:
+        residual_cluster_counts = cross_residual_clusters["residual_cluster"].value_counts()
+        cross_residual_clusters["residual_cluster_label"] = cross_residual_clusters[
+            "residual_cluster"
+        ].map(lambda cluster: f"Cluster {cluster} (n={residual_cluster_counts[cluster]})")
         figure, axis = plt.subplots(figsize=(6.6, 4.8))
         sns.scatterplot(
-            data=cross_residual_clusters, x="umap_1", y="umap_2", hue="residual_cluster",
+            data=cross_residual_clusters, x="umap_1", y="umap_2", hue="residual_cluster_label",
             palette="tab20", s=32, alpha=0.84, linewidth=0, ax=axis,
         )
         axis.set_title("Cross-cell-type residual UMAP: residual clusters")
@@ -421,6 +561,60 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
                  if covariate in cross_residual_clusters],
                 categorical_covariates={"cmv"},
             )
+        display(Markdown("### Cluster-focused residual characterization"))
+        if not residual_markers.empty:
+            figure, axis = plt.subplots(figsize=(6.6, 4.8))
+            sns.scatterplot(
+                data=cross_residual_clusters, x="umap_1", y="umap_2", hue="residual_cluster_label",
+                palette="tab20", s=32, alpha=0.84, linewidth=0, ax=axis,
+            )
+            axis.set_title("Residual clusters characterized below")
+            axis.set_xlabel("UMAP 1")
+            axis.set_ylabel("UMAP 2")
+            if axis.legend_ is not None:
+                axis.legend_.set_title("Residual cluster")
+                axis.legend_.set_bbox_to_anchor((1.02, 1))
+            figure.tight_layout()
+            plt.show()
+            marker_clusters = sorted(residual_markers["residual_cluster"].unique())
+            figure, axes = plt.subplots(
+                len(marker_clusters), 2, figsize=(13, 3.4 * len(marker_clusters))
+            )
+            axes = np.atleast_2d(axes)
+            for row_index, cluster in enumerate(marker_clusters):
+                for column_index, direction in enumerate(("lower", "higher")):
+                    axis = axes[row_index, column_index]
+                    markers = residual_markers.loc[
+                        (residual_markers["residual_cluster"] == cluster)
+                        & (residual_markers["direction"] == direction)
+                    ].sort_values("rank").head(10)
+                    axis.barh(
+                        markers["feature"].iloc[::-1],
+                        markers["mean_residual_difference_vs_reference"].iloc[::-1],
+                        color="#4c72b0",
+                    )
+                    axis.set_title(f"Cluster {cluster}: {direction} vs. largest cluster")
+                    axis.set_xlabel("Mean Pearson-residual difference")
+            figure.tight_layout()
+            plt.show()
+        if not residual_composition.empty:
+            composition = residual_composition.pivot_table(
+                index=["residual_cluster", "direction"], columns="cell_type",
+                values="fraction_of_top_500_features", fill_value=0,
+            )
+            figure, axis = plt.subplots(figsize=(9, 4.5))
+            composition.plot(kind="bar", stacked=True, ax=axis, colormap="tab20")
+            axis.set_xlabel("Residual cluster and feature direction")
+            axis.set_ylabel("Fraction of top 500 features")
+            axis.set_title("Cell-type contribution to residual-cluster marker features")
+            axis.legend(title="Cell type", bbox_to_anchor=(1.02, 1), loc="upper left")
+            figure.tight_layout()
+            plt.show()
+        elif residual_cluster_counts.size == 1:
+            display(Markdown(
+                "_K-means retained a single cluster after the minimum-size and silhouette checks; "
+                "there is therefore no between-cluster marker or feature-origin contrast to report._"
+            ))
     else:
         display(Markdown(
             f"_The selected set has {cross_residual_support['n_samples_common']} samples; "
@@ -430,6 +624,54 @@ else:
     display(Markdown(
         "_No residual-bearing cell types are available for cross-cell-type clustering._"
     ))
+
+# %% [markdown]
+# ## Age-bin DE genes recurring in multiple cell types
+#
+# Counts use per-cell-type omnibus FDR < 0.05 across completed age-bin fits.
+
+# %%
+if not gene_recurrence.empty:
+    recurrent = gene_recurrence.loc[
+        gene_recurrence["n_cell_types_DE_significant"] > 0
+    ].copy()
+    if recurrent.empty:
+        display(Markdown("_No genes passed the per-cell-type omnibus FDR threshold._"))
+    else:
+        recurrence_counts = recurrent["n_cell_types_DE_significant"].value_counts().sort_index()
+        figure, axis = plt.subplots(figsize=(7, 4))
+        sns.barplot(
+            x=recurrence_counts.index.astype(str), y=recurrence_counts.values,
+            color="#4c72b0", ax=axis,
+        )
+        axis.set_xlabel("Cell types with significant age-bin association")
+        axis.set_ylabel("Number of genes")
+        axis.set_title("Cross-cell-type recurrence of age-associated genes")
+        figure.tight_layout()
+        plt.show()
+        top_recurrent_genes = recurrent.head(12)["gene"]
+        effects = gene_cell_type_significance.loc[
+            gene_cell_type_significance["gene"].isin(top_recurrent_genes)
+            & gene_cell_type_significance["de_significant"]
+        ].copy()
+        if not effects.empty:
+            effect_matrix = effects.pivot(
+                index="gene", columns="cell_type", values="largest_absolute_log2_fold_change"
+            ).reindex(top_recurrent_genes)
+            figure, axis = plt.subplots(
+                figsize=(max(8, 1.25 * effect_matrix.shape[1] + 3), max(4, 0.45 * len(effect_matrix) + 2)),
+            )
+            sns.heatmap(
+                effect_matrix, cmap="vlag", center=0, annot=True, fmt=".2g",
+                cbar_kws={"label": "Largest absolute age-bin log2 fold change"}, ax=axis,
+            )
+            axis.set_xlabel("Cell type (only omnibus-significant effects shown)")
+            axis.set_ylabel("Gene")
+            axis.set_title("Top recurring genes: strongest age-bin coefficient by cell type")
+            figure.tight_layout()
+            plt.show()
+else:
+    display(Markdown("_No gene-level cell-type significance results are available._"))
 
 # %% [markdown]
 # ## Cross-cell-type trajectory clusters
@@ -500,38 +742,6 @@ else:
     ))
 
 # %% [markdown]
-# ## Genes associated in multiple cell types
-#
-# Counts use per-cell-type omnibus FDR < 0.05 across completed age-bin fits
-# that meet the minimum age-bin support requirement.
-# The count is descriptive, does not apply a second correction across cell types,
-# and depends on the number of cell types in which that gene was tested.
-
-# %%
-if not gene_recurrence.empty:
-    recurrent = gene_recurrence.loc[
-        gene_recurrence["n_cell_types_DE_significant"] > 0
-    ].copy()
-    if recurrent.empty:
-        display(Markdown("_No genes passed the per-cell-type omnibus FDR threshold._"))
-    else:
-        recurrence_counts = recurrent["n_cell_types_DE_significant"].value_counts().sort_index()
-        figure, axis = plt.subplots(figsize=(7, 4))
-        sns.barplot(
-            x=recurrence_counts.index.astype(str), y=recurrence_counts.values,
-            color="#4c72b0", ax=axis,
-        )
-        axis.set_xlabel("Cell types with significant age-bin association")
-        axis.set_ylabel("Number of genes")
-        axis.set_title("Cross-cell-type recurrence of age-associated genes")
-        figure.tight_layout()
-        plt.show()
-        display(Markdown(f"Showing at most {cross_report_top_n_genes} genes."))
-        display(recurrent.head(cross_report_top_n_genes).reset_index(drop=True))
-else:
-    display(Markdown("_No gene-level cell-type significance results are available._"))
-
-# %% [markdown]
 # ## Do recurring genes share trajectory shapes?
 #
 # For genes with cluster-significant trajectories in at least two cell types,
@@ -547,7 +757,41 @@ if pattern_concordance.empty:
     ))
 else:
     display(Markdown(
-        f"Pairwise shape distances use the configured {distance_metric} metric. "
-        f"Showing at most {cross_report_top_n_genes} genes."
+        f"Pairwise shape distances use the configured {distance_metric} metric. The plots below "
+        "restore each cell type's trajectory amplitude by multiplying standardized values by its "
+        "stored trajectory SD."
     ))
-    display(pattern_concordance.head(cross_report_top_n_genes).reset_index(drop=True))
+    top_pattern_genes = pattern_concordance.head(12)["gene"].tolist()
+    figure = plt.figure(figsize=(21, 11), layout="constrained")
+    grid = figure.add_gridspec(3, 5, width_ratios=[1, 1, 1, 1, 0.72])
+    axes = np.array([
+        figure.add_subplot(grid[row, column])
+        for row in range(3) for column in range(4)
+    ]).reshape(3, 4)
+    legend_axis = figure.add_subplot(grid[:, 4])
+    legend_axis.set_axis_off()
+    legend_handles = {}
+    raw_columns = [f"raw_{age_bin}" for age_bin in common_bins]
+    for axis, gene in zip(axes.flat, top_pattern_genes):
+        trajectories = cross_trajectories.loc[cross_trajectories["gene"] == gene]
+        for _, row in trajectories.iterrows():
+            if all(column in trajectories for column in raw_columns):
+                values = [row[column] for column in raw_columns]
+            else:
+                values = [row[age_bin] * row["trajectory_sd"] for age_bin in common_bins]
+            line, = axis.plot(
+                common_bins, values, marker="o", linewidth=1.6, label=row["cell_type"]
+            )
+            legend_handles.setdefault(str(row["cell_type"]), line)
+        axis.axhline(0, color="#555555", linestyle="--", linewidth=0.6)
+        axis.set_title(str(gene), fontsize=9)
+        axis.tick_params(axis="x", rotation=35, labelsize=7)
+        axis.tick_params(axis="y", labelsize=7)
+    for axis in axes.flat[len(top_pattern_genes):]:
+        axis.set_axis_off()
+    if legend_handles:
+        legend_axis.legend(
+            legend_handles.values(), legend_handles.keys(), title="Cell type",
+            loc="upper left", frameon=True,
+        )
+    plt.show()

@@ -55,6 +55,7 @@ def generate_trajectory_report(
         pseudobulk_path=pseudobulk_path,
         expression_atlas_settings=expression_atlas_settings,
         split_by=pipeline["differential_expression"]["split_by"],
+        l2_parent_l1=pipeline["cell_type_analysis"]["l2_parent_l1"],
     )
     executed, html = output_dir / "executed.ipynb", output_dir / "report.html"
     with tempfile.TemporaryDirectory(prefix="pbmc-trajectory-notebook-") as temp_dir:

@@ -1,12 +1,14 @@
 """Build descriptive, study-balanced expression summaries across cell types."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.stats import spearmanr
+from sklearn.decomposition import PCA
 
 from .config import ExpressionAtlasSettings
 
@@ -42,6 +44,10 @@ def _empty_atlas_tables(output_dir: Path, expression_columns: list[str] | None =
     _write_table(
         output_dir / "expression_atlas_cluster_means.csv",
         pd.DataFrame(columns=["expression_cluster", *columns, "n_genes"]),
+    )
+    _write_table(
+        output_dir / "expression_atlas_gene_umap.csv",
+        pd.DataFrame(columns=["gene", "umap_1", "umap_2", "scaling_sd_log2_cpm"]),
     )
     _write_table(
         output_dir / "expression_atlas_technology_contrast.csv",
@@ -135,12 +141,50 @@ def _cluster_expression_profiles(
     return assignments, means.reset_index()
 
 
+def _expression_umap(
+    expression: pd.DataFrame, settings: ExpressionAtlasSettings
+) -> tuple[pd.DataFrame, int]:
+    """Embed genes after per-gene centering/scaling solely for PCA and UMAP."""
+    values = expression.to_numpy(dtype=float)
+    centered = values - values.mean(axis=1, keepdims=True)
+    standard_deviation = centered.std(axis=1, keepdims=True)
+    valid = np.isfinite(values).all(axis=1) & (standard_deviation[:, 0] > 0)
+    genes = expression.index[valid].astype(str)
+    if len(genes) < 4:
+        return pd.DataFrame(
+            columns=["gene", "umap_1", "umap_2", "scaling_sd_log2_cpm"]
+        ), 0
+    normalized = centered[valid] / standard_deviation[valid]
+    n_components = min(
+        settings.umap_pca_components, normalized.shape[0] - 1, normalized.shape[1]
+    )
+    scores = PCA(n_components=n_components, random_state=settings.random_state).fit_transform(normalized)
+    import umap
+
+    embedding = umap.UMAP(
+        n_components=2,
+        n_neighbors=min(settings.umap_neighbors, len(genes) - 1),
+        min_dist=settings.umap_min_dist,
+        metric="euclidean",
+        random_state=settings.random_state,
+        transform_seed=settings.random_state,
+        n_jobs=1,
+    ).fit_transform(scores)
+    return pd.DataFrame({
+        "gene": genes,
+        "umap_1": embedding[:, 0],
+        "umap_2": embedding[:, 1],
+        "scaling_sd_log2_cpm": standard_deviation[valid, 0],
+    }), n_components
+
+
 def analyze_expression_atlas(
     pseudobulk_path: Path,
     output_dir: Path,
     settings: ExpressionAtlasSettings,
     *,
     split_by: str,
+    l2_parent_l1: Mapping[str, str] | None = None,
 ) -> dict:
     """Write a common-gene, depth-gated expression atlas and technology sensitivity tables."""
     import anndata as ad
@@ -267,6 +311,17 @@ def analyze_expression_atlas(
         clusters = clusters.merge(signal.rename("n_cell_types_at_minimum_cpm"), left_on="gene", right_index=True)
     _write_table(output_dir / "expression_atlas_gene_clusters.csv", clusters)
     _write_table(output_dir / "expression_atlas_cluster_means.csv", cluster_means)
+    gene_umap, n_expression_umap_pcs = _expression_umap(
+        expression.loc[signal > 0], settings
+    )
+    _write_table(output_dir / "expression_atlas_gene_umap.csv", gene_umap)
+    parent_map = l2_parent_l1 or {}
+    l1_parent_by_l2 = {
+        cell_type: str(parent_map[cell_type])
+        for cell_type in expression.columns
+        if cell_type in parent_map
+    }
+    unmapped_l2_cell_types = sorted(set(expression.columns) - set(l1_parent_by_l2))
 
     by_technology = {}
     technology_study_counts = {}
@@ -405,6 +460,10 @@ def analyze_expression_atlas(
         "cell_types": expression.columns.tolist(),
         "n_cell_types": int(expression.shape[1]),
         "n_clustered_genes": len(clusters),
+        "n_gene_expression_umap_genes": len(gene_umap),
+        "n_gene_expression_umap_pcs": n_expression_umap_pcs,
+        "l1_parent_by_l2": l1_parent_by_l2,
+        "unmapped_l2_cell_types": unmapped_l2_cell_types,
         "technology_contrast_cell_types": shared_types.tolist(),
         "technology_available": technology_available,
         "technology_contrast_reason": (

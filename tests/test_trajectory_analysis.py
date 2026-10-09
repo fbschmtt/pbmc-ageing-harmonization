@@ -62,10 +62,12 @@ def test_expression_atlas_uses_common_genes_depth_gate_and_technology_contrast(t
             report_top_n_genes=10,
         ),
         split_by="aifi_l2_majority",
+        l2_parent_l1={"Type A": "L1 A", "Type B": "L1 B"},
     )
 
     assert metadata["status"] == "complete"
     assert metadata["n_depth_qualified_groups"] == 8
+    assert metadata["l1_parent_by_l2"] == {"Type A": "L1 A", "Type B": "L1 B"}
     matrix = pd.read_csv(output_dir / "expression_atlas_matrix.csv", index_col="gene")
     expected = np.mean(np.log2(np.array([800_000, 600_000, 200_000, 300_000]) + 1))
     assert np.isclose(matrix.loc["G1", "Type A"], expected)

@@ -344,10 +344,13 @@ def check_reports(outdir: Path) -> None:
         trajectory_dir / "gene_recurrence.csv",
         trajectory_dir / "gene_pattern_concordance.csv",
         trajectory_dir / "expression_atlas_matrix.csv",
+        trajectory_dir / "expression_atlas_gene_umap.csv",
         trajectory_dir / "expression_atlas_gene_clusters.csv",
         trajectory_dir / "expression_atlas_study_support.csv",
         trajectory_dir / "expression_atlas_technology_contrast.csv",
         trajectory_dir / "expression_atlas_intronic_contrast.csv",
+        trajectory_dir / "cross_cell_type_residual_cluster_markers.csv",
+        trajectory_dir / "cross_cell_type_residual_cluster_feature_composition.csv",
     ]
     missing_outputs = [str(path) for path in required_outputs if not path.is_file()]
     if missing_outputs:
@@ -378,6 +381,13 @@ def check_reports(outdir: Path) -> None:
             "Synthetic report did not calculate one-versus-one intronic contrasts "
             "for both cell types"
         )
+    if expression_atlas.get("n_gene_expression_umap_genes", 0) < 4:
+        raise SystemExit("Synthetic report did not materialize a gene-expression UMAP")
+    residual_support = metadata.get("pearson_residual_clustering", {}).get("cross_cell_type", {})
+    if residual_support.get("residual_cluster_method") != (
+        "K-means on UMAP coordinates; silhouette-selected with at least 3 samples per cluster"
+    ):
+        raise SystemExit("Synthetic report did not use the configured residual clustering method")
     cross_trajectories = pd.read_csv(
         trajectory_dir / "cross_cell_type_trajectory_clusters.csv"
     )

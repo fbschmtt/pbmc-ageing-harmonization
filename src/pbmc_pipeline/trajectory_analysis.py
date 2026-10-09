@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import pdist
+from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score
 
 from .config import AgeTrajectorySettings, ExpressionAtlasSettings
 from .expression_atlas import analyze_expression_atlas
@@ -94,14 +97,6 @@ def cluster_sample_residuals(
         svd_solver="randomized",
         random_state=settings.random_state,
     ).fit_transform(values.to_numpy(dtype=float))
-    if len(scores) == 1:
-        cluster_ids = np.ones(1, dtype=int)
-    else:
-        tree = linkage(scores, method=settings.linkage_method, metric="euclidean")
-        cluster_ids = fcluster(
-            tree, t=min(settings.max_clusters, len(scores)), criterion="maxclust"
-        ).astype(int)
-    annotations["residual_cluster"] = cluster_ids
     if len(scores) >= settings.minimum_umap_trajectories:
         import umap
 
@@ -116,13 +111,75 @@ def cluster_sample_residuals(
         ).fit_transform(scores)
         annotations["umap_1"] = embedding[:, 0]
         annotations["umap_2"] = embedding[:, 1]
+        candidates = range(2, min(settings.max_clusters, len(scores) // 3) + 1)
+        best_labels = np.ones(len(scores), dtype=int)
+        best_score = -np.inf
+        for n_clusters in candidates:
+            labels = KMeans(
+                n_clusters=n_clusters, n_init=50, random_state=settings.random_state
+            ).fit_predict(embedding)
+            if np.bincount(labels).min() < 3:
+                continue
+            score = silhouette_score(embedding, labels)
+            if score > best_score:
+                best_labels = labels + 1
+                best_score = score
+        cluster_ids = best_labels
     else:
         annotations["umap_1"] = np.nan
         annotations["umap_2"] = np.nan
+        cluster_ids = np.ones(len(scores), dtype=int)
+    annotations["residual_cluster"] = cluster_ids
     pc_columns = [f"PC{index + 1}" for index in range(scores.shape[1])]
     pc_scores = pd.DataFrame(scores, index=values.index, columns=pc_columns)
     pc_scores.insert(0, "residual_cluster", cluster_ids)
     return annotations.reset_index(drop=True), pc_scores.reset_index(names="sample_key"), n_components
+
+
+def summarize_residual_cluster_markers(
+    residuals: pd.DataFrame, annotations: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame, int | None]:
+    """Compare each residual cluster with the largest cluster and track feature origins."""
+    clusters = annotations.set_index("sample_key")["residual_cluster"].reindex(residuals.index)
+    cluster_sizes = clusters.value_counts()
+    if len(cluster_sizes) < 2:
+        return pd.DataFrame(), pd.DataFrame(), None
+    reference_cluster = int(cluster_sizes.index[0])
+    reference_mean = residuals.loc[clusters == reference_cluster].mean(axis=0)
+    marker_rows = []
+    composition_rows = []
+    for cluster, size in cluster_sizes.items():
+        if int(cluster) == reference_cluster:
+            continue
+        difference = residuals.loc[clusters == cluster].mean(axis=0) - reference_mean
+        for direction, ordered in (
+            ("higher", difference.sort_values(ascending=False)),
+            ("lower", difference.sort_values(ascending=True)),
+        ):
+            top = ordered.head(min(20, len(ordered)))
+            for rank, (feature, value) in enumerate(top.items(), start=1):
+                marker_rows.append({
+                    "residual_cluster": int(cluster),
+                    "reference_cluster": reference_cluster,
+                    "cluster_size": int(size),
+                    "direction": direction,
+                    "rank": rank,
+                    "feature": str(feature),
+                    "mean_residual_difference_vs_reference": float(value),
+                })
+            top_features = ordered.head(min(500, len(ordered))).index.to_series()
+            cell_types = top_features.str.split("::", n=1).str[0]
+            for cell_type, count in cell_types.value_counts().items():
+                composition_rows.append({
+                    "residual_cluster": int(cluster),
+                    "reference_cluster": reference_cluster,
+                    "cluster_size": int(size),
+                    "direction": direction,
+                    "cell_type": cell_type,
+                    "n_features_in_top_500": int(count),
+                    "fraction_of_top_500_features": float(count / len(top_features)),
+                })
+    return pd.DataFrame(marker_rows), pd.DataFrame(composition_rows), reference_cluster
 
 
 def _read_cell_type_residuals(
@@ -138,6 +195,8 @@ def _read_cell_type_residuals(
         "cross_cell_type_residual_sample_metadata.csv",
         "cross_cell_type_residual_clusters.csv",
         "cross_cell_type_residual_pc_scores.csv",
+        "cross_cell_type_residual_cluster_markers.csv",
+        "cross_cell_type_residual_cluster_feature_composition.csv",
     ):
         (output_dir / name).unlink(missing_ok=True)
     residuals_by_type: dict[str, pd.DataFrame] = {}
@@ -240,6 +299,15 @@ def _read_cell_type_residuals(
         )
         annotations.to_csv(output_dir / "cross_cell_type_residual_clusters.csv", index=False)
         pc_scores.to_csv(output_dir / "cross_cell_type_residual_pc_scores.csv", index=False)
+        markers, composition, reference_cluster = summarize_residual_cluster_markers(
+            cross_matrix, annotations
+        )
+        markers.to_csv(
+            output_dir / "cross_cell_type_residual_cluster_markers.csv", index=False
+        )
+        composition.to_csv(
+            output_dir / "cross_cell_type_residual_cluster_feature_composition.csv", index=False
+        )
         cross_support = {
             "n_cell_types": len(cross_residuals),
             "cell_types": cross_types,
@@ -260,6 +328,8 @@ def _read_cell_type_residuals(
             "n_genes": cross_matrix.shape[1],
             "n_pcs_requested": settings.residual_pca_components,
             "n_pcs_used": n_components,
+            "residual_cluster_method": "K-means on UMAP coordinates; silhouette-selected with at least 3 samples per cluster",
+            "residual_marker_reference_cluster": reference_cluster,
         }
     else:
         cross_support = {
@@ -350,6 +420,15 @@ def build_cross_cell_type_trajectories(
         result["omnibus_padj"] = pd.to_numeric(result["omnibus_padj"], errors="coerce")
         for gene, gene_rows in result.groupby("gene", sort=False):
             unique_rows = gene_rows.drop_duplicates("age_bin").set_index("age_bin")
+            effect_values = pd.to_numeric(
+                unique_rows["log2FoldChange"], errors="coerce"
+            ).replace([np.inf, -np.inf], np.nan)
+            if effect_values.notna().any():
+                largest_effect_bin = str(effect_values.abs().idxmax())
+                largest_effect = float(effect_values.loc[largest_effect_bin])
+            else:
+                largest_effect_bin = None
+                largest_effect = np.nan
             omnibus_fdr = float(gene_rows["omnibus_padj"].dropna().iloc[0]) if (
                 gene_rows["omnibus_padj"].notna().any()
             ) else np.nan
@@ -365,6 +444,8 @@ def build_cross_cell_type_trajectories(
                     np.isfinite(omnibus_fdr)
                     and omnibus_fdr <= settings.cluster_fdr_threshold
                 ),
+                "largest_absolute_log2_fold_change": largest_effect,
+                "largest_effect_age_bin": largest_effect_bin,
             })
             if cell_type not in supported_types or not set(bins).issubset(unique_rows.index):
                 continue
@@ -382,8 +463,9 @@ def build_cross_cell_type_trajectories(
             if not np.isfinite(profile_sd) or profile_sd <= 0:
                 continue
             row = {"gene": gene, "cell_type": cell_type,
-                   "omnibus_fdr": omnibus_fdr,
-                   **dict(zip(bins, profile / profile_sd, strict=True))}
+                   "omnibus_fdr": omnibus_fdr, "trajectory_sd": profile_sd,
+                   **dict(zip(bins, profile / profile_sd, strict=True)),
+                   **{f"raw_{age_bin}": value for age_bin, value in zip(bins, profile, strict=True)}}
             profiles.append(row)
 
     trajectory_frame = pd.DataFrame(profiles)
@@ -441,6 +523,7 @@ def analyze_age_trajectories(
     pseudobulk_path: Path | None = None,
     expression_atlas_settings: ExpressionAtlasSettings | None = None,
     split_by: str = "aifi_l2_majority",
+    l2_parent_l1: Mapping[str, str] | None = None,
 ) -> dict:
     """Write shared-bin cross-type clusters, recurrence, and support summaries."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -483,6 +566,7 @@ def analyze_age_trajectories(
     if pseudobulk_path is not None and expression_atlas_settings is not None:
         expression_atlas = analyze_expression_atlas(
             pseudobulk_path, output_dir, expression_atlas_settings, split_by=split_by,
+            l2_parent_l1=l2_parent_l1,
         )
     else:
         expression_atlas = {

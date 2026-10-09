@@ -132,7 +132,11 @@
       "minimum_studies_per_technology": 2,
       "minimum_cpm_for_clustering": 1.0,
       "max_clusters": 8,
-      "report_top_n_genes": 200
+      "report_top_n_genes": 200,
+      "umap_neighbors": 50,
+      "umap_pca_components": 100,
+      "umap_min_dist": 0.15,
+      "random_state": 413
     },
     "optional_covariates": ["bmi", "cmv"],
     "alpha": 0.05,

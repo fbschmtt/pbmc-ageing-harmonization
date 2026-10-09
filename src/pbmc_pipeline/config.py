@@ -153,6 +153,10 @@ class ExpressionAtlasSettings:
     minimum_cpm_for_clustering: float
     max_clusters: int
     report_top_n_genes: int
+    umap_neighbors: int
+    umap_pca_components: int
+    umap_min_dist: float
+    random_state: int
 
     def __post_init__(self) -> None:
         for name, minimum in (
@@ -161,6 +165,8 @@ class ExpressionAtlasSettings:
             ("minimum_studies_per_technology", 2),
             ("max_clusters", 2),
             ("report_top_n_genes", 1),
+            ("umap_neighbors", 2),
+            ("umap_pca_components", 1),
         ):
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
@@ -174,6 +180,18 @@ class ExpressionAtlasSettings:
                 raise ConfigurationError(
                     f"differential_expression.expression_atlas.{name} must be positive"
                 )
+        if (
+            not isinstance(self.umap_min_dist, (int, float))
+            or isinstance(self.umap_min_dist, bool)
+            or not 0 <= self.umap_min_dist <= 1
+        ):
+            raise ConfigurationError(
+                "differential_expression.expression_atlas.umap_min_dist must be between 0 and 1"
+            )
+        if not isinstance(self.random_state, int) or isinstance(self.random_state, bool) or self.random_state < 0:
+            raise ConfigurationError(
+                "differential_expression.expression_atlas.random_state must be a non-negative integer"
+            )
 
     @classmethod
     def from_mapping(cls, mapping: dict[str, Any]) -> ExpressionAtlasSettings:
