@@ -124,6 +124,10 @@ def create_synthetic_pseudobulk(
     bmi_genes = ["SYNTH_BMI_MARKER_1", "SYNTH_BMI_MARKER_2"]
     cmv_genes = ["SYNTH_CMV_MARKER_1", "SYNTH_CMV_MARKER_2"]
     study_specific_genes = ["SYNTH_STUDY_A_ONLY", "SYNTH_STUDY_B_ONLY"]
+    study_specific_age_effects = {
+        "synthetic_study_a": ("SYNTH_STUDY_A_ONLY", 0.075),
+        "synthetic_study_b": ("SYNTH_STUDY_B_ONLY", -0.075),
+    }
     genes = (
         base_genes + age_genes + trajectory_genes + sex_genes + bmi_genes
         + cmv_genes + study_specific_genes
@@ -180,6 +184,9 @@ def create_synthetic_pseudobulk(
                     mean[genes.index("SYNTH_STUDY_A_ONLY")] *= 1.2
                 elif study == "synthetic_study_b":
                     mean[genes.index("SYNTH_STUDY_B_ONLY")] *= 1.2
+                if study in study_specific_age_effects:
+                    gene, log_mean_age_slope = study_specific_age_effects[study]
+                    mean[genes.index(gene)] *= np.exp(log_mean_age_slope * (age - 50))
                 unavailable = ~var[f"available_in_{study}"].to_numpy(dtype=bool)
                 mean[unavailable] = 0
                 size = 1.0 / alpha
@@ -217,6 +224,9 @@ def create_synthetic_pseudobulk(
         "generator": "pbmc_pipeline.synthetic_de.create_synthetic_pseudobulk",
         "not_biological_evidence": True,
         "expected_age_associated_genes": age_genes,
+        "expected_per_study_age_associated_genes": {
+            study: [gene] for study, (gene, _) in study_specific_age_effects.items()
+        },
         "expected_age_trajectory_associated_genes": trajectory_genes,
         "expected_age_trajectory_profiles": {
             gene: profile for gene, profile in zip(

@@ -7,7 +7,6 @@
 # %%
 import json
 import os
-import warnings
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -18,9 +17,7 @@ import seaborn as sns
 from IPython.display import Markdown, display
 from matplotlib.ticker import MaxNLocator
 from scipy import sparse
-from upsetplot import UpSet, from_indicators
-
-from pbmc_pipeline.reporting import gene_presence_indicators, pseudobulk_celltype_fractions
+from pbmc_pipeline.reporting import pseudobulk_celltype_fractions
 
 sns.set_theme(style="whitegrid")
 
@@ -89,62 +86,6 @@ def show_technical_covariates(adata):
     plt.show()
 
 
-def show_gene_join_accounting(report, heading):
-    accounting = report.get("gene_join_accounting")
-    if not accounting:
-        display(Markdown(f"### {heading}\n\n_Count accounting is unavailable in this merge report._"))
-        return
-
-    join = accounting["gene_join"]
-    join_description = "union" if join == "outer" else "intersection"
-    total = int(accounting["input_counts"])
-    discarded = int(accounting["discarded_counts"])
-    percent = 100 * float(accounting["discarded_fraction"])
-    display(Markdown(
-        f"### {heading}\n\nThe {join_description} retains "
-        f"{accounting['joined_gene_symbols']:,} gene symbols. Across all studies, "
-        f"{discarded:,} of {total:,} input counts ({percent:.3f}%) are excluded by "
-        "the gene join. The table reports each study's counts and the excluded gene "
-        "symbol with the largest count contribution."
-    ))
-    rows = pd.DataFrame(accounting["studies"])
-    if rows.empty:
-        return
-    rows["counts discarded (%)"] = (100 * rows["discarded_fraction"]).map(lambda value: f"{value:.3f}")
-    rows["top excluded gene"] = rows.apply(
-        lambda row: (
-            f"{row['top_discarded_gene']} ({int(row['top_discarded_gene_counts']):,})"
-            if row["top_discarded_gene"] is not None
-            else "—"
-        ),
-        axis=1,
-    )
-    if report.get("kind") == "single_cell_merge":
-        plot_rows = rows.sort_values("discarded_fraction", ascending=False)
-        percentages = 100 * plot_rows["discarded_fraction"]
-        fig, axis = plt.subplots(figsize=(9, max(3, 0.4 * len(plot_rows))))
-        bars = axis.barh(plot_rows["study"], percentages, color="#c44e52")
-        axis.invert_yaxis()
-        axis.set_xlabel("Counts discarded (%)")
-        axis.set_ylabel("Study")
-        axis.set_title("Counts removed by the single-cell gene intersection")
-        axis.set_xlim(0, max(0.5, float(percentages.max()) * 1.15))
-        axis.bar_label(bars, labels=[f"{value:.2f}%" for value in percentages], padding=3)
-        fig.tight_layout()
-        plt.show()
-
-    display(rows[[
-        "study", "input_gene_symbols", "retained_gene_symbols", "discarded_gene_symbols",
-        "input_counts", "discarded_counts", "counts discarded (%)", "top excluded gene",
-    ]].rename(columns={
-        "input_gene_symbols": "input genes",
-        "retained_gene_symbols": "retained genes",
-        "discarded_gene_symbols": "discarded genes",
-        "input_counts": "input counts",
-        "discarded_counts": "discarded counts",
-    }))
-
-
 # %% [markdown]
 # ## Pseudobulk merge
 
@@ -152,7 +93,6 @@ def show_gene_join_accounting(report, heading):
 pseudobulk, pseudobulk_report, pseudobulk_path = load_merge("PSEUDOBULK")
 show_summary(pseudobulk, pseudobulk_report, pseudobulk_path, "Pseudobulk merge")
 show_study_coverage(pseudobulk)
-show_gene_join_accounting(pseudobulk_report, "Pseudobulk gene join")
 show_technical_covariates(pseudobulk)
 
 # %% [markdown]
@@ -169,24 +109,6 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ### Gene-presence overlap
-
-# %%
-presence = gene_presence_indicators(pseudobulk.var)
-if presence.empty or presence.shape[1] < 2:
-    display(Markdown("_Gene-presence overlap requires an outer gene join across at least two studies._"))
-else:
-    # UpSetPlot 0.9 has a rendering error with ``show_counts`` under current
-    # Matplotlib, so intersection labels are intentionally omitted.
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=FutureWarning, module=r"upsetplot\.plotting")
-        axes = UpSet(from_indicators(presence), subset_size="count", sort_by="cardinality").plot()
-    figure = axes["intersections"].figure
-    figure.suptitle("Gene presence across studies", y=1.02)
-    figure.subplots_adjust(top=0.9)
-    plt.show()
-
-# %% [markdown]
 # ## Global single-cell merge
 
 # %%
@@ -197,7 +119,6 @@ else:
     single_cell, single_cell_report, single_cell_path = load_merge("SINGLE_CELL")
     show_summary(single_cell, single_cell_report, single_cell_path, "Global single-cell merge")
     show_study_coverage(single_cell)
-    show_gene_join_accounting(single_cell_report, "Single-cell gene join")
 
     display(Markdown("### Depth"))
     values = single_cell.X

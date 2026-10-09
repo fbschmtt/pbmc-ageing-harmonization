@@ -73,6 +73,17 @@ def test_expression_atlas_uses_common_genes_depth_gate_and_technology_contrast(t
     assert np.isclose(matrix.loc["G1", "Type A"], expected)
     support = pd.read_csv(output_dir / "expression_atlas_study_support.csv")
     assert support["retained_by_depth_gate"].all()
+    availability = pd.read_csv(output_dir / "expression_atlas_gene_availability.csv", index_col="gene")
+    assert availability.columns.tolist() == ["five_a", "five_b", "three_a", "three_b"]
+    assert availability.astype(bool).all(axis=None)
+    intersection_accounting = pd.read_csv(
+        output_dir / "expression_atlas_gene_intersection_accounting.csv"
+    )
+    assert intersection_accounting["discarded_counts"].eq(0).all()
+    assert intersection_accounting["top_discarded_gene"].isna().all()
+    assert metadata["n_genes_in_outer_union"] == 3
+    assert metadata["gene_availability_by_study"]["three_a"] == 3
+    assert metadata["gene_intersection_accounting"]["discarded_counts"] == 0
     contrast = pd.read_csv(output_dir / "expression_atlas_technology_contrast.csv")
     assert (contrast.loc[(contrast["gene"] == "G1") & (contrast["cell_type"] == "Type A"), "log2_cpm_difference_5_prime_minus_3_prime"] < 0).all()
     assert (output_dir / "expression_atlas_gene_clusters.csv").is_file()
@@ -104,6 +115,40 @@ def test_expression_atlas_uses_common_genes_depth_gate_and_technology_contrast(t
     assert pd.read_csv(
         unknown_technology_output_dir / "expression_atlas_technology_contrast.csv"
     ).empty
+
+
+def test_expression_atlas_records_counts_lost_by_shared_gene_intersection(tmp_path) -> None:
+    pseudobulk = ad.AnnData(
+        X=sparse.csr_matrix(np.array([[10, 4, 0], [20, 0, 8]])),
+        obs=pd.DataFrame({
+            "study": ["study_a", "study_b"],
+            "aifi_l2_majority": ["Type A", "Type A"],
+        }),
+        var=pd.DataFrame({
+            "available_in_study_a": [True, True, False],
+            "available_in_study_b": [True, False, True],
+        }, index=["SHARED", "ONLY_A", "ONLY_B"]),
+    )
+    pseudobulk_path = tmp_path / "pseudobulk.h5ad"
+    pseudobulk.write_h5ad(pseudobulk_path)
+    output_dir = tmp_path / "atlas"
+
+    metadata = analyze_expression_atlas(
+        pseudobulk_path,
+        output_dir,
+        replace(ATLAS_SETTINGS, minimum_study_cell_type_total_counts=1),
+        split_by="aifi_l2_majority",
+    )
+
+    accounting = pd.read_csv(
+        output_dir / "expression_atlas_gene_intersection_accounting.csv"
+    ).set_index("study")
+    assert metadata["n_shared_genes"] == 1
+    assert accounting.loc["study_a", "discarded_counts"] == 4
+    assert accounting.loc["study_a", "top_discarded_gene"] == "ONLY_A"
+    assert accounting.loc["study_b", "discarded_counts"] == 8
+    assert accounting.loc["study_b", "top_discarded_gene"] == "ONLY_B"
+    assert metadata["gene_intersection_accounting"]["discarded_counts"] == 12
 
 
 def test_hierarchical_trajectory_clusters_and_umap_use_complete_profiles() -> None:

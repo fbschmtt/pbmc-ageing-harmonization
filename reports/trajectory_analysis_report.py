@@ -8,6 +8,7 @@
 # %%
 import json
 import os
+import warnings
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -15,6 +16,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from IPython.display import HTML, Markdown, display
+from upsetplot import UpSet, from_indicators
 
 sns.set_theme(style="whitegrid")
 analysis_dir = Path(os.environ["TRAJECTORY_ANALYSIS_DIR"])
@@ -43,6 +45,10 @@ expression_technology_contrast_path = analysis_dir / "expression_atlas_technolog
 expression_technology_summary_path = analysis_dir / "expression_atlas_technology_summary.csv"
 expression_intronic_contrast_path = analysis_dir / "expression_atlas_intronic_contrast.csv"
 expression_intronic_summary_path = analysis_dir / "expression_atlas_intronic_summary.csv"
+expression_gene_availability_path = analysis_dir / "expression_atlas_gene_availability.csv"
+expression_gene_intersection_accounting_path = (
+    analysis_dir / "expression_atlas_gene_intersection_accounting.csv"
+)
 
 
 def read_optional_csv(path, **kwargs):
@@ -59,6 +65,12 @@ expression_technology_contrast = read_optional_csv(expression_technology_contras
 expression_technology_summary = read_optional_csv(expression_technology_summary_path)
 expression_intronic_contrast = read_optional_csv(expression_intronic_contrast_path)
 expression_intronic_summary = read_optional_csv(expression_intronic_summary_path)
+expression_gene_availability = read_optional_csv(
+    expression_gene_availability_path, index_col="gene"
+).astype(bool)
+expression_gene_intersection_accounting = read_optional_csv(
+    expression_gene_intersection_accounting_path
+)
 
 display(HTML("""
 <style>
@@ -118,6 +130,7 @@ html { scroll-behavior: smooth; scroll-padding-top: 1.25rem; }
       <li><a href="#Support-and-scope">Support and scope</a></li>
       <li><a href="#Study-balanced-cell-type-expression-atlas">Expression atlas</a>
         <ul>
+          <li><a href="#Gene-intersection-across-studies">Gene intersection</a></li>
           <li><a href="#AIFI-L1-mean-scaled-expression">AIFI L1 scaled expression</a></li>
           <li><a href="#3%E2%80%B2/5%E2%80%B2-technology-associated-contrast">3′/5′ contrast</a></li>
           <li><a href="#Intronic-read-inclusion-contrast">Intronic contrast</a></li>
@@ -165,6 +178,89 @@ if excluded:
 # genes present in every study, sums counts within each study × cell type, drops
 # groups below the configured depth threshold, computes `log2(CPM + pseudocount)`,
 # and then averages those values equally across studies.
+
+# %% [markdown]
+# ### Gene intersection across studies
+
+# %%
+if expression_gene_availability.empty or expression_gene_availability.shape[1] < 2:
+    display(Markdown(
+        "_Gene-availability overlap requires an outer pseudobulk merge with at least two studies._"
+    ))
+else:
+    n_shared_genes = int(expression_gene_availability.all(axis=1).sum())
+    n_union_genes = len(expression_gene_availability)
+    study_gene_counts = expression_gene_availability.sum(axis=0).rename("available genes")
+    display(Markdown(
+        f"The pseudobulk merge retains the outer union of **{n_union_genes:,} genes** so "
+        "per-study models can use each study's observed genes. The study-balanced expression "
+        f"atlas below deliberately uses the **{n_shared_genes:,} genes** available in every "
+        "study. This is the relevant gene-intersection diagnostic; it is shown here rather "
+        "than in merge QC because the merge itself does not discard study-specific genes."
+    ))
+    display(study_gene_counts.to_frame())
+    if not expression_gene_intersection_accounting.empty:
+        accounting = expression_gene_intersection_accounting.copy()
+        total_input_counts = int(accounting["input_counts"].sum())
+        total_discarded_counts = int(accounting["discarded_counts"].sum())
+        total_discarded_fraction = (
+            total_discarded_counts / total_input_counts if total_input_counts else 0.0
+        )
+        display(Markdown(
+            f"Restricting to the shared-gene intersection would exclude **{total_discarded_counts:,} "
+            f"of {total_input_counts:,} pseudobulk counts ({100 * total_discarded_fraction:.3f}%)**. "
+            "These are hypothetical exclusions for the study-balanced atlas; the outer pseudobulk "
+            "merge retains those counts for per-study models."
+        ))
+        plot_rows = accounting.sort_values("discarded_fraction", ascending=False)
+        figure, axis = plt.subplots(figsize=(9, max(3, 0.4 * len(plot_rows))))
+        percentages = 100 * plot_rows["discarded_fraction"]
+        bars = axis.barh(plot_rows["study"], percentages, color="#c44e52")
+        axis.invert_yaxis()
+        axis.set_xlabel("Counts outside shared-gene intersection (%)")
+        axis.set_ylabel("Study")
+        axis.set_title("Pseudobulk counts outside the all-study gene intersection")
+        axis.set_xlim(0, max(0.5, float(percentages.max()) * 1.15))
+        axis.bar_label(bars, labels=[f"{value:.2f}%" for value in percentages], padding=3)
+        figure.tight_layout()
+        plt.show()
+        accounting["counts outside intersection (%)"] = (
+            100 * accounting["discarded_fraction"]
+        ).map(lambda value: f"{value:.3f}%")
+        accounting["top excluded gene"] = accounting.apply(
+            lambda row: (
+                f"{row['top_discarded_gene']} ({int(row['top_discarded_gene_counts']):,})"
+                if pd.notna(row["top_discarded_gene"])
+                else "—"
+            ),
+            axis=1,
+        )
+        display(accounting[[
+            "study", "input_gene_symbols", "retained_gene_symbols", "discarded_gene_symbols",
+            "input_counts", "discarded_counts", "counts outside intersection (%)",
+            "top excluded gene",
+        ]].rename(columns={
+            "input_gene_symbols": "input genes",
+            "retained_gene_symbols": "shared genes",
+            "discarded_gene_symbols": "genes outside intersection",
+            "input_counts": "input counts",
+            "discarded_counts": "counts outside intersection",
+        }))
+    # UpSetPlot 0.9 has a rendering error with ``show_counts`` under current
+    # Matplotlib, so intersection labels are intentionally omitted.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning, module=r"upsetplot\\.plotting")
+        axes = UpSet(
+            from_indicators(expression_gene_availability), subset_size="count", sort_by="cardinality"
+        ).plot()
+    figure = axes["intersections"].figure
+    figure.suptitle("Gene availability across studies", y=1.02)
+    figure.subplots_adjust(top=0.9)
+    plt.show()
+    display(Markdown(
+        "Download the [gene-availability matrix](expression_atlas_gene_availability.csv) "
+        "and [gene-intersection count accounting](expression_atlas_gene_intersection_accounting.csv)."
+    ))
 
 # %%
 if expression_atlas_support.get("status") == "complete" and not expression_matrix.empty:

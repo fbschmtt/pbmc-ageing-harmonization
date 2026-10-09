@@ -15,7 +15,8 @@ import pandas as pd
 def _load_fixture(
     outdir: Path,
 ) -> tuple[
-    list[str], dict[str, list[str]], dict[str, list[str]], int, dict[str, list[float]]
+    list[str], dict[str, list[str]], dict[str, list[str]], int, dict[str, list[float]],
+    dict[str, list[str]],
 ]:
     fixture_path = outdir / "synthetic_de" / "pseudobulk_merged.h5ad"
     if not fixture_path.is_file():
@@ -36,6 +37,9 @@ def _load_fixture(
     trajectory_profiles = metadata.get("expected_age_trajectory_profiles")
     if not trajectory_profiles:
         raise SystemExit(f"Fixture does not declare planted trajectory profiles: {fixture_path}")
+    per_study_age_genes = metadata.get("expected_per_study_age_associated_genes")
+    if not per_study_age_genes:
+        raise SystemExit(f"Fixture does not declare planted per-study age markers: {fixture_path}")
     fixture.file.close()
     return (
         cell_types,
@@ -43,13 +47,14 @@ def _load_fixture(
         {key: list(value) for key, value in covariate_studies.items()},
         samples_per_study,
         {gene: list(profile) for gene, profile in trajectory_profiles.items()},
+        {study: list(genes) for study, genes in per_study_age_genes.items()},
     )
 
 
 def check_results(outdir: Path) -> None:
     (
         cell_types, expected_genes, covariate_studies, samples_per_study,
-        trajectory_profiles,
+        trajectory_profiles, per_study_age_genes,
     ) = _load_fixture(outdir)
     de_dir = outdir / "differential_expression"
     manifest_path = de_dir / "differential_expression.json"
@@ -108,6 +113,28 @@ def check_results(outdir: Path) -> None:
                 raise SystemExit(f"Missing planted marker {gene!r} in {result_path}")
             if float(row["padj"]) >= 0.05:
                 raise SystemExit(f"Planted marker {gene!r} is not significant in {result_path}")
+        for study, genes in per_study_age_genes.items():
+            per_study_model = next(
+                (model for model in models
+                 if model.get("model") == "per_study" and model.get("study") == study),
+                None,
+            )
+            if per_study_model is None or "age" not in per_study_model.get(
+                "results_by_covariate", {}
+            ):
+                raise SystemExit(
+                    f"Missing per-study age result for planted marker study {study!r}"
+                )
+            per_study_path = de_dir / per_study_model["results_by_covariate"]["age"]
+            with per_study_path.open(newline="") as handle:
+                per_study_results = {row["gene"]: row for row in csv.DictReader(handle)}
+            for gene in genes:
+                row = per_study_results.get(gene)
+                if row is None or not row.get("padj") or float(row["padj"]) >= 0.05:
+                    raise SystemExit(
+                        f"Planted per-study age marker {gene!r} is not significant in "
+                        f"{per_study_path}"
+                    )
         sex_path = de_dir / merged["results_by_covariate"]["sex"]
         with sex_path.open(newline="") as handle:
             sex_results = {row["gene"]: row for row in csv.DictReader(handle)}
@@ -250,7 +277,7 @@ def check_results(outdir: Path) -> None:
 
 
 def check_reports(outdir: Path) -> None:
-    cell_types, expected_genes, _, _, _ = _load_fixture(outdir)
+    cell_types, expected_genes, _, _, _, _ = _load_fixture(outdir)
     for cell_type in cell_types:
         slug = "-".join(cell_type.lower().split())
         cell_type_dir = outdir / "cell_type_analysis" / slug
@@ -347,6 +374,8 @@ def check_reports(outdir: Path) -> None:
         trajectory_dir / "expression_atlas_gene_umap.csv",
         trajectory_dir / "expression_atlas_gene_clusters.csv",
         trajectory_dir / "expression_atlas_study_support.csv",
+        trajectory_dir / "expression_atlas_gene_availability.csv",
+        trajectory_dir / "expression_atlas_gene_intersection_accounting.csv",
         trajectory_dir / "expression_atlas_technology_contrast.csv",
         trajectory_dir / "expression_atlas_intronic_contrast.csv",
         trajectory_dir / "cross_cell_type_residual_cluster_markers.csv",

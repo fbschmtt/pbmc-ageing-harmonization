@@ -657,7 +657,9 @@ sums raw counts within each study × cell type, retains groups with at least
 averages those values equally across studies. It is a study-balanced
 relative-expression summary, not calibrated absolute RNA abundance or a
 covariate-adjusted estimate. It writes the full matrix, depth-support table,
-gene-expression UMAP, plus independent 3′/5′ and intronic-read inclusion
+gene-availability matrix, overlap diagnostic, and per-study count accounting
+for the shared-gene intersection, gene-expression UMAP, plus independent 3′/5′
+and intronic-read inclusion
 contrasts. The gene UMAP centers and scales each gene only for its internal PCA
 (up to 100 PCs) and UMAP computation (50 neighbors); it reports both the
 unscaled mean expression and the per-gene SD used for that scaling. It also
@@ -710,7 +712,12 @@ and log10 total counts. Its dashed y=x line marks the null
 reference, with independently scaled axes for readability. Combined-model
 standard volcano point colors show the number of available per-study fits for the same
 covariate and contrast where that gene passes the FDR threshold; point position
-continues to show the combined-fit effect and adjusted p-value.
+continues to show the combined-fit effect and adjusted p-value. On the age
+volcano, outlined study-coloured diamonds additionally show each study's most
+significant FDR-significant gene outside the combined all-study gene
+intersection, using that study's own effect and adjusted p-value. Therefore a
+diamond cannot duplicate a combined-fit point; it is a context marker for a
+gene omitted from the combined model.
 
 Samples must be age 20 or older and have at least 10 cells in that
 sample × cell-type pseudobulk. Samples missing required metadata or covariates,

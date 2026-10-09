@@ -2217,6 +2217,7 @@ if de_dir:
                     volcano["padj"].clip(lower=np.finfo(float).tiny)
                 )
                 study_results = per_study_by_covariate.get(covariate, [])
+                matching_study_results = pd.DataFrame()
                 if study_results:
                     matching_study_results = pd.concat(study_results, ignore_index=True)
                     matching_study_results = matching_study_results.loc[
@@ -2259,6 +2260,43 @@ if de_dir:
                         f"{study} (n={count})" for study, count in sample_counts.items()
                     )
                 n_samples_used = sum(sample_counts.values()) if sample_counts else "unavailable"
+                nonintersection_age_markers = pd.DataFrame()
+                if covariate == "age" and not matching_study_results.empty:
+                    marker_results = matching_study_results.copy()
+                    if studies_used:
+                        marker_results = marker_results.loc[
+                            marker_results["study"].astype(str).isin(studies_used)
+                        ].copy()
+                    marker_results["log2FoldChange"] = pd.to_numeric(
+                        marker_results["log2FoldChange"], errors="coerce"
+                    )
+                    marker_results = marker_results.dropna(
+                        subset=["gene", "padj", "log2FoldChange"]
+                    )
+                    study_gene_sets = [
+                        set(group["gene"].astype(str))
+                        for _, group in marker_results.groupby("study", observed=True)
+                    ]
+                    shared_age_genes = (
+                        set.intersection(*study_gene_sets) if study_gene_sets else set()
+                    )
+                    nonintersection_age_markers = marker_results.loc[
+                        (marker_results["padj"] < de_alpha)
+                        & ~marker_results["gene"].astype(str).isin(shared_age_genes)
+                    ].copy()
+                    if not nonintersection_age_markers.empty:
+                        nonintersection_age_markers["minus_log10_padj"] = -np.log10(
+                            nonintersection_age_markers["padj"].clip(
+                                lower=np.finfo(float).tiny
+                            )
+                        )
+                        nonintersection_age_markers = (
+                            nonintersection_age_markers.sort_values(
+                                ["study", "padj", "gene"], kind="stable"
+                            )
+                            .groupby("study", as_index=False, sort=True)
+                            .head(1)
+                        )
                 display(Markdown(
                     f"**{covariate_label} contrast:** {contrast}. **Studies used:** "
                     f"{study_summary or 'unavailable in this legacy result set'}; "
@@ -2276,10 +2314,35 @@ if de_dir:
                     hue_norm=(0, max_associated_studies), legend="brief",
                     s=16, alpha=0.7, linewidth=0, ax=axis,
                 )
-                axis.legend(
+                study_count_legend = axis.legend(
                     title="Per-study FDR-significant\nassociations", fontsize=8,
                     bbox_to_anchor=(1.02, 1), loc="upper left", borderaxespad=0,
                 )
+                if not nonintersection_age_markers.empty:
+                    study_colors = dict(zip(
+                        sorted(nonintersection_age_markers["study"].astype(str).unique()),
+                        sns.color_palette("tab10", n_colors=nonintersection_age_markers["study"].nunique()),
+                    ))
+                    for _, marker in nonintersection_age_markers.iterrows():
+                        study = str(marker["study"])
+                        axis.scatter(
+                            marker["log2FoldChange"], marker["minus_log10_padj"],
+                            marker="D", s=72, facecolors="none",
+                            edgecolors=study_colors[study], linewidths=1.8,
+                            label=study, zorder=4,
+                        )
+                        axis.annotate(
+                            f"{marker['gene']} ({study})",
+                            (marker["log2FoldChange"], marker["minus_log10_padj"]),
+                            xytext=(4, -10), textcoords="offset points", fontsize=7,
+                            color=study_colors[study],
+                        )
+                    axis.legend(
+                        title="Top FDR-significant\nnon-shared age gene",
+                        fontsize=8, bbox_to_anchor=(1.02, 0.46),
+                        loc="upper left", borderaxespad=0,
+                    )
+                    axis.add_artist(study_count_legend)
                 axis.axhline(-np.log10(de_alpha), color="#555555", linestyle="--", linewidth=1)
                 axis.axvline(0, color="#555555", linewidth=0.8)
                 if covariate == "age":
@@ -2305,8 +2368,20 @@ if de_dir:
                         (row["log2FoldChange"], row["minus_log10_padj"]),
                         xytext=(3, 3), textcoords="offset points", fontsize=7,
                     )
-                figure.tight_layout(rect=(0, 0, 0.78, 1))
+                figure.tight_layout(rect=(0, 0, 0.68 if not nonintersection_age_markers.empty else 0.78, 1))
                 plt.show()
+                if not nonintersection_age_markers.empty:
+                    display(Markdown(
+                        "Outlined diamonds use each study's own age-model estimate and adjusted "
+                        "p-value. They select the smallest adjusted p-value among FDR-significant "
+                        "genes outside the shared per-study gene universe."
+                    ))
+                    display(nonintersection_age_markers[[
+                        "study", "gene", "log2FoldChange", "padj",
+                    ]].rename(columns={
+                        "log2FoldChange": "per-study log2 fold change per year",
+                        "padj": "per-study adjusted p-value",
+                    }).sort_values("study", kind="stable"))
                 if covariate in {"age", "log10_total_counts"} and "baseMean" in volcano.columns:
                     base_mean = pd.to_numeric(volcano["baseMean"], errors="coerce")
                     finite = np.isfinite(base_mean) & (base_mean > 0)
@@ -2351,6 +2426,9 @@ if de_dir:
             "Volcano point color gives the number of available per-study fits for the same covariate "
             "and contrast with FDR-significant association for that gene (using the displayed FDR "
             "threshold); the plotted effect and adjusted p-value come from the combined fit. "
+            "For age, outlined diamonds mark the smallest per-study adjusted p-value among "
+            "FDR-significant genes outside the shared per-study gene universe; their position instead uses that study's "
+            "own effect and adjusted p-value, so they are a visibility check rather than combined-fit points. "
             "The site term is omitted when only one site remains estimable. Combined fits do not "
             "by themselves establish replication across studies._"
         ))

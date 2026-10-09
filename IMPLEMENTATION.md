@@ -344,8 +344,16 @@ cross-cell-type expression summary in the combined trajectory report. It uses
 the gene intersection across all studies, pools raw counts to one study ×
 AIFI-L2 cell-type profile, applies the depth filter to that exact intersection,
 then calculates `log2(CPM + pseudocount)` and averages log values equally across
-retained studies. This is a relative expression measure, not calibrated
+retained studies. The report records the outer-union gene availability matrix
+and overlap display next to this atlas, along with per-study counts outside the
+intersection and each study's largest excluded gene, so the intersection is
+interpreted where it is actually applied. This is a relative expression measure, not calibrated
 absolute RNA abundance or a covariate-adjusted model.
+
+For age volcanoes, the per-study overlays are restricted to FDR-significant
+genes outside the combined all-study gene intersection. Their displayed effect
+and adjusted p-value come from the respective per-study fit; they cannot
+duplicate a combined-model point.
 
 The current depth threshold is 1,000,000 counts, `cpm_pseudocount` is 1, and a
 cell type needs two retained studies. Genes with at least 1 CPM in one retained

@@ -204,10 +204,69 @@ def analyze_expression_atlas(
             f"{pseudobulk_path}: expression atlas gene-availability columns are missing: "
             f"{missing_availability}"
         )
-    shared_mask = adata.var[availability_columns].fillna(False).astype(bool).all(axis=1).to_numpy()
-    genes = adata.var_names[shared_mask].astype(str)
     output_dir.mkdir(parents=True, exist_ok=True)
+    gene_availability = adata.var[availability_columns].fillna(False).astype(bool).copy()
+    gene_availability.columns = studies
+    gene_availability.index = pd.Index(adata.var_names.astype(str), name="gene")
+    _write_table(output_dir / "expression_atlas_gene_availability.csv", gene_availability, index=True)
+    shared_mask = gene_availability.all(axis=1).to_numpy()
+    genes = adata.var_names[shared_mask].astype(str)
     empty_matrix = pd.DataFrame(index=pd.Index([], name="gene"))
+    intersection_rows = []
+    total_input_counts = 0
+    total_retained_counts = 0
+    for study in studies:
+        selected = np.flatnonzero(adata.obs["study"].astype(str).to_numpy() == study)
+        gene_counts = np.asarray(adata.X[selected].sum(axis=0)).ravel().astype(np.int64)
+        available = gene_availability[study].to_numpy(dtype=bool)
+        discarded = available & ~shared_mask
+        input_counts = int(gene_counts.sum(dtype=np.int64))
+        retained_counts = int(gene_counts[shared_mask].sum(dtype=np.int64))
+        discarded_counts = input_counts - retained_counts
+        top_discarded_gene = None
+        top_discarded_gene_counts = 0
+        if discarded_counts:
+            discarded_positions = np.flatnonzero(discarded)
+            top_position = discarded_positions[np.argmax(gene_counts[discarded])]
+            top_discarded_gene = str(adata.var_names[top_position])
+            top_discarded_gene_counts = int(gene_counts[top_position])
+        intersection_rows.append({
+            "study": study,
+            "input_gene_symbols": int(available.sum()),
+            "retained_gene_symbols": int(shared_mask.sum()),
+            "discarded_gene_symbols": int(discarded.sum()),
+            "input_counts": input_counts,
+            "retained_counts": retained_counts,
+            "discarded_counts": discarded_counts,
+            "discarded_fraction": (
+                discarded_counts / input_counts if input_counts else 0.0
+            ),
+            "top_discarded_gene": top_discarded_gene,
+            "top_discarded_gene_counts": top_discarded_gene_counts,
+        })
+        total_input_counts += input_counts
+        total_retained_counts += retained_counts
+    intersection_accounting = pd.DataFrame(intersection_rows)
+    _write_table(
+        output_dir / "expression_atlas_gene_intersection_accounting.csv",
+        intersection_accounting,
+    )
+    total_discarded_counts = total_input_counts - total_retained_counts
+    availability_metadata = {
+        "n_genes_in_outer_union": int(adata.n_vars),
+        "n_shared_genes": len(genes),
+        "gene_availability_by_study": {
+            study: int(gene_availability[study].sum()) for study in studies
+        },
+        "gene_intersection_accounting": {
+            "input_counts": total_input_counts,
+            "retained_counts": total_retained_counts,
+            "discarded_counts": total_discarded_counts,
+            "discarded_fraction": (
+                total_discarded_counts / total_input_counts if total_input_counts else 0.0
+            ),
+        },
+    }
     if not len(genes):
         _write_table(output_dir / "expression_atlas_matrix.csv", empty_matrix, index=True)
         _empty_atlas_tables(output_dir)
@@ -216,6 +275,7 @@ def analyze_expression_atlas(
             "reason": "no genes are shared by every study",
             "technology_available": technology_available,
             "intronic_available": intronic_available,
+            **availability_metadata,
             **settings.to_mapping(),
         }
 
@@ -299,6 +359,7 @@ def analyze_expression_atlas(
             "intronic_contrast_reason": (
                 None if intronic_available else "intronic-read metadata was not present in the pseudobulk input"
             ),
+            **availability_metadata,
             **settings.to_mapping(),
         }
 
@@ -454,7 +515,7 @@ def analyze_expression_atlas(
     _write_table(output_dir / "expression_atlas_intronic_summary.csv", intronic_summary)
     return {
         "status": "complete",
-        "n_shared_genes": len(genes),
+        **availability_metadata,
         "n_study_cell_type_groups": len(support),
         "n_depth_qualified_groups": len(retained),
         "cell_types": expression.columns.tolist(),
