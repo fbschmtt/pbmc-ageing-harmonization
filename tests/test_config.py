@@ -33,6 +33,7 @@ def test_age_trajectory_report_and_clustering_choices_are_explicit_and_validated
     assert age_trajectory["minimum_bins"] == 7
     assert age_trajectory["cluster_fdr_threshold"] == 0.001
     assert age_trajectory["de_fdr_threshold"] == 0.05
+    assert age_trajectory["max_clusters"] == 7
     assert age_trajectory["linkage_method"] == "ward"
     assert age_trajectory["distance_metric"] == "euclidean"
     assert age_trajectory["minimum_umap_trajectories"] == 4

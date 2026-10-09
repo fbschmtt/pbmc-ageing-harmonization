@@ -112,7 +112,7 @@
       "cross_cell_type_residual_minimum_sample_coverage": 0.8,
       "cluster_fdr_threshold": 0.001,
       "de_fdr_threshold": 0.05,
-      "max_clusters": 5,
+      "max_clusters": 7,
       "linkage_method": "ward",
       "distance_metric": "euclidean",
       "umap_neighbors": 15,

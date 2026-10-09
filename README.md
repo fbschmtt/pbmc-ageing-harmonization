@@ -97,9 +97,10 @@ conversion.
 
 ## Current status
 
-Production and a fresh-clone `make run-all` completed successfully before the
-latest metadata corrections. The remaining manual metadata review and required
-production rerun are tracked in [PLAN.md](PLAN.md).
+Current implementation work, validation status, and remaining scientific
+review are tracked in [PLAN.md](PLAN.md). Run the focused target in
+[Choosing a Make target](#choosing-a-make-target) before relying on a changed
+workflow or report.
 
 ## Data flow
 
@@ -329,11 +330,12 @@ pbmc-qc \
 ```
 
 The merge workflow renders one combined document at `output/qc/merged/`. It
-covers pseudobulk composition, gene presence, join accounting, and technical
-covariates. The pseudobulk outer union retains all input counts. For the
-single-cell shared-gene intersection, it shows each study's discarded-count
-fraction, totals, and gene with the greatest lost count. Global UMAPs and
-benchmark AIFI-L2 comparisons belong to the separate integration benchmark.
+covers pseudobulk composition and technical covariates; the pseudobulk outer
+union retains all input counts. Shared-gene availability, hypothetical count
+loss under the all-study intersection, and the highest-count excluded gene are
+reported with the cross-cell-type expression atlas, where that intersection is
+actually used. Global UMAPs and benchmark AIFI-L2 comparisons belong to the
+separate integration benchmark.
 The merged artifact retains per-study labels in `aifi_l2_majority` for all
 downstream grouping and splitting. Run `make run-integration-benchmark` after
 the core workflow to create a small diagnostic H5AD with global UMAP coordinates
@@ -426,6 +428,24 @@ notebook is the audit artifact. These standalone pages are intentionally
 separate from any future project-level website or custom frontend, which should
 browse manifests and structured report tables rather than parse notebook HTML.
 
+#### Automatic table of contents
+
+Cell-type and merge QC reports share their reader-facing header and styles from
+[`src/pbmc_pipeline/report_theme.py`](src/pbmc_pipeline/report_theme.py). Their
+navigation lists are generated from the final rendered HTML after notebook
+export. The templates provide a TOC placeholder, and
+[`src/pbmc_pipeline/report_toc.py`](src/pbmc_pipeline/report_toc.py) collects
+the rendered H2, H3, and H4 headings in document order, nests them by heading
+level, and replaces the placeholder with linked entries. This also picks up
+headings emitted conditionally or programmatically by notebook cells. When
+editing a report, add or reorder document headings and let the renderer update
+the TOC; do not maintain a separate list of TOC links. Give headings explicit
+IDs when their anchors need to remain stable across heading text changes.
+
+The cell-type and merge QC runners call these helpers after notebook execution
+and HTML export. Other report templates do not use them unless their runner is
+updated to add the shared header and TOC placeholder, then populate the TOC.
+
 ## Per-cell-type reports
 
 The optional downstream workflow loads a completed merged single-cell H5AD once
@@ -445,8 +465,8 @@ study. Its age coefficient is per decade; sex, BMI, and CMV terms are shown when
 estimable. Fractions are modeled on the 0–1 scale and effects, confidence
 intervals, and residual SDs are displayed as absolute percentage-point changes
 (0.01 fraction = 1 percentage point). Confidence intervals extending beyond
-the displayed scale are marked with arrowheads. The title names the current L2
-cell type and its L1 parent.
+the displayed scale are marked with arrowheads. The title identifies the
+adult-only analysis, current L2 cell type, and its L1 parent.
 
 Secondary descriptive views plot the type's sample-level fraction across age,
 coloured by study. They show two denominators, both recorded before splitting:
@@ -478,16 +498,11 @@ linear fits using all samples and using samples aged at least 20 years; points
 are colored by study, with solid black and dashed gray fit lines. Their fit
 legend appears once.
 
-The combined view fits a weighted least-squares model with study-specific
-intercepts and a shared age slope. Each study receives equal total weight; the
-plot shows the prediction averaged equally across studies, with a 95% HC3
-confidence interval. Shading marks the age range observed in every study;
-predictions outside that range extrapolate for at least one study. This is a
-study-adjusted descriptive summary, separate from the per-study fraction models.
-The HC3 interval treats sample rows as independent; repeat samples from the same
-subject are not clustered, which may understate uncertainty.
-The within-study and study-adjusted age-trend figures appear in collapsed
-panels after the forest plot.
+The all-study view puts all studies in each denominator panel: sample points
+have alpha 0.2 and each study has its own descriptive lowess curve. It does not
+fit a combined model or imply a pooled age effect. The within-study trend panels
+are open on load; the all-study lowess figure remains collapsible after the
+forest plot.
 
 ```bash
 make run-cell-type-analysis
@@ -596,6 +611,17 @@ readable to Nextflow and use a `WORK_DIR` that supports symbolic links.
 
 ## Pseudobulk differential expression
 
+### Gene universes
+
+The workflow intentionally uses different gene universes for different tasks:
+
+| Context | Gene universe | Purpose |
+|---|---|---|
+| Merged pseudobulk | Outer union across studies | Retains each study's observed genes for per-study models. |
+| Per-study DE | Genes available in that study | Fits only observed counts for that study. |
+| Combined DE | Intersection across studies included in that fit | Prevents study-absent outer-join zeros from entering the model. |
+| Study-balanced expression atlas | Intersection across all studies | Makes its equally study-weighted expression values comparable. |
+
 The separate `differential_expression.nf` workflow consumes the merged
 sample-level pseudobulk H5AD. It first lists retained per-study
 `aifi_l2_majority` labels, then runs one independent task per label. Each task
@@ -623,87 +649,25 @@ a combined-model volcano plot where estimable. Age and log10(total_counts) also
 have volcano plots colored by log10 of the combined-fit baseMean. A final collector writes the result
 directories and manifest. Per-study results also show significant-gene counts
 inside and outside the per-covariate intersection of genes tested by all
-available study fits. Per-study fits use genes available in that study; each combined fit
-uses the intersection of genes available across its included studies, so
-study-absent genes' synthetic outer-join zeros are excluded. The parallel
-type-fitting task is configured for one CPU, which is passed directly to
-PyDESeq2; all other CPU, time, and memory requests use the executor defaults.
-In addition to the continuous-age fit, each cell type gets an exploratory
-all-study age-trajectory fit with 10-year bins, adjusted for study site, sex,
-and log10(total_counts). It uses 20–30 as the zero reference, retains bins with at least
-10 eligible pseudobulks in each decade, explicitly removes the 90–100 bin,
-applies a strict age cutoff below 90, and requires all 7 possible bins from
-20–30 through 80–90. Reports show how many eligible pseudobulks were in the
-removed bin for each cell type. Trajectory plots and cross-cell-type summaries
-include only types meeting that support threshold. The age ceiling and support thresholds are recorded in
-`run_metadata.json` and configurable under
-`differential_expression.age_trajectory`. A joint Wald
-omnibus test asks whether any retained bin differs from the reference, with
-FDR correction across genes. The report displays significant trajectories
-after scaling each gene's retained-bin shape by its population SD; genes whose
-shape cannot be fully estimated or has zero SD are omitted from standardized
-trajectory displays. Support and
-dropped-bin details are recorded in `run_metadata.json`, and results are written
-to `combined/age_bin.csv`.
-Each per-cell-type report also clusters trajectories with omnibus FDR ≤0.001
-using the configured linkage and distance metric (Ward and Euclidean by
-default) across the standardized bin values.
-It plots each cluster's mean trajectory and a UMAP where each point is a gene
-trajectory. The DE workflow produces a trajectory-centric notebook and HTML at
-`differential_expression/trajectory_analysis/`. The same report also contains
-a descriptive expression atlas: it restricts to genes available in every study,
-sums raw counts within each study × cell type, retains groups with at least
-1,000,000 counts over that intersection, calculates `log2(CPM + 1)`, and
-averages those values equally across studies. It is a study-balanced
-relative-expression summary, not calibrated absolute RNA abundance or a
-covariate-adjusted estimate. It writes the full matrix, depth-support table,
-gene-availability matrix, overlap diagnostic, and per-study count accounting
-for the shared-gene intersection, gene-expression UMAP, plus independent 3′/5′
-and intronic-read inclusion
-contrasts. The gene UMAP centers and scales each gene only for its internal PCA
-(up to 100 PCs) and UMAP computation (50 neighbors); it reports both the
-unscaled mean expression and the per-gene SD used for that scaling. It also
-shows, for each represented AIFI L1 class, the mean scaled expression across
-its retained L2 types. A contrast is calculated with one depth-qualified study on each
-side, while the report flags whether each side has the configured two-study
-replication support; both remain descriptive because their labels can be
-study-confounded. The contrasts do not form technology × intronic interaction
-groups. Its cross-cell-type clustering
-uses only age bins retained by every included type and re-standardizes profiles
-over those shared bins; at least five shared bins are required. It also counts
-how many eligible cell types each gene is omnibus-significant in at FDR <0.05.
-This is a descriptive count across types meeting the seven-bin support
-requirement, with no additional correction across cell types. The clustering
-FDR threshold, cluster count, UMAP settings, and minimum shared-bin count are
-configurable under `differential_expression.age_trajectory`, including the
-number of displayed genes and minimum UMAP point count. Per-cell-type
-cluster assignments, standardized profiles, UMAP coordinates, and cluster
-means are also written as CSVs beside each cell-type report; the cross-type
-assignments and means are available as CSVs beside the combined report.
-Each per-cell-type DE report clusters samples using Pearson residuals from its
-age-bin model. The model includes the age-bin factor, sex, log10(total counts),
-and study site when estimable, so residual patterns describe variation beyond
-the fitted age-bin means and other model covariates. Clustering uses centered
-PCA (100 components by default, capped by the available dimensions). Residual
-UMAP uses a separate 50-neighbour setting (also capped by available samples),
-then silhouette-selected K-means groups its coordinates while excluding clusters
-smaller than three samples. Trajectory-profile UMAP retains its 15-neighbour setting; each
-report shows residual UMAPs colored by sex, age, log10(total counts), and study,
-plus a second view for residual clusters, BMI, and CMV that shows how many
-samples have each optional value. Cluster assignments and PCA scores are
-available alongside the report. The cross-cell-type trajectory report contains
-only the combined residual embedding. It starts with all cell types with
-residual fits, then drops the type with the fewest fitted samples until the
-common sample set covers at least 80% of the union of samples available across
-those types (or only one type remains). The report lists the included and
-removed types, sample counts, and achieved coverage.
-Per-type residual matrices and sample metadata are stored under each type's
-`combined/` directory; cross-type cluster assignments, PC scores, the merged
-matrix, and sample metadata are written under
-`differential_expression/trajectory_analysis/`. Residual analysis complements
-rather than replaces per-cell-type trajectory clustering. See
-[IMPLEMENTATION.md](IMPLEMENTATION.md#age-trajectory-settings)
-for the complete setting list and current defaults. Each cell type also renders
+available study fits. The gene-universe table above is the canonical definition
+of which genes enter each fit. The parallel type-fitting task is configured for
+one CPU, which is passed directly to PyDESeq2; all other CPU, time, and memory
+requests use the executor defaults.
+In addition to the continuous-age fit, each cell type gets an exploratory,
+site- and covariate-adjusted age-trajectory analysis. Its report shows
+significant trajectory shapes and clusters; a companion cross-cell-type report
+summarizes shared trajectory and Pearson-residual structure. That report also
+contains a descriptive, study-balanced expression atlas, including shared-gene
+availability and count-loss diagnostics, expression maps, and technical-label
+contrasts. These views complement rather than replace the per-cell-type DE
+results, and they are not covariate-adjusted estimates of absolute RNA
+abundance. Per-type artifacts are stored under each type's `combined/`
+directory and cross-type artifacts under
+`differential_expression/trajectory_analysis/`. See
+[IMPLEMENTATION.md](IMPLEMENTATION.md#age-trajectory-settings) for the model,
+support rules, clustering, output tables, and current configurable settings.
+
+Each cell type also renders
 one shared-age diagnostic figure: study-site age support, age against raw
 pseudobulk depth in the tested gene intersection,
 and a Q-Q plot of unadjusted p-values from the combined age model fitted across
@@ -714,8 +678,9 @@ standard volcano point colors show the number of available per-study fits for th
 covariate and contrast where that gene passes the FDR threshold; point position
 continues to show the combined-fit effect and adjusted p-value. On the age
 volcano, outlined study-coloured diamonds additionally show each study's most
-significant FDR-significant gene outside the combined all-study gene
-intersection, using that study's own effect and adjusted p-value. Therefore a
+significant gene that passes the configured FDR threshold and lies outside the
+combined all-study gene intersection, using that study's own effect and
+adjusted p-value. Therefore a
 diamond cannot duplicate a combined-fit point; it is a context marker for a
 gene omitted from the combined model.
 
@@ -751,46 +716,20 @@ root and per-celltype metadata, result CSVs, and rendered reports carry a clear
 warning that the results are for software validation and must not be treated
 as biological evidence. Use `make run-de` for the configured analysis rules.
 
-The small end-to-end core fixture is intentionally allowed to produce no DE
-fits: bypassing the cell cutoff does not create additional independent samples
-or fix a rank-deficient age/sex design. `make run-de-synthetic-test` creates a
-small deterministic pseudobulk H5AD directly (the fixture is generated, not
-checked in, and does not pass through single-cell pseudobulking). It contains
-three synthetic studies, 28 independent samples per study and cell type under
-the current trajectory settings, balanced across seven age decades below 90.
-Each pseudobulk has at least 15 cells. The sample count is derived from the
-configured per-bin support requirement.
-That gives four samples per decade per study and 12 per decade pooled across
-studies before covariate-specific exclusions, enough to exercise the configured
-10-sample bin filter and seven-bin trajectory requirement.
-Its negative-binomial counts include
-known synthetic age, sex, BMI, and CMV signals and study-specific gene-
-availability flags. It also labels two studies as 3′ and one as 5′, and uses a
-count scale that makes every study × cell-type group pass the production 1M
-expression-atlas gate. This exercises the study-balanced atlas and gene-profile
-clustering, including an estimable but explicitly unreplicated 3′/5′ contrast.
-It also includes one intronic and one non-intronic study for an independent,
-explicitly unreplicated intronic-read sensitivity contrast. BMI is present in two studies;
-CMV is present in one.
-Missing values exercise covariate-specific study selection and complete-case
-sample counts, including the single-study combined-fit path. This exercises the
-normal age and cell-count filters and produces positive per-study and combined
-fits without copying the large real pseudobulk file. Every result is labeled
-synthetic and test-only. This fixture is realistic in workflow shape, not in
-statistical complexity: it has balanced sample counts, a small number of planted
-effects and gene-availability gaps, and no modeled cross-gene correlation or
-study-specific effect heterogeneity. It validates fitting and report wiring,
-not biological power or expected real-data results. Do not upsample real test
-samples to simulate replication; more cells within a sample do not add
-independent samples.
+The small core fixture may produce no DE fits because bypassing a cell cutoff
+does not add independent samples or fix a rank-deficient design.
+`make run-de-synthetic-test` instead generates a deterministic, test-only
+pseudobulk fixture with balanced age support, planted covariate and
+study-specific age signals, gene-availability gaps, and technical-label
+contrasts. It validates fit and report wiring—not biological power or expected
+real-data results. The fixture design and marker contract are documented in
+[IMPLEMENTATION.md](IMPLEMENTATION.md#running-and-verification). Do not
+upsample real test samples to simulate replication; more cells within a sample
+do not add independent samples.
 
-To render the standard test reports with the synthetic DE results, run:
-
-```bash
-make run-test
-make run-de-synthetic-test
-make run-cell-type-analysis-test
-```
+For the focused end-to-end trajectory path, use `make run-trajectory-test`
+after `make run-test`; see [Choosing a Make target](#choosing-a-make-target)
+for the smallest target for other test scenarios.
 
 `make run-all-test` is the complete ordered Docker test. It runs the core and
 integration benchmark on available downsampled real-data fixtures, then fits

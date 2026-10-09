@@ -1,8 +1,45 @@
-"""Pure data-preparation helpers used by executable QC reports."""
+"""Data-preparation and small plotting helpers used by executable QC reports."""
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+
+
+def plot_trajectory_merge_diagnostic(axis, merge_diagnostics, *, max_clusters: int) -> None:
+    """Plot final hierarchical merges and highlight the configured trajectory cut."""
+    if merge_diagnostics.empty:
+        axis.text(
+            0.5, 0.5, "At least two trajectories are needed",
+            ha="center", va="center", transform=axis.transAxes,
+        )
+        axis.set_axis_off()
+        return
+    axis.plot(
+        merge_diagnostics["from_clusters"], merge_diagnostics["merge_height"],
+        marker="o", color="#4c78a8", linewidth=1.8, markersize=4,
+    )
+    selected = merge_diagnostics.loc[
+        merge_diagnostics["from_clusters"] == max_clusters
+    ]
+    if not selected.empty:
+        row = selected.iloc[0]
+        axis.scatter(
+            [row["from_clusters"]], [row["merge_height"]],
+            color="#d62728", s=38, zorder=3,
+        )
+        axis.axvline(max_clusters, color="#d62728", linestyle="--", linewidth=0.9)
+        axis.annotate(
+            f"configured cap\n{max_clusters} → {max_clusters - 1}",
+            (row["from_clusters"], row["merge_height"]),
+            xytext=(6, 7), textcoords="offset points", fontsize=7, color="#a61c1c",
+        )
+    axis.set_xlim(
+        merge_diagnostics["from_clusters"].max() + 0.5,
+        merge_diagnostics["from_clusters"].min() - 0.5,
+    )
+    axis.set_xlabel("Clusters before merge (K → K−1)")
+    axis.set_ylabel("Hierarchical merge height")
+    axis.set_title("Merge-cost diagnostic")
 
 
 def signed_value_at_largest_absolute_magnitude(values: pd.Series) -> float:

@@ -227,6 +227,16 @@ def create_synthetic_pseudobulk(
         "expected_per_study_age_associated_genes": {
             study: [gene] for study, (gene, _) in study_specific_age_effects.items()
         },
+        "marker_purposes": {
+            "combined_age": age_genes,
+            "per_study_age_outside_intersection": {
+                study: [gene] for study, (gene, _) in study_specific_age_effects.items()
+            },
+            "age_trajectory": trajectory_genes,
+            "sex": sex_genes,
+            "bmi": bmi_genes,
+            "cmv": cmv_genes,
+        },
         "expected_age_trajectory_associated_genes": trajectory_genes,
         "expected_age_trajectory_profiles": {
             gene: profile for gene, profile in zip(

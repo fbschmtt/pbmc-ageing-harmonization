@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 from .logging_utils import configure_logging
+from .report_toc import populate_html_toc
 
 
 def generate_merge_qc_report(
@@ -43,13 +44,15 @@ def generate_merge_qc_report(
         "QC_PSEUDOBULK_H5AD": str(pseudo_input),
         "QC_PSEUDOBULK_REPORT": str(pseudo_report),
         "QC_STUDIES_CONFIG": str((studies_config_path or root / "config" / "studies.json").resolve()),
-        "MPLCONFIGDIR": str((root / ".cache" / "matplotlib").resolve()),
     })
     if "single_cell_merge" in by_kind:
         single_input, single_report = by_kind["single_cell_merge"]
         env.update({"QC_SINGLE_CELL_H5AD": str(single_input), "QC_SINGLE_CELL_REPORT": str(single_report)})
     executed, html = output_dir / "executed.ipynb", output_dir / "report.html"
     with tempfile.TemporaryDirectory(prefix="pbmc-merge-qc-notebook-") as temporary_dir:
+        matplotlib_cache = Path(temporary_dir) / "matplotlib"
+        matplotlib_cache.mkdir()
+        env["MPLCONFIGDIR"] = str(matplotlib_cache)
         materialized_template = Path(temporary_dir) / f"{template.stem}.ipynb"
         subprocess.run([
             sys.executable, "-m", "jupytext", "--to", "notebook",
@@ -62,8 +65,12 @@ def generate_merge_qc_report(
         ], cwd=root, env=env, check=True)
     subprocess.run([
         sys.executable, "-m", "jupyter", "nbconvert", "--to", "html",
+        "--HTMLExporter.exclude_input=True",
+        "--HTMLExporter.exclude_input_prompt=True",
+        "--HTMLExporter.exclude_output_prompt=True",
         f"--output={html.name}", f"--output-dir={output_dir}", str(executed),
     ], cwd=root, env=env, check=True)
+    populate_html_toc(html)
     return html
 
 

@@ -9,6 +9,7 @@
 import json
 import os
 import warnings
+from dataclasses import fields
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -17,6 +18,10 @@ import pandas as pd
 import seaborn as sns
 from IPython.display import HTML, Markdown, display
 from upsetplot import UpSet, from_indicators
+
+from pbmc_pipeline.config import AgeTrajectorySettings
+from pbmc_pipeline.reporting import plot_trajectory_merge_diagnostic
+from pbmc_pipeline.trajectory_analysis import trajectory_merge_diagnostics
 
 sns.set_theme(style="whitegrid")
 analysis_dir = Path(os.environ["TRAJECTORY_ANALYSIS_DIR"])
@@ -34,6 +39,7 @@ distance_metric = metadata["distance_metric"]
 linkage_method = metadata["linkage_method"]
 minimum_umap_trajectories = metadata["minimum_umap_trajectories"]
 cross_report_top_n_genes = metadata["cross_report_top_n_genes"]
+max_clusters = metadata["max_clusters"]
 residual_support = metadata.get("pearson_residual_clustering", {})
 cross_residual_support = residual_support.get("cross_cell_type", {})
 expression_atlas_support = metadata.get("expression_atlas", {})
@@ -183,6 +189,15 @@ if excluded:
 # ### Gene intersection across studies
 
 # %%
+display(Markdown(
+    "**Gene universes in this workflow**\n\n"
+    "| Context | Gene universe | Purpose |\n"
+    "|---|---|---|\n"
+    "| Merged pseudobulk | Outer union across studies | Retains observed genes for per-study models. |\n"
+    "| Per-study DE | Genes available in that study | Fits each study's observed counts. |\n"
+    "| Combined DE | Intersection across the studies in that fit | Excludes study-absent outer-join zeros. |\n"
+    "| This expression atlas | Intersection across all studies | Makes study-balanced expression comparable. |"
+))
 if expression_gene_availability.empty or expression_gene_availability.shape[1] < 2:
     display(Markdown(
         "_Gene-availability overlap requires an outer pseudobulk merge with at least two studies._"
@@ -246,10 +261,15 @@ else:
             "input_counts": "input counts",
             "discarded_counts": "counts outside intersection",
         }))
-    # UpSetPlot 0.9 has a rendering error with ``show_counts`` under current
-    # Matplotlib, so intersection labels are intentionally omitted.
+    # UpSetPlot 0.9 uses chained assignment internally; suppress only its
+    # known pandas-3.0 compatibility warning while rendering this plot.
     with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=FutureWarning, module=r"upsetplot\\.plotting")
+        warnings.filterwarnings(
+            "ignore",
+            message=r"A value is trying to be set on a copy.*",
+            category=FutureWarning,
+            module=r"upsetplot\.plotting",
+        )
         axes = UpSet(
             from_indicators(expression_gene_availability), subset_size="count", sort_by="cardinality"
         ).plot()
@@ -297,8 +317,8 @@ if expression_atlas_support.get("status") == "complete" and not expression_matri
             ("median_log2_cpm_difference_5_prime_minus_3_prime", "5′ − 3′ contrast"),
             ("median_log2_cpm_difference_intronic_minus_non_intronic", "Intronic − non-intronic contrast"),
         ]
-        figure, axes = plt.subplots(1, len(color_columns), figsize=(5.5 * len(color_columns), 4.8))
-        for axis, (column, title) in zip(np.atleast_1d(axes), color_columns):
+        figure, axes = plt.subplots(2, 2, figsize=(14, 11), layout="constrained")
+        for axis, (column, title) in zip(axes.ravel(), color_columns):
             if column not in expression_umap_plot or expression_umap_plot[column].notna().sum() == 0:
                 axis.text(0.5, 0.5, "Not available", ha="center", va="center")
                 axis.set_axis_off()
@@ -317,9 +337,8 @@ if expression_atlas_support.get("status") == "complete" and not expression_matri
             axis.set_ylabel("Gene-expression UMAP 2")
         figure.suptitle(
             f"Gene expression UMAP: per-gene standardized only for PCA ({expression_atlas_support.get('n_gene_expression_umap_pcs', 0)} PCs) and UMAP; colors use unscaled values",
-            y=1.03,
+            wrap=True,
         )
-        figure.tight_layout()
         plt.show()
     display(Markdown("### AIFI L1 mean scaled expression"))
     l1_parent_by_l2 = expression_atlas_support.get("l1_parent_by_l2", {})
@@ -784,7 +803,18 @@ if not cross_trajectories.empty and not cluster_means.empty:
         f"clustering and UMAP use {distance_metric} distance between bin values. "
         "Cluster labels identify broad shape groups, not pathways."
     ))
-    figure, axes = plt.subplots(1, 2, figsize=(14, 5.2))
+    trajectory_settings = AgeTrajectorySettings.from_mapping(
+        {
+            field.name: metadata[field.name]
+            for field in fields(AgeTrajectorySettings) if field.init
+        }
+    )
+    merge_diagnostics = trajectory_merge_diagnostics(
+        cross_trajectories.set_index("trajectory_id")[common_bins],
+        trajectory_settings,
+        maximum_merges=20,
+    )
+    figure, axes = plt.subplots(1, 3, figsize=(18, 5.2))
     colors = sns.color_palette("husl", n_colors=len(cluster_means))
     color_map = {
         str(int(row.trajectory_cluster)): colors[index]
@@ -821,8 +851,16 @@ if not cross_trajectories.empty and not cluster_means.empty:
             ha="center", va="center", transform=axes[1].transAxes,
         )
         axes[1].set_axis_off()
+    plot_trajectory_merge_diagnostic(
+        axes[2], merge_diagnostics, max_clusters=max_clusters,
+    )
     figure.tight_layout()
     plt.show()
+    display(Markdown(
+        "The merge-cost panel shows up to the final 20 hierarchical merges. "
+        "A sharp increase at **K → K−1** supports retaining K trajectory groups; "
+        "the red marker shows the configured cluster cap when that transition is available."
+    ))
     display(Markdown(
         f"{len(cross_trajectories):,} significant gene × cell-type trajectories "
         f"were clustered into {len(cluster_means)} groups."

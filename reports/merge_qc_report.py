@@ -1,12 +1,7 @@
-# %% [markdown]
-# # Cross-study merge QC report
-#
-# This single document always reports the pseudobulk merge and appends global
-# single-cell merge diagnostics when that optional branch was run.
-
 # %%
 import json
 import os
+from html import escape
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -14,9 +9,11 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 import seaborn as sns
-from IPython.display import Markdown, display
+from IPython.display import HTML, Markdown, display
 from matplotlib.ticker import MaxNLocator
 from scipy import sparse
+
+from pbmc_pipeline.report_theme import render_report_header
 from pbmc_pipeline.reporting import pseudobulk_celltype_fractions
 
 sns.set_theme(style="whitegrid")
@@ -29,9 +26,19 @@ def load_merge(prefix: str):
 
 
 def show_summary(adata, report, path, heading):
-    display(Markdown(f"## {heading}\n\nInput: `{path}`"))
-    display(pd.Series({key: report.get(key) for key in ["kind", "status", "timestamp_utc", "n_observations", "n_genes"]}, name="value").to_frame())
-    print(f"{adata.n_obs:,} observations × {adata.n_vars:,} genes")
+    metadata = pd.Series(
+        {
+            key: report.get(key)
+            for key in ["kind", "status", "timestamp_utc", "n_observations", "n_genes"]
+        },
+        name="value",
+    ).to_frame()
+    display(HTML(
+        f'<details class="report-details"><summary>{escape(heading)} Metadata</summary>'
+        f'<p><strong>Input:</strong> {escape(str(path))}</p>'
+        + metadata.to_html(escape=True, border=0)
+        + "</details>"
+    ))
 
 
 def show_study_coverage(adata):
@@ -76,7 +83,7 @@ def show_technical_covariates(adata):
         axis.set_xlim(0, max(1, int(study_counts.max())))
         axis.xaxis.set_major_locator(MaxNLocator(integer=True))
 
-    display(Markdown("### Technical covariates across studies"))
+    display(Markdown("### Technical Covariates Across Studies"))
     display(Markdown(
         "Bars count distinct studies represented by each value. A study with "
         "multiple values for a covariate is counted under each value; missing "
@@ -86,17 +93,46 @@ def show_technical_covariates(adata):
     plt.show()
 
 
+pseudobulk, pseudobulk_report, pseudobulk_path = load_merge("PSEUDOBULK")
+single_cell_available = "QC_SINGLE_CELL_H5AD" in os.environ
+if single_cell_available:
+    single_cell, single_cell_report, single_cell_path = load_merge("SINGLE_CELL")
+
+report_metrics = [
+    ("Studies", f"{pseudobulk.obs['study'].nunique():,}"),
+    ("Pseudobulk profiles", f"{pseudobulk.n_obs:,}"),
+    ("Pseudobulk genes", f"{pseudobulk.n_vars:,}"),
+    (
+        "Single-cell cells",
+        f"{single_cell.n_obs:,}" if single_cell_available else "Not included",
+    ),
+]
+display(HTML(render_report_header(
+    title="Cross-Study Merge QC",
+    eyebrow="PBMC ageing · merge report",
+    subtitle=(
+        "Study coverage and technical metadata for the pseudobulk merge, "
+        "with global single-cell diagnostics when available."
+    ),
+    metrics=report_metrics,
+)))
+
+
 # %% [markdown]
-# ## Pseudobulk merge
+# ## Pseudobulk Merge
 
 # %%
-pseudobulk, pseudobulk_report, pseudobulk_path = load_merge("PSEUDOBULK")
-show_summary(pseudobulk, pseudobulk_report, pseudobulk_path, "Pseudobulk merge")
+show_summary(pseudobulk, pseudobulk_report, pseudobulk_path, "Pseudobulk Merge")
+display(Markdown(
+    "The pseudobulk merge retains the **outer union** of study genes so per-study models "
+    "can use observed counts. The cross-cell-type expression report records the corresponding "
+    "shared-gene intersection, count-loss accounting, and availability overlap."
+))
 show_study_coverage(pseudobulk)
 show_technical_covariates(pseudobulk)
 
 # %% [markdown]
-# ### AIFI L2 composition by cell
+# ### AIFI L2 Composition by Cell
 
 # %%
 composition = pseudobulk_celltype_fractions(pseudobulk.obs)
@@ -109,15 +145,13 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ## Global single-cell merge
+# ## Global Single-Cell Merge
 
 # %%
-single_cell_available = "QC_SINGLE_CELL_H5AD" in os.environ
 if not single_cell_available:
     display(Markdown("_The global single-cell merge was not requested for this run._"))
 else:
-    single_cell, single_cell_report, single_cell_path = load_merge("SINGLE_CELL")
-    show_summary(single_cell, single_cell_report, single_cell_path, "Global single-cell merge")
+    show_summary(single_cell, single_cell_report, single_cell_path, "Global Single-Cell Merge")
     show_study_coverage(single_cell)
 
     display(Markdown("### Depth"))

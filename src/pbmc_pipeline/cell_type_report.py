@@ -9,6 +9,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from pbmc_pipeline.report_toc import populate_html_toc
+
 
 def generate_cell_type_report(
     *, input_path: Path, analysis_path: Path, output_dir: Path, template_path: Path,
@@ -61,6 +63,7 @@ def generate_cell_type_report(
         "--HTMLExporter.exclude_output_prompt=True",
         "--output", html.name, "--output-dir", str(output_dir), str(executed),
     ], check=True, env=env)
+    populate_html_toc(html)
     return html
 
 

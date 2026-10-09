@@ -22,6 +22,8 @@ import statsmodels.api as sm
 from IPython.display import HTML, Markdown, display
 from matplotlib.colors import Normalize
 
+from pbmc_pipeline.report_theme import render_report_header
+
 sns.set_theme(style="whitegrid")
 plt.rcParams.update({"figure.dpi": 110, "savefig.dpi": 110})
 from pbmc_pipeline.config import AgeTrajectorySettings, read_json
@@ -31,6 +33,7 @@ from pbmc_pipeline.covariates import (
     normalize_cmv_status,
 )
 from pbmc_pipeline.reporting import (
+    plot_trajectory_merge_diagnostic,
     sample_cell_type_fractions,
     sample_cluster_fractions,
     signed_value_at_largest_absolute_magnitude,
@@ -38,6 +41,8 @@ from pbmc_pipeline.reporting import (
 from pbmc_pipeline.trajectory_analysis import (
     cluster_sample_residuals,
     cluster_trajectory_profiles,
+    summarize_residual_cluster_markers,
+    trajectory_merge_diagnostics,
 )
 
 primitive = sc.read_h5ad(Path(os.environ["CELL_TYPE_H5AD"]))
@@ -75,241 +80,15 @@ summary_metrics = [
     ("Local clusters", str(report.get("n_clusters", "—"))),
     ("Analysis status", status_label),
 ]
-summary_metrics_html = "".join(
-    f"<div class=\"report-metric\"><dt>{escape(label)}</dt><dd>{escape(value)}</dd></div>"
-    for label, value in summary_metrics
-)
-de_toc_group = ""
-if de_dir:
-    de_toc_children = []
-    de_root = Path(de_dir)
-    de_models = de_run_metadata.get("models", [])
-    indexed_results = {
-        (de_root / relative_path).resolve(): (model, covariate)
-        for model in de_models
-        if model.get("status") == "complete"
-        for covariate, relative_path in model.get("results_by_covariate", {}).items()
-    }
-    if "models" in de_run_metadata:
-        per_study_outputs = [
-            path for path in (de_root / "per_study").rglob("*.csv")
-            if path.resolve() in indexed_results
-        ]
-        combined_outputs = [
-            path for folder in (de_root / "combined",)
-            for path in folder.glob("*.csv")
-            if path.resolve() in indexed_results
-        ]
-        has_merged_age = (de_root / "merged.csv").resolve() in indexed_results
-    else:
-        per_study_outputs = list((de_root / "per_study").rglob("*.csv"))
-        combined_outputs = list((de_root / "combined").glob("*.csv"))
-        has_merged_age = (de_root / "merged.csv").is_file()
-    per_study_outputs = [
-        path for path in per_study_outputs
-        if not pd.read_csv(path, nrows=1).empty
-    ]
-    combined_outputs_with_rows = [
-        path for path in combined_outputs
-        if not pd.read_csv(path, nrows=1).empty
-    ]
-    merged_age_with_rows = (
-        has_merged_age
-        and (de_root / "merged.csv").is_file()
-        and not pd.read_csv(de_root / "merged.csv", nrows=1).empty
-    )
-    combined_covariates = {
-        indexed_results[path.resolve()][1]
-        for path in combined_outputs_with_rows if path.resolve() in indexed_results
-        and path.stem != "age_bin"
-    }
-    if "models" not in de_run_metadata:
-        combined_covariates.update(
-            path.stem for path in combined_outputs_with_rows if path.stem != "age_bin"
-        )
-    if has_merged_age:
-        combined_covariates.add("age")
-    age_trajectory_available = (
-        any(model.get("purpose") == "age_trajectory" for model in de_models)
-        or any(path.stem == "age_bin" for path in combined_outputs)
-    )
-    if per_study_outputs:
-        de_toc_children.append(
-            '<li><a href="#per-study-gene-intersection">Gene intersection diagnostic</a></li>'
-        )
-    combined_summary_available = merged_age_with_rows or any(
-        path.stem != "age_bin" for path in combined_outputs_with_rows
-    )
-    if combined_summary_available:
-        de_toc_children.append(
-            '<li><a href="#combined-covariate-models">Combined covariate models</a></li>'
-        )
-        covariate_labels = {
-            "log10_total_counts": "log10(total_counts)",
-        }
-        for covariate in sorted(
-            combined_covariates,
-            key=lambda value: ({"age": 0, "sex": 1, "bmi": 2, "cmv": 3,
-                               "log10_total_counts": 4}.get(value, 99), value),
-        ):
-            label = covariate_labels.get(covariate, covariate.upper())
-            anchor_suffix = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
-            de_toc_children.append(
-                f'<li><a href="#combined-{anchor_suffix}">{escape(label)} effects</a></li>'
-            )
-    if age_trajectory_available:
-        de_toc_children.append(
-            '<li><a href="#age-bin-trajectories">Age-bin trajectories</a></li>'
-        )
-        de_toc_children.append(
-            '<li><a href="#sample-residual-clustering">Residual sample clustering</a></li>'
-        )
-    if per_study_outputs:
-        de_toc_children.append(
-            '<li><a href="#per-study-covariate-models">Per-study covariate models</a></li>'
-        )
-    if (
-        (de_root / "age_model_diagnostics.csv").is_file()
-        and (has_merged_age or "age" in combined_covariates)
-    ):
-        de_toc_children.append(
-            '<li><a href="#shared-age-model-diagnostics">Shared age-model diagnostics</a></li>'
-        )
-    de_toc_group = (
-        '<li><a href="#differential-expression">Gene expression</a>'
-        + ("<ul>" + "".join(de_toc_children) + "</ul>" if de_toc_children else "")
-        + "</li>"
-    )
-display(HTML(f"""
-<style>
-:root {{
-  --report-ink: #182230;
-  --report-muted: #5f6b7a;
-  --report-line: #d8e0e8;
-  --report-paper: #ffffff;
-  --report-page: #f5f7fa;
-  --report-accent: #176b87;
-  --report-accent-soft: #e6f3f7;
-}}
-body.jp-Notebook {{
-  background: var(--report-page);
-  color: var(--report-ink);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 17px;
-}}
-main {{ max-width: 1600px; margin: 0 auto; padding: 2rem clamp(1.25rem, 3vw, 2.5rem) 4rem; }}
-.jp-Cell {{ margin: 1.4rem 0; }}
-.jp-Cell-outputWrapper, .jp-OutputArea {{ width: 100%; }}
-.jp-RenderedImage img {{ display: block; max-width: 100%; height: auto; margin: 0 auto; }}
-.jp-RenderedMarkdown h2 {{
-  margin-top: 3rem; padding-bottom: .55rem; border-bottom: 2px solid var(--report-line);
-  color: var(--report-ink); font-size: clamp(1.45rem, 2.7vw, 2rem);
-}}
-.jp-RenderedMarkdown h3 {{ color: var(--report-accent); margin-top: 2.25rem; }}
-.jp-RenderedMarkdown p, .jp-RenderedMarkdown li {{ color: #354152; font-size: 1.04rem; line-height: 1.65; }}
-.jp-RenderedMarkdown blockquote {{
-  margin: 1rem 0; padding: .75rem 1rem; border-left: 4px solid #bd6a29;
-  background: #fff6eb; color: #6e3e18;
-}}
-.report-hero {{
-  margin: 0 0 2.5rem; padding: clamp(1.4rem, 4vw, 2.6rem); border-radius: 18px;
-  background: linear-gradient(135deg, #315c6d, #527990); color: #fff;
-  box-shadow: 0 12px 30px rgba(49, 92, 109, .16);
-}}
-.report-eyebrow {{ margin: 0 0 .45rem; color: #bde7f0; font-size: .76rem; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }}
-.report-hero h1 {{ margin: 0; color: #fff; font-size: clamp(2rem, 5vw, 3.4rem); line-height: 1.08; }}
-.report-subtitle {{ max-width: 48rem; margin: .85rem 0 1.4rem; color: #e2f3f7; line-height: 1.55; }}
-.report-metrics {{ display: flex; flex-wrap: wrap; align-items: flex-start; gap: .55rem; margin: 0; }}
-.report-metric {{ display: flex; align-items: baseline; gap: .55rem; padding: .62rem .78rem; border: 1px solid rgba(255,255,255,.22); border-radius: 10px; background: rgba(255,255,255,.1); }}
-.report-metric dt {{ color: #d6edf2; font-size: .9rem; font-weight: 600; }}
-.report-metric dd {{ margin: 0; color: #fff; font-size: .9rem; font-weight: 650; text-align: right; }}
-.report-toc-shell {{ position: fixed; z-index: 1000; top: 1rem; bottom: 1rem; left: 1rem; width: 260px; }}
-.report-toc-toggle {{ position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }}
-.report-toc-toggle-label {{ display: none; }}
-.report-toc {{ height: 100%; overflow-y: auto; padding: .9rem .8rem 1.1rem; border: 1px solid var(--report-line); border-radius: 14px; background: var(--report-paper); box-shadow: 0 10px 28px rgba(24, 34, 48, .12); }}
-.report-toc-heading {{ margin: 0 0 .65rem; padding: .25rem .45rem .65rem; border-bottom: 1px solid var(--report-line); color: var(--report-muted); font-size: .72rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }}
-.report-toc-list, .report-toc-list ul {{ margin: 0; padding: 0; list-style: none; }}
-.report-toc-list > li {{ margin: .12rem 0 .45rem; }}
-.report-toc-list ul {{ margin: .2rem 0 .35rem .65rem; padding-left: .65rem; border-left: 1px solid var(--report-line); }}
-.report-toc-list ul li {{ margin: .12rem 0; }}
-.report-toc a, .report-toc a:visited {{ display: block; padding: .25rem .45rem; border-radius: 6px; color: #344454; font-size: .88rem; font-weight: 600; line-height: 1.35; text-decoration: none; }}
-.report-toc-list ul a {{ color: var(--report-muted); font-size: .82rem; font-weight: 500; }}
-.report-toc a:hover, .report-toc a:focus-visible {{ background: var(--report-accent-soft); color: var(--report-accent); outline: none; }}
-.report-toc a:focus-visible {{ box-shadow: 0 0 0 2px var(--report-accent); }}
-html {{ scroll-behavior: smooth; scroll-padding-top: 1.25rem; }}
-.report-provenance {{ padding: .75rem 1rem; border: 1px solid var(--report-line); border-radius: 10px; background: var(--report-paper); }}
-.report-provenance summary {{ cursor: pointer; color: var(--report-accent); font-weight: 700; }}
-.report-provenance table {{ margin-top: .8rem; }}
-.report-details {{ margin: .75rem 0; padding: .65rem .85rem; border: 1px solid var(--report-line); border-radius: 9px; background: var(--report-paper); }}
-.report-details summary {{ cursor: pointer; color: var(--report-accent); font-weight: 650; }}
-.report-details table {{ width: 100%; margin-top: .7rem; border-collapse: collapse; }}
-.report-details th {{ background: #edf3f6; color: #263544; font-weight: 700; }}
-.report-details th, .report-details td {{ padding: .4rem .6rem; border: 1px solid var(--report-line); vertical-align: top; }}
-.report-details-figure img {{ display: block; max-width: 100%; height: auto; margin: .75rem auto .1rem; }}
-.report-evidence {{ margin: 2.5rem 0 1.25rem; padding: 1.25rem 1.4rem; border: 1px solid #c8dde5; border-radius: 14px; background: #f1f8fa; }}
-.report-evidence h2 {{ margin: 0 0 .45rem; color: var(--report-ink); font-size: 1.45rem; }}
-.report-evidence p {{ margin: 0 0 .85rem; color: #354152; line-height: 1.55; }}
-.report-evidence-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .65rem; }}
-.report-evidence-item {{ padding: .7rem .8rem; border-radius: 9px; background: #fff; border: 1px solid #d7e7ec; }}
-.report-evidence-item dt {{ color: var(--report-muted); font-size: .77rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }}
-.report-evidence-item dd {{ margin: .22rem 0 0; color: var(--report-ink); font-weight: 650; line-height: 1.35; }}
-.jp-RenderedHTMLCommon {{ max-width: 100%; overflow-x: auto; }}
-.jp-RenderedHTMLCommon table {{ border-collapse: collapse; background: var(--report-paper); }}
-.jp-RenderedHTMLCommon th {{ background: #edf3f6; color: #263544; font-weight: 700; }}
-.jp-RenderedHTMLCommon th, .jp-RenderedHTMLCommon td {{ padding: .45rem .65rem; border: 1px solid var(--report-line); vertical-align: top; }}
-@media print {{
-  body.jp-Notebook {{ background: #fff; }} main {{ max-width: none; padding: 0; }}
-  .report-hero {{ box-shadow: none; }}
-  .report-toc-shell {{ display: none; }}
-}}
-@media (min-width: 1200px) {{
-  main {{ width: calc(100% - 320px); max-width: 1500px; margin: 0 1.5rem 0 295px; }}
-}}
-@media (max-width: 1199px) {{
-  main {{ padding-top: 5rem; }}
-  .report-toc-shell {{ top: .5rem; right: .5rem; bottom: auto; left: .5rem; width: auto; }}
-  .report-toc-toggle-label {{ display: flex; align-items: center; justify-content: space-between; min-height: 2.8rem; padding: .6rem .9rem; border: 1px solid var(--report-line); border-radius: 10px; background: var(--report-paper); box-shadow: 0 6px 18px rgba(24, 34, 48, .12); color: var(--report-accent); cursor: pointer; font-weight: 700; }}
-  .report-toc-toggle-label::after {{ content: "＋"; font-size: 1.2rem; }}
-  .report-toc-toggle:checked + .report-toc-toggle-label::after {{ content: "−"; }}
-  .report-toc {{ display: none; height: auto; max-height: min(72vh, 680px); margin-top: .35rem; border-radius: 10px; }}
-  .report-toc-toggle:checked ~ .report-toc {{ display: block; }}
-  .report-toc-list {{ columns: 2; column-gap: 1rem; }}
-  .report-toc-list > li {{ break-inside: avoid; }}
-}}
-@media (max-width: 560px) {{
-  .report-toc-list {{ columns: 1; }}
-}}
-</style>
-<header class=\"report-hero\">
-  <p class=\"report-eyebrow\">PBMC ageing · per-cell-type report</p>
-  <h1>{escape(cell_type_name)}</h1>
-  <p class=\"report-subtitle\">Descriptive sample-level and single-cell diagnostics. Cell-level associations are not independent-sample inference.</p>
-  <dl class=\"report-metrics\">{summary_metrics_html}</dl>
-  <div class=\"report-toc-shell\">
-    <input class=\"report-toc-toggle\" type=\"checkbox\" id=\"report-toc-toggle\">
-    <label class=\"report-toc-toggle-label\" for=\"report-toc-toggle\">Contents</label>
-    <nav class=\"report-toc\" aria-label=\"Report table of contents\">
-      <p class=\"report-toc-heading\">On this page</p>
-      <ul class=\"report-toc-list\">
-        <li><a href=\"#sample-coverage\">Study support</a></li>
-        <li><a href=\"#sample-fractions\">Fraction analysis</a>
-          <ul>
-            <li><a href=\"#fraction-model-evidence\">Adjusted fraction models</a></li>
-            <li><a href=\"#additional-fraction-trends\">Descriptive fraction trends</a></li>
-          </ul>
-        </li>
-        <li><a href=\"#local-embedding\">Local embedding and clusters</a></li>
-        <li><a href=\"#cluster-composition\">Cluster composition</a></li>
-        <li><a href=\"#cluster-markers\">Cluster markers</a></li>
-        <li><a href=\"#pc-study-technology\">PCA diagnostics</a>
-          <ul><li><a href=\"#pc-age\">Loadings and PC–age</a></li></ul>
-        </li>
-        {de_toc_group}
-      </ul>
-    </nav>
-  </div>
-</header>
-"""))
+display(HTML(render_report_header(
+    title=cell_type_name,
+    eyebrow="PBMC ageing · per-cell-type report",
+    subtitle=(
+        "Descriptive sample-level and single-cell diagnostics. "
+        "Cell-level associations are not independent-sample inference."
+    ),
+    metrics=summary_metrics,
+)))
 provenance = pd.Series(report, name="value").to_frame()
 display(HTML(
     "<details class=\"report-provenance\"><summary>Analysis provenance</summary>"
@@ -323,24 +102,31 @@ if de_run_metadata.get("analysis_mode") == "test_only":
     ))
 
 
-def display_collapsible_table(data, summary, *, index=False):
+def display_collapsible_table(data, summary, *, index=False, max_height=None):
     """Render a table inside a closed-by-default details panel."""
     table_html = data.to_html(index=index, escape=True, border=0)
+    if max_height is not None:
+        table_html = (
+            f'<div style="max-height: {int(max_height)}px; overflow: auto;" '
+            'tabindex="0">' + table_html + "</div>"
+        )
     display(HTML(
         f'<details class="report-details"><summary>{escape(summary)}</summary>'
         f"{table_html}</details>"
     ))
 
 
-def display_collapsible_figure(figure, summary):
-    """Render a figure inside a closed-by-default details panel."""
+def display_collapsible_figure(figure, summary, *, open_by_default=False):
+    """Render a figure in a details panel, optionally open on load."""
     image_buffer = BytesIO()
     figure.savefig(image_buffer, format="png", bbox_inches="tight")
     image_data = base64.b64encode(image_buffer.getvalue()).decode("ascii")
     plt.close(figure)
     escaped_summary = escape(summary, quote=True)
     display(HTML(
-        '<details class="report-details report-details-figure">'
+        '<details class="report-details report-details-figure"'
+        + (" open" if open_by_default else "")
+        + ">"
         f"<summary>{escape(summary)}</summary>"
         f'<img alt="{escaped_summary}" src="data:image/png;base64,{image_data}">'
         "</details>"
@@ -350,11 +136,11 @@ def display_collapsible_figure(figure, summary):
 def load_residual_sample_clusters(de_dir, fit, settings):
     """Cluster one cell type's fitted age-bin residuals for its report."""
     if fit.get("status") != "complete":
-        return None, None, 0
+        return None, None, 0, None
     residual_path = Path(de_dir) / fit.get("pearson_residuals", "")
     metadata_path = Path(de_dir) / fit.get("pearson_residual_sample_metadata", "")
     if not residual_path.is_file() or not metadata_path.is_file():
-        return None, None, 0
+        return None, None, 0, None
     with np.load(residual_path, allow_pickle=False) as stored:
         residuals = pd.DataFrame(
             stored["residuals"],
@@ -374,7 +160,74 @@ def load_residual_sample_clusters(de_dir, fit, settings):
     annotations, pc_scores, n_components = cluster_sample_residuals(
         residuals, sample_by_key, settings
     )
-    return annotations, pc_scores, n_components
+    residuals = residuals.loc[annotations["sample_key"].astype(str)].copy()
+    residuals.index = annotations["sample_key"].astype(str)
+    return annotations, pc_scores, n_components, residuals
+
+
+def plot_residual_cluster_markers(residuals, annotations):
+    """Show the residual UMAP clusters and their largest mean-residual contrasts."""
+    display(Markdown("### Residual Cluster Markers"))
+    coordinates = annotations.dropna(subset=["umap_1", "umap_2"]).copy()
+    if coordinates.empty:
+        display(Markdown("_Residual UMAP coordinates are unavailable for this cell type._"))
+    else:
+        cluster_counts = annotations["residual_cluster"].value_counts()
+        coordinates["residual_cluster_label"] = coordinates["residual_cluster"].map(
+            lambda cluster: f"Cluster {int(cluster)} (n={cluster_counts[cluster]})"
+        )
+        figure, axis = plt.subplots(figsize=(6.6, 4.8))
+        sns.scatterplot(
+            data=coordinates, x="umap_1", y="umap_2", hue="residual_cluster_label",
+            palette="tab20", s=40, alpha=0.84, linewidth=0, ax=axis,
+        )
+        axis.set_title("Residual UMAP: sample clusters")
+        axis.set_xlabel("UMAP 1")
+        axis.set_ylabel("UMAP 2")
+        if axis.legend_ is not None:
+            axis.legend_.set_title("Residual cluster")
+            axis.legend_.set_bbox_to_anchor((1.02, 1))
+        figure.tight_layout()
+        plt.show()
+
+    markers, _, reference_cluster = summarize_residual_cluster_markers(
+        residuals, annotations
+    )
+    if markers.empty:
+        display(Markdown(
+            "_No between-cluster marker contrasts are available; at least two residual "
+            "clusters are needed._"
+        ))
+        return
+
+    display(Markdown(
+        f"For each cluster, these are the genes with the largest lower and higher mean "
+        f"Pearson residuals versus the largest cluster (cluster {reference_cluster}). "
+        "The top 10 in each direction are shown. These are descriptive residual contrasts, "
+        "not differential-expression significance tests."
+    ))
+    marker_clusters = sorted(markers["residual_cluster"].unique())
+    figure, axes = plt.subplots(
+        len(marker_clusters), 2, figsize=(13, 3.4 * len(marker_clusters)),
+        squeeze=False,
+    )
+    for row_index, cluster in enumerate(marker_clusters):
+        for column_index, direction in enumerate(("lower", "higher")):
+            axis = axes[row_index, column_index]
+            selected = markers.loc[
+                (markers["residual_cluster"] == cluster)
+                & (markers["direction"] == direction)
+            ].sort_values("rank").head(10)
+            axis.barh(
+                selected["feature"].iloc[::-1],
+                selected["mean_residual_difference_vs_reference"].iloc[::-1],
+                color="#4c72b0",
+            )
+            axis.axvline(0, color="#555555", linewidth=0.8)
+            axis.set_title(f"Cluster {cluster}: {direction} vs. largest cluster")
+            axis.set_xlabel("Mean Pearson-residual difference")
+    figure.tight_layout()
+    plt.show()
 
 
 def plot_residual_sample_umaps(table, *, minimum_umap_samples):
@@ -386,7 +239,9 @@ def plot_residual_sample_umaps(table, *, minimum_umap_samples):
             "the cluster assignments are still available below._"
         ))
         return
-    def plot_covariate_grid(covariates, title, *, categorical_covariates, figsize):
+    def plot_covariate_grid(
+        covariates, title, *, categorical_covariates, figsize, open_by_default=False
+    ):
         figure, axes = plt.subplots(2, 2, figsize=figsize)
         for axis, covariate in zip(axes.flat, covariates):
             if covariate not in coordinates:
@@ -414,24 +269,27 @@ def plot_residual_sample_umaps(table, *, minimum_umap_samples):
             axis.set_axis_off()
         figure.suptitle(title, y=1.01)
         figure.tight_layout()
-        display_collapsible_figure(figure, title)
+        display_collapsible_figure(
+            figure, title, open_by_default=open_by_default,
+        )
 
+    optional_covariates = [
+        covariate for covariate in ("bmi", "cmv") if covariate in coordinates
+    ]
+    if optional_covariates or "residual_cluster" in coordinates:
+        plot_covariate_grid(
+            ["residual_cluster", *optional_covariates],
+            "Residual clusters and non-model covariates over residual UMAP",
+            categorical_covariates={"residual_cluster", "cmv"},
+            figsize=(18, 10.2),
+            open_by_default=True,
+        )
     plot_covariate_grid(
         ["sex", "age", "log10_total_counts", "study"],
         "Model covariates over residual UMAP",
         categorical_covariates={"sex", "study"},
         figsize=(18, 10.2),
     )
-    optional_covariates = [
-        covariate for covariate in ("bmi", "cmv") if covariate in coordinates
-    ]
-    if optional_covariates:
-        plot_covariate_grid(
-            ["residual_cluster", *optional_covariates],
-            "BMI and CMV coverage over residual UMAP",
-            categorical_covariates={"residual_cluster", "cmv"},
-            figsize=(18, 10.2),
-        )
 
 
 def natural_sort_key(value):
@@ -474,6 +332,7 @@ def facet_grid_shape(n_panels, *, max_columns=4):
 
 def plot_study_linear_trends(
     data, *, fraction_column, title, ylabel, palette, show_fit_legend=True,
+    open_by_default=True,
 ):
     """Show within-study trends with and without samples younger than 20."""
     if data.empty:
@@ -523,104 +382,53 @@ def plot_study_linear_trends(
         figure.tight_layout(rect=(0, 0, 1, 0.87))
     else:
         figure.tight_layout(rect=(0, 0, 1, 0.94))
-    display_collapsible_figure(figure, f"Show within-study trends: {title}")
+    display_collapsible_figure(
+        figure, f"Within-study trends: {title}", open_by_default=open_by_default,
+    )
 
 
-def plot_combined_study_fits(fraction_specs):
-    """Plot equal-study standardized predictions from study-adjusted linear models."""
+def plot_study_fraction_curves(fraction_specs, *, palette):
+    """Plot each study's descriptive lowess curve without a pooled fit."""
     figure, axes = plt.subplots(
         1, len(fraction_specs), figsize=(7.8 * len(fraction_specs), 5.5), squeeze=False,
     )
     for axis, (data, fraction_column, label) in zip(axes.flat, fraction_specs):
-        model_data = data[["study", "age", fraction_column]].copy()
-        model_data["study"] = model_data["study"].astype(str)
-        model_data["age"] = pd.to_numeric(model_data["age"], errors="coerce")
-        model_data[fraction_column] = pd.to_numeric(model_data[fraction_column], errors="coerce")
-        model_data = model_data.dropna().reset_index(drop=True)
-        study_ranges = model_data.groupby("study", observed=True)["age"].agg(["min", "max"])
-        variable_studies = model_data.groupby("study", observed=True)["age"].nunique()
-        if model_data.empty or not (variable_studies >= 2).any():
+        plot_data = data[["study", "age", fraction_column]].copy()
+        plot_data["study"] = plot_data["study"].astype(str)
+        plot_data["age"] = pd.to_numeric(plot_data["age"], errors="coerce")
+        plot_data[fraction_column] = pd.to_numeric(plot_data[fraction_column], errors="coerce")
+        plot_data = plot_data.dropna().reset_index(drop=True)
+        if plot_data.empty:
             axis.text(
-                0.5, 0.5, "Insufficient within-study age variation for a shared slope",
+                0.5, 0.5, "No samples available for descriptive curves",
                 transform=axis.transAxes, ha="center", va="center",
             )
         else:
-            study_terms = pd.get_dummies(
-                model_data["study"], prefix="study", drop_first=True, dtype=float,
+            studies = sorted(plot_data["study"].unique())
+            sns.scatterplot(
+                data=plot_data, x="age", y=fraction_column, hue="study", palette=palette,
+                s=26, alpha=0.2, edgecolor="none", ax=axis,
             )
-            design = pd.concat(
-                [model_data[["age"]].astype(float), study_terms], axis=1,
-            )
-            design = sm.add_constant(design, has_constant="add")
-            rank = np.linalg.matrix_rank(design.to_numpy(dtype=float))
-            if len(model_data) <= rank:
-                axis.text(
-                    0.5, 0.5, "Insufficient residual degrees of freedom for interval",
-                    transform=axis.transAxes, ha="center", va="center",
-                )
-            else:
-                study_sample_weights = model_data.groupby(
-                    "study", observed=True,
-                )["study"].transform(lambda values: 1 / len(values))
-                model = sm.WLS(
-                    model_data[fraction_column].to_numpy(dtype=float), design,
-                    weights=study_sample_weights.to_numpy(dtype=float),
-                ).fit(cov_type="HC3")
-                age_grid = np.linspace(model_data["age"].min(), model_data["age"].max(), 160)
-                standardized_design = pd.DataFrame(
-                    0.0, index=np.arange(len(age_grid)), columns=design.columns,
-                )
-                standardized_design["const"] = 1.0
-                standardized_design["age"] = age_grid
-                for column in study_terms.columns:
-                    study = column.removeprefix("study_")
-                    standardized_design[column] = np.mean(
-                        model_data["study"].to_numpy() == study
+            for study in studies:
+                study_data = plot_data.loc[plot_data["study"] == study]
+                if has_age_span(study_data):
+                    sns.regplot(
+                        data=study_data, x="age", y=fraction_column, scatter=False,
+                        lowess=True, ci=None, color=palette[study],
+                        line_kws={"linewidth": 2.4, "alpha": 0.95}, ax=axis,
                     )
-                prediction = model.get_prediction(standardized_design).summary_frame()
-
-                overlap_min = study_ranges["min"].max()
-                overlap_max = study_ranges["max"].min()
-                if overlap_min <= overlap_max:
-                    axis.axvspan(
-                        overlap_min, overlap_max, color="#176b87", alpha=0.08,
-                        label="All studies observed",
-                    )
-                axis.fill_between(
-                    age_grid,
-                    prediction["mean_ci_lower"].to_numpy(),
-                    prediction["mean_ci_upper"].to_numpy(),
-                    color="#176b87", alpha=0.18, linewidth=0,
-                    label="95% HC3 confidence interval",
-                )
-                axis.plot(
-                    age_grid, prediction["mean"].to_numpy(),
-                    color="#124e63", linewidth=3,
-                    label="Equal-study adjusted estimate",
-                )
-                support_note = (
-                    "Shading marks the age range observed in every study; outside it, "
-                    "predictions extrapolate for some studies."
-                    if overlap_min <= overlap_max
-                    else "No age range is observed in every study; the standardized curve extrapolates."
-                )
-                axis.text(
-                    0.02, 0.02, support_note, transform=axis.transAxes,
-                    ha="left", va="bottom", fontsize=8, color="#4d5966",
-                )
-                axis.legend(loc="best", fontsize=8)
+            axis.legend(title="Study", loc="best", fontsize=8)
         axis.set_title(label)
         axis.set_xlabel("Age (years)")
         axis.set_ylabel(label)
-    figure.suptitle("Study-adjusted linear fraction estimates", y=0.98)
+    figure.suptitle("Study-specific descriptive fraction curves", y=0.98)
     figure.text(
         0.5, 0.015,
-        "Weighted least squares with study-specific intercepts and one shared age slope; "
-        "each study has equal total model weight. Intervals use HC3 robust standard errors.",
+        "Points are study × sample (alpha = 0.2). Each coloured curve is a separate study lowess fit; no combined model is fitted.",
         ha="center", fontsize=9,
     )
     figure.tight_layout(rect=(0, 0.06, 1, 0.92))
-    display_collapsible_figure(figure, "Show study-adjusted fraction curves")
+    display_collapsible_figure(figure, "Show study-specific fraction curves")
 
 
 def plot_cluster_fractions(data, *, palette):
@@ -659,7 +467,7 @@ def plot_cluster_fractions(data, *, palette):
     figure.legend(handles=handles, title="Study", loc="upper center", ncol=min(4, len(studies)))
     figure.suptitle("Cluster fractions: pooled linear trends (study-unadjusted)", y=0.98)
     figure.tight_layout(rect=(0, 0, 1, 0.91))
-    plt.show()
+    display_collapsible_figure(figure, "Show cluster-composition curves")
 
 
 def _bootstrap_binomial_residual_sd(design, denominators, fitted_probabilities, *, rng, n_bootstrap):
@@ -942,7 +750,7 @@ def plot_parent_fraction_coefficients(
         title="Residual diagnostic", bbox_to_anchor=(1.02, 0.53), loc="upper left",
     )
     axis.set_title(
-        f"Covariate effects on fraction of {cell_type}\nwithin {parent}"
+        f"Adult-only covariate effects on fraction of {cell_type}\nwithin {parent}"
     )
     figure.tight_layout()
     plt.show()
@@ -1106,7 +914,7 @@ def plot_pca_study_technology_and_introns(adata):
 
 # %% [markdown]
 # <a id="sample-coverage"></a>
-# ## Sample coverage among retained samples
+# ## Sample Coverage Among Retained Samples
 #
 # One row represents one study × sample. The compact table retains the metadata
 # context for the fraction plots below without repeating separate count plots
@@ -1147,20 +955,16 @@ plt.show()
 
 # %% [markdown]
 # <a id="sample-fractions"></a>
-# ## Sample-level fraction across age
+# ## Sample-Level Fraction Across Age
 #
 # Each point is one study × sample. The left panel uses all retained PBMCs as
 # denominator; the right panel uses the manually configured AIFI-L1 parent
 # derived from every cell's merged L2 call, never from a separate L1 classifier.
 # Samples with fewer than the configured denominator-cell cutoff are excluded.
 # Facets show descriptive within-study linear fits for all samples and for age
-# ≥20. The combined view is a study-adjusted descriptive fit: one weighted
-# least-squares model with study-specific intercepts and a shared age slope,
-# equal total weight per study, and HC3 confidence intervals. Shading identifies
-# the age interval observed in every study; predictions outside it extrapolate
-# for at least one study. HC3 intervals treat sample rows as independent;
-# repeat samples from the same subject are not clustered, which may understate
-# uncertainty.
+# ≥20. The all-study view places all studies in one panel per denominator, with
+# semi-transparent points and a separate lowess curve per study. It is purely
+# descriptive: no combined model or pooled age effect is fitted.
 
 # %%
 min_fraction_denominator = pipeline["cell_type_analysis"]["min_fraction_denominator_cells"]
@@ -1203,7 +1007,7 @@ palette = dict(zip(studies, sns.color_palette("tab10", n_colors=len(studies))))
 
 # %%
 display(Markdown(
-    f"### Adjusted fraction effects: {cell_type_name} within {parent}"
+    f"### Adjusted Fraction Effects: {cell_type_name} Within {parent}"
 ))
 
 # %% [markdown]
@@ -1254,7 +1058,7 @@ fraction_residual_diagnostics["binomial_bootstrap_replicates"] = (
 fraction_residual_diagnostics["binomial_bootstrap_seed"] = fraction_model_settings["binomial_bootstrap_seed"]
 fraction_diagnostics_path = output_dir / "fraction_model_diagnostics.tsv"
 fraction_residual_diagnostics.to_csv(fraction_diagnostics_path, sep="\t", index=False)
-display(Markdown("#### Fraction-model residual and sampling diagnostics"))
+display(Markdown("#### Fraction-Model Residual and Sampling Diagnostics"))
 display_collapsible_table(
     fraction_residual_diagnostics, "Show full per-study residual diagnostics",
 )
@@ -1289,15 +1093,15 @@ model_covariates = sorted({
 })
 display(HTML(
     "<section id=\"fraction-model-evidence\" class=\"report-evidence\">"
-    "<h2>Fraction-model evidence at a glance</h2>"
+    "<h3>Fraction-Model Evidence at a Glance</h3>"
     "<p>These are study-specific adult-sample OLS fits, not a pooled effect estimate. "
     "Use them to assess direction, precision, and the residual diagnostic before interpreting individual coefficients.</p>"
-    "<dl class=\"report-evidence-grid\">"
-    f"<div class=\"report-evidence-item\"><dt>Estimable study models</dt><dd>{len(fraction_residual_diagnostics)}</dd></div>"
-    f"<div class=\"report-evidence-item\"><dt>Age-effect direction</dt><dd>{escape(age_direction)}</dd></div>"
-    f"<div class=\"report-evidence-item\"><dt>Residual check</dt><dd>{escape(residual_summary)}</dd></div>"
-    f"<div class=\"report-evidence-item\"><dt>Covariates represented</dt><dd>{escape(', '.join(model_covariates) or 'None')}</dd></div>"
-    "</dl></section>"
+    "<div class=\"report-evidence-grid\">"
+    f"<div class=\"report-evidence-item\"><p class=\"report-evidence-label\">Estimable study models</p><p class=\"report-evidence-value\">{len(fraction_residual_diagnostics)}</p></div>"
+    f"<div class=\"report-evidence-item\"><p class=\"report-evidence-label\">Age-effect direction</p><p class=\"report-evidence-value\">{escape(age_direction)}</p></div>"
+    f"<div class=\"report-evidence-item\"><p class=\"report-evidence-label\">Residual check</p><p class=\"report-evidence-value\">{escape(residual_summary)}</p></div>"
+    f"<div class=\"report-evidence-item\"><p class=\"report-evidence-label\">Covariates represented</p><p class=\"report-evidence-value\">{escape(', '.join(model_covariates) or 'None')}</p></div>"
+    "</div></section>"
 ))
 plot_parent_fraction_coefficients(
     fraction_coefficients, fraction_residual_diagnostics, palette=palette,
@@ -1313,26 +1117,38 @@ display(Markdown(
 ))
 
 display(Markdown(
-    "<a id=\"additional-fraction-trends\"></a>\n### Additional descriptive fraction trends"
+    "<a id=\"additional-fraction-trends\"></a>\n### Additional Descriptive Fraction Trends"
 ))
 display(Markdown(
     "These age-trend views are secondary to the adult-only adjusted estimates above. "
-    "Open a panel to review all-age and adult-only within-study trends, followed by the "
-    "study-adjusted trend across the observed age range."
+    "The within-L1 within-study panel opens on load; the all-retained-PBMC panel starts "
+    "closed. Both show all-age and adult-only linear fits. "
+    "The all-study panels show one descriptive lowess curve per study."
 ))
 for index, (fractions, fraction_column, title, ylabel) in enumerate(fraction_specs):
     plot_study_linear_trends(
         fractions, fraction_column=fraction_column, title=title, ylabel=ylabel, palette=palette,
         show_fit_legend=index == 0,
+        open_by_default=index != 0,
     )
-plot_combined_study_fits([
-    (fractions, fraction_column, ylabel)
-    for fractions, fraction_column, _, ylabel in fraction_specs
-])
+plot_study_fraction_curves(
+    [(fractions, fraction_column, ylabel) for fractions, fraction_column, _, ylabel in fraction_specs],
+    palette=palette,
+)
 
 # %% [markdown]
 # <a id="local-embedding"></a>
-# ## Local embedding and clusters
+# ## Local Embedding and Clusters
+#
+# This is a type-specific exploratory embedding. PCA is calculated from the
+# local highly variable genes after normalization, log transformation, and
+# scaling; configured V(D)J genes are excluded. When more than one study is
+# represented, Harmony corrects these PCs by study. The configured local
+# neighbor graph, UMAP, and Leiden clusters are calculated from the
+# Harmony-adjusted PCs; native PCs are retained below for diagnostic plots.
+# Integration can also change biological structure, so study colouring and
+# sample-level cluster composition should be reviewed before interpreting a
+# cluster as a biological state.
 
 # %%
 if report["status"] != "complete":
@@ -1346,38 +1162,8 @@ else:
         plot_umap(adata, color=color, marker_area_scale=4.0)
 
 # %% [markdown]
-# <a id="cluster-composition"></a>
-# ## Cluster composition
-#
-# The plots use one study × sample fraction per point, so they describe
-# sample-level cluster composition rather than treating cells as independent
-# observations.
-
-# %%
-if report["status"] == "complete":
-    all_cluster_fractions = sample_cluster_fractions(adata)
-    cluster_fractions = sample_cluster_fractions(
-        adata, min_denominator_cells=min_fraction_denominator,
-    )
-    excluded_cluster_samples = (
-        all_cluster_fractions[["study", "sample"]].drop_duplicates().shape[0]
-        - cluster_fractions[["study", "sample"]].drop_duplicates().shape[0]
-    )
-    display(Markdown(
-        f"_{excluded_cluster_samples} sample(s) excluded from cluster fractions because the "
-        f"split cell-type denominator has fewer than {min_fraction_denominator} cells._"
-    ))
-    studies = sorted(cluster_fractions["study"].unique())
-    palette = dict(zip(studies, sns.color_palette("tab10", n_colors=len(studies))))
-    plot_cluster_fractions(cluster_fractions, palette=palette)
-    display(Markdown(
-        "_Each point is a sample-level cluster fraction. Differences among coloured study series "
-        "are descriptive and should be read alongside the coverage and protocol context above._"
-    ))
-
-# %% [markdown]
 # <a id="cluster-markers"></a>
-# ## Cluster markers
+# ### Cluster Markers
 #
 # Genes are ranked by a Wilcoxon comparison of each local cluster against all
 # other local clusters. Signed log fold changes therefore show whether a gene
@@ -1406,12 +1192,42 @@ if report["status"] == "complete":
         axis.remove()
     figure.tight_layout()
     display_collapsible_figure(
-        figure, f"Show marker genes across {len(clusters)} local clusters",
+        figure, f"Show marker genes across {len(clusters)} local clusters", open_by_default=True,
     )
 
 # %% [markdown]
-# <a id="pc-study-technology"></a>
-# ## PCA scores by study and protocol covariates
+# <a id="cluster-composition"></a>
+# ### Cluster Composition
+#
+# The plots use one study × sample fraction per point, so they describe
+# sample-level cluster composition rather than treating cells as independent
+# observations. Curves are minimized on load.
+
+# %%
+if report["status"] == "complete":
+    all_cluster_fractions = sample_cluster_fractions(adata)
+    cluster_fractions = sample_cluster_fractions(
+        adata, min_denominator_cells=min_fraction_denominator,
+    )
+    excluded_cluster_samples = (
+        all_cluster_fractions[["study", "sample"]].drop_duplicates().shape[0]
+        - cluster_fractions[["study", "sample"]].drop_duplicates().shape[0]
+    )
+    display(Markdown(
+        f"_{excluded_cluster_samples} sample(s) excluded from cluster fractions because the "
+        f"split cell-type denominator has fewer than {min_fraction_denominator} cells._"
+    ))
+    studies = sorted(cluster_fractions["study"].unique())
+    palette = dict(zip(studies, sns.color_palette("tab10", n_colors=len(studies))))
+    plot_cluster_fractions(cluster_fractions, palette=palette)
+    display(Markdown(
+        "_Each point is a sample-level cluster fraction. Differences among coloured study series "
+        "are descriptive and should be read alongside the coverage and protocol context above._"
+    ))
+
+# %% [markdown]
+# <a id="pca-diagnostics"></a>
+# ### PCA Diagnostics
 #
 # These are the native, local PCA scores before Harmony adjustment. Colour uses
 # the report's standard study palette and marker shape indicates the recorded
@@ -1422,19 +1238,19 @@ if report["status"] == "complete":
 
 # %%
 if report["status"] == "complete":
-    plot_pca_study_technology_and_introns(adata)
-    display(Markdown(
-        "_Read the collapsed panels as a technical-structure diagnostic: separation by study, technology, "
-        "or intronic alignment can indicate design effects, but is not itself a biological test._"
-    ))
+    variance_ratio = np.asarray(adata.uns["pca"]["variance_ratio"])
+    figure, axis = plt.subplots(figsize=(9, 4.5))
+    components = np.arange(1, len(variance_ratio) + 1)
+    axis.bar(components, variance_ratio * 100, color="#4c72b0")
+    axis.set_xlabel("Principal component")
+    axis.set_ylabel("Variance explained (%)")
+    axis.grid(True, alpha=0.25)
+    figure.tight_layout()
+    plt.show()
 
-# %% [markdown]
-# <a id="pc-age"></a>
-# ## PCA gene loadings, variance explained, and exploratory PC–age correlations
-#
-# Loadings show which genes contribute most to each native local PC, while the
-# variance plot shows each PC's individual share of total variance. PC–age correlations
-# are descriptive cell-level summaries and are not subject-level inference.
+# %%
+if report["status"] == "complete":
+    plot_pca_study_technology_and_introns(adata)
 
 # %%
 if report["status"] == "complete":
@@ -1451,23 +1267,7 @@ if report["status"] == "complete":
 
 # %%
 if report["status"] == "complete":
-    variance_ratio = np.asarray(adata.uns["pca"]["variance_ratio"])
-    figure, axis = plt.subplots(figsize=(9, 4.5))
-    components = np.arange(1, len(variance_ratio) + 1)
-    axis.bar(components, variance_ratio * 100, color="#4c72b0")
-    axis.set_xlabel("Principal component")
-    axis.set_ylabel("Variance explained (%)")
-    axis.grid(True, alpha=0.25)
-    figure.tight_layout()
-    display_collapsible_figure(figure, "Show variance explained by each PC")
-
-# %%
-if report["status"] == "complete":
     pc_age = pd.read_csv(output_dir / "pc_age_correlations.tsv", sep="\t")
-    top_pc_age = pc_age.reindex(
-        pc_age["spearman_r"].abs().sort_values(ascending=False).index
-    ).head(10)
-    display_collapsible_table(top_pc_age, "Show the top 10 PC–age correlations")
     figure, axis = plt.subplots(figsize=(9, 4.5))
     sns.barplot(data=pc_age, x="pc", y="spearman_r", color="#4c72b0", ax=axis)
     axis.axhline(0, color="black", linewidth=0.8)
@@ -1533,10 +1333,15 @@ if de_dir:
         combined_results_by_covariate[result_path.stem] = result
     has_combined = bool(combined_results_by_covariate)
     if has_per_study or has_combined or de_run_metadata:
-        display(Markdown("<a id=\"differential-expression\"></a>\n## Pseudobulk differential expression"))
+        display(Markdown("<a id=\"differential-expression\"></a>\n## Differential Gene Expression"))
         display(Markdown(
             "Pseudobulk models aggregate counts at the study × sample × cell-type level. "
             "They provide the sample-level complement to the descriptive single-cell views above."
+        ))
+        display(Markdown(
+            "**Gene universes:** per-study fits use genes observed in that study; each combined "
+            "fit uses the intersection across its included studies, excluding outer-join zeros for "
+            "study-absent genes. The cross-cell-type expression atlas uses the all-study intersection."
         ))
         if de_run_metadata.get("analysis_mode") == "test_only":
             display(Markdown(
@@ -1660,10 +1465,523 @@ if de_dir:
                     "FDR-significant age-associated genes": int(per_study_hits["gene"].nunique()),
                 }
             )
+        combined_fit_records = [
+            model for model in de_run_metadata.get("models", [])
+            if model.get("model") in {"merged", "combined"}
+        ]
+        age_diagnostics_path = de_dir / "age_model_diagnostics.csv"
+        age_combined_results = combined_results_by_covariate.get("age")
+        if age_diagnostics_path.is_file() and age_combined_results is not None:
+            age_diagnostics = pd.read_csv(age_diagnostics_path)
+            expected_columns = {
+                "study", "age", "sex", "counts_in_age_gene_intersection",
+                "genes_in_age_intersection",
+            }
+            if expected_columns.issubset(age_diagnostics):
+                display(Markdown(
+                    "<a id=\"shared-age-model-diagnostics\"></a>\n### Shared Age-Model Diagnostics"
+                ))
+                display(Markdown(
+                    "This single figure checks study-site/age support, the relation between age and "
+                    "the raw pseudobulk counts used in the shared age gene intersection, and "
+                    "the unadjusted age-model p-value calibration. Q-Q points are the raw "
+                    "p-values (`pvalue`, before multiple-testing correction) from the combined "
+                    "age model fitted across all eligible studies for this cell type, adjusted "
+                    "for study site, sex, age, and log10(total_counts), and using the model's shared "
+                    "gene intersection. "
+                    "The dashed y=x line is the null reference; "
+                    "the axes retain independent scales so departures remain readable. This is "
+                    "descriptive: it does not diagnose a specific gene or replace model checks."
+                ))
+                figure, axes = plt.subplots(1, 3, figsize=(18, 4.8))
+                support_column = "study_site" if "study_site" in age_diagnostics else "study"
+                sns.stripplot(
+                    data=age_diagnostics, x=support_column, y="age", hue="sex", dodge=True,
+                    jitter=0.18, alpha=0.8, ax=axes[0],
+                )
+                axes[0].set_xlabel("Study site" if support_column == "study_site" else "Study")
+                axes[0].set_ylabel("Age (years)")
+                axes[0].set_title("Age support by study site")
+                axes[0].tick_params(axis="x", rotation=75, labelsize=7)
+                axes[0].legend(title="Sex", fontsize=8, title_fontsize=8)
+
+                plot_samples = age_diagnostics.loc[
+                    age_diagnostics["counts_in_age_gene_intersection"] > 0
+                ].copy()
+                plot_samples["log10_counts"] = np.log10(
+                    plot_samples["counts_in_age_gene_intersection"]
+                )
+                sns.scatterplot(
+                    data=plot_samples, x="age", y="log10_counts", hue=support_column, style="sex",
+                    s=42, alpha=0.85, ax=axes[1],
+                )
+                axes[1].set_xlabel("Age (years)")
+                axes[1].set_ylabel("log10 raw counts in age gene intersection")
+                axes[1].set_title("Age and pseudobulk depth")
+                axes[1].legend(fontsize=7, title_fontsize=8)
+
+                pvalue_source = (
+                    age_combined_results["pvalue"]
+                    if "pvalue" in age_combined_results else pd.Series(dtype=float)
+                )
+                pvalues = pd.to_numeric(pvalue_source, errors="coerce")
+                pvalues = pvalues.loc[(pvalues > 0) & (pvalues <= 1)].sort_values().to_numpy()
+                if len(pvalues):
+                    expected = (np.arange(1, len(pvalues) + 1) - 0.5) / len(pvalues)
+                    axes[2].scatter(
+                        -np.log10(expected), -np.log10(pvalues), s=9, alpha=0.65,
+                        color="#4c72b0", linewidths=0,
+                    )
+                    axes[2].axline(
+                        (0, 0), slope=1, color="black", linestyle="--",
+                        linewidth=1.5, zorder=4, label="Null (y = x)",
+                    )
+                    axes[2].set_xlabel("Expected −log10(p)")
+                    axes[2].set_ylabel("Observed −log10(p)")
+                    axes[2].set_title("Age-model p-value QQ plot")
+                    axes[2].legend(fontsize=8)
+                else:
+                    axes[2].text(
+                        0.5, 0.5, "No finite unadjusted p-values", ha="center", va="center",
+                        transform=axes[2].transAxes,
+                    )
+                    axes[2].set_axis_off()
+                figure.tight_layout()
+                plt.show()
+
+        display(Markdown("### Covariate Effects"))
+        display(Markdown(
+            f"Each combined fit estimates one covariate effect from eligible studies using "
+            f"the complete cases in its displayed design. **FDR threshold:** {de_alpha:g}. "
+            "Model details and sample counts are listed below each volcano plot."
+        ))
+        if not combined_results_by_covariate:
+            display(Markdown("_No combined covariate results are available for volcano plots._"))
+        covariate_order = {
+            "age": 0,
+            "sex": 1,
+            "bmi": 2,
+            "cmv": 3,
+            "log10_total_counts": 4,
+        }
+        ordered_combined_covariates = sorted(
+            combined_results_by_covariate.items(),
+            key=lambda item: (covariate_order.get(item[0], 99), item[0]),
+        )
+        for covariate, combined_results in ordered_combined_covariates:
+            covariate_label = {
+                "age": "Age",
+                "sex": "Sex",
+                "bmi": "BMI",
+                "cmv": "CMV",
+                "log10_total_counts": "log10(total_counts)",
+            }.get(covariate, covariate.title())
+            covariate_anchor_suffix = re.sub(
+                r"[^a-z0-9]+", "-", covariate_label.lower()
+            ).strip("-")
+            display(Markdown(
+                f'<a id="combined-{covariate_anchor_suffix}"></a>\n#### {covariate_label}'
+            ))
+            fit_record = next(
+                (model for model in combined_fit_records
+                 if covariate in model.get("results_by_covariate", {})),
+                {},
+            )
+            for contrast, contrast_results in combined_results.groupby("contrast", sort=True):
+                volcano = contrast_results.copy()
+                volcano["padj"] = pd.to_numeric(volcano["padj"], errors="coerce")
+                volcano["log2FoldChange"] = pd.to_numeric(
+                    volcano["log2FoldChange"], errors="coerce"
+                )
+                volcano = volcano.dropna(subset=["padj", "log2FoldChange"]).copy()
+                if volcano.empty:
+                    display(Markdown(
+                        f"_{covariate} ({contrast}) has no finite adjusted p-values to plot._"
+                    ))
+                    continue
+                volcano["minus_log10_padj"] = -np.log10(
+                    volcano["padj"].clip(lower=np.finfo(float).tiny)
+                )
+                study_results = per_study_by_covariate.get(covariate, [])
+                matching_study_results = pd.DataFrame()
+                if study_results:
+                    matching_study_results = pd.concat(study_results, ignore_index=True)
+                    matching_study_results = matching_study_results.loc[
+                        matching_study_results["contrast"].astype(str) == str(contrast)
+                    ].copy()
+                    matching_study_results["gene"] = matching_study_results[
+                        "gene"
+                    ].astype(str)
+                    matching_study_results["padj"] = pd.to_numeric(
+                        matching_study_results["padj"], errors="coerce"
+                    )
+                    study_hits = (
+                        matching_study_results.loc[
+                            matching_study_results["padj"] < de_alpha
+                        ]
+                        .groupby("gene")["study"]
+                        .nunique()
+                    )
+                    volcano["studies_associated"] = (
+                        volcano["gene"].astype(str).map(study_hits).fillna(0).astype(int)
+                    )
+                else:
+                    volcano["studies_associated"] = 0
+                studies_used = (
+                    str(volcano["studies_included"].iloc[0]).split(";")
+                    if "studies_included" in volcano else fit_record.get("studies", [])
+                )
+                sample_counts = (
+                    json.loads(str(volcano["study_sample_counts"].iloc[0]))
+                    if "study_sample_counts" in volcano
+                    else fit_record.get("study_sample_counts", {})
+                )
+                study_summary = ", ".join(
+                    f"{study} (n={sample_counts.get(study, 0)})" for study in studies_used if study
+                )
+                if not studies_used:
+                    studies_used = sorted(sample_counts)
+                if not study_summary and sample_counts:
+                    study_summary = ", ".join(
+                        f"{study} (n={count})" for study, count in sample_counts.items()
+                    )
+                nonintersection_age_markers = pd.DataFrame()
+                if covariate == "age" and not matching_study_results.empty:
+                    marker_results = matching_study_results.copy()
+                    if studies_used:
+                        marker_results = marker_results.loc[
+                            marker_results["study"].astype(str).isin(studies_used)
+                        ].copy()
+                    marker_results["log2FoldChange"] = pd.to_numeric(
+                        marker_results["log2FoldChange"], errors="coerce"
+                    )
+                    marker_results = marker_results.dropna(
+                        subset=["gene", "padj", "log2FoldChange"]
+                    )
+                    study_gene_sets = [
+                        set(group["gene"].astype(str))
+                        for _, group in marker_results.groupby("study", observed=True)
+                    ]
+                    shared_age_genes = (
+                        set.intersection(*study_gene_sets) if study_gene_sets else set()
+                    )
+                    nonintersection_age_markers = marker_results.loc[
+                        (marker_results["padj"] < de_alpha)
+                        & ~marker_results["gene"].astype(str).isin(shared_age_genes)
+                    ].copy()
+                    if not nonintersection_age_markers.empty:
+                        nonintersection_age_markers["minus_log10_padj"] = -np.log10(
+                            nonintersection_age_markers["padj"].clip(
+                                lower=np.finfo(float).tiny
+                            )
+                        )
+                        nonintersection_age_markers = (
+                            nonintersection_age_markers.sort_values(
+                                ["study", "padj", "gene"], kind="stable"
+                            )
+                            .groupby("study", as_index=False, sort=True)
+                            .head(1)
+                        )
+                max_associated_studies = max(
+                    int(volcano["studies_associated"].max()), 1
+                )
+                # Leave room for the study-count legend while keeping these panels
+                # comparable in plot-area width to the baseMean-colored panels.
+                figure, axis = plt.subplots(figsize=(12.6, 6.5))
+                sns.scatterplot(
+                    data=volcano, x="log2FoldChange", y="minus_log10_padj",
+                    hue="studies_associated", palette="viridis",
+                    hue_norm=(0, max_associated_studies), legend="brief",
+                    s=16, alpha=0.7, linewidth=0, ax=axis,
+                )
+                study_count_legend = axis.legend(
+                    title="Per-study FDR-significant\nassociations", fontsize=8,
+                    bbox_to_anchor=(1.02, 1), loc="upper left", borderaxespad=0,
+                )
+                if not nonintersection_age_markers.empty:
+                    study_colors = dict(zip(
+                        sorted(nonintersection_age_markers["study"].astype(str).unique()),
+                        sns.color_palette("tab10", n_colors=nonintersection_age_markers["study"].nunique()),
+                    ))
+                    for _, marker in nonintersection_age_markers.iterrows():
+                        study = str(marker["study"])
+                        axis.scatter(
+                            marker["log2FoldChange"], marker["minus_log10_padj"],
+                            marker="D", s=72, facecolors="none",
+                            edgecolors=study_colors[study], linewidths=1.8,
+                            label=study, zorder=4,
+                        )
+                        axis.annotate(
+                            f"{marker['gene']} ({study})",
+                            (marker["log2FoldChange"], marker["minus_log10_padj"]),
+                            xytext=(4, -10), textcoords="offset points", fontsize=7,
+                            color=study_colors[study],
+                        )
+                    axis.legend(
+                        title="Top FDR-significant\nnon-shared age gene",
+                        fontsize=8, bbox_to_anchor=(1.02, 0.46),
+                        loc="upper left", borderaxespad=0,
+                    )
+                    axis.add_artist(study_count_legend)
+                axis.axhline(-np.log10(de_alpha), color="#555555", linestyle="--", linewidth=1)
+                axis.axvline(0, color="#555555", linewidth=0.8)
+                if covariate == "age":
+                    effect_label = "log2 fold change per year"
+                elif covariate == "bmi":
+                    effect_label = "log2 fold change per BMI unit"
+                elif covariate == "log10_total_counts":
+                    effect_label = "log2 fold change per log10(total_counts) unit"
+                else:
+                    effect_label = f"log2 fold change ({contrast})"
+                axis.set_xlabel(f"{covariate_label} effect ({effect_label})")
+                axis.set_ylabel("−log10(adjusted p-value)")
+                if len(studies_used) > 1:
+                    title = f"Combined site-adjusted {covariate_label} association: {contrast}"
+                else:
+                    study_name = studies_used[0] if studies_used else "single study"
+                    title = f"{covariate_label} association in {study_name}: {contrast}"
+                axis.set_title(title)
+                finite_label_rows = volcano.loc[
+                    np.isfinite(volcano["padj"])
+                    & np.isfinite(volcano["log2FoldChange"])
+                ].copy()
+                top_significance = finite_label_rows.sort_values(
+                    ["padj", "gene"], kind="stable"
+                ).head(20)
+                top_effect = finite_label_rows.assign(
+                    _absolute_log2_fold_change=(
+                        finite_label_rows["log2FoldChange"].abs()
+                    )
+                ).sort_values(
+                    ["_absolute_log2_fold_change", "padj", "gene"],
+                    ascending=[False, True, True],
+                    kind="stable",
+                ).head(20)
+                labels = pd.concat([top_significance, top_effect]).drop_duplicates(
+                    "gene", keep="first"
+                )
+                for _, row in labels.iterrows():
+                    axis.annotate(
+                        str(row["gene"]),
+                        (row["log2FoldChange"], row["minus_log10_padj"]),
+                        xytext=(3, 3), textcoords="offset points", fontsize=7,
+                    )
+                figure.tight_layout(rect=(0, 0, 0.68 if not nonintersection_age_markers.empty else 0.78, 1))
+                plt.show()
+                if not nonintersection_age_markers.empty:
+                    display(Markdown(
+                        "Outlined diamonds use each study's own age-model estimate and adjusted "
+                        "p-value. They select the smallest adjusted p-value among FDR-significant "
+                        "genes outside the shared per-study gene universe."
+                    ))
+                    display(nonintersection_age_markers[[
+                        "study", "gene", "log2FoldChange", "padj",
+                    ]].rename(columns={
+                        "log2FoldChange": "per-study log2 fold change per year",
+                        "padj": "per-study adjusted p-value",
+                    }).sort_values("study", kind="stable"))
+                if covariate == "log10_total_counts" and "baseMean" in volcano.columns:
+                    base_mean = pd.to_numeric(volcano["baseMean"], errors="coerce")
+                    finite = np.isfinite(base_mean) & (base_mean > 0)
+                    if finite.any():
+                        log_base_mean = np.log10(base_mean.loc[finite])
+                        base_mean_volcano = volcano.loc[finite]
+                        low = float(log_base_mean.min())
+                        high = float(log_base_mean.max())
+                        norm = Normalize(vmin=low, vmax=high if high > low else low + 0.01)
+                        figure, axis = plt.subplots(figsize=(10.5, 6.5))
+                        points = axis.scatter(
+                            base_mean_volcano["log2FoldChange"],
+                            base_mean_volcano["minus_log10_padj"],
+                            c=log_base_mean,
+                            cmap="viridis",
+                            norm=norm,
+                            s=16,
+                            alpha=0.7,
+                            linewidths=0,
+                        )
+                        colorbar = figure.colorbar(points, ax=axis, pad=0.02)
+                        colorbar.set_label("log10(combined-fit baseMean)")
+                        axis.axhline(
+                            -np.log10(de_alpha), color="#555555", linestyle="--", linewidth=1
+                        )
+                        axis.axvline(0, color="#555555", linewidth=0.8)
+                        axis.set_xlabel(f"{covariate_label} effect ({effect_label})")
+                        axis.set_ylabel("−log10(adjusted p-value)")
+                        axis.set_title(f"{title} (colored by log10(baseMean))")
+                        for _, row in labels.iterrows():
+                            axis.annotate(
+                                str(row["gene"]),
+                                (row["log2FoldChange"], row["minus_log10_padj"]),
+                                xytext=(3, 3), textcoords="offset points", fontsize=7,
+                            )
+                        figure.tight_layout()
+                        plt.show()
+                fit_design = fit_record.get(
+                    "design",
+                    str(volcano["design"].iloc[0]) if "design" in volcano else "—",
+                )
+                study_sites = (
+                    str(volcano["study_sites_included"].iloc[0]).split(";")
+                    if "study_sites_included" in volcano
+                    else fit_record.get("study_sites", [])
+                )
+                details = pd.DataFrame(
+                    {
+                        "Value": [
+                            contrast,
+                            fit_design,
+                            f"{de_alpha:g}",
+                            int((volcano["padj"] < de_alpha).sum()),
+                            study_summary or "unavailable in this legacy result set",
+                            ", ".join(site for site in study_sites if site) or "—",
+                            sum(sample_counts.values()) if sample_counts else "unavailable",
+                            fit_record.get(
+                                "n_samples_excluded_missing_design_covariates", "—"
+                            ),
+                        ]
+                    },
+                    index=[
+                        "Contrast",
+                        "Model design",
+                        "FDR threshold",
+                        "FDR-significant genes",
+                        "Studies included (samples per study)",
+                        "Study sites included",
+                        "Total samples used",
+                        "Samples excluded for missing design values",
+                    ],
+                )
+                display(details)
+        display(Markdown(
+            "_DE interpretation: the recurrence panels emphasize agreement among available per-study "
+            "models; each combined volcano summarizes eligible samples with study-site, age, sex, "
+            "and log-total-count adjustment. "
+            "In the primary volcano, point color gives the number of available per-study fits "
+            "for the same covariate and contrast with FDR-significant association for that gene "
+            "(using the displayed FDR threshold); the plotted effect and adjusted p-value come "
+            "from the combined fit. The log10(total_counts) volcano also has a companion colored "
+            "by combined-fit log10(baseMean). "
+            "For age, outlined diamonds mark the smallest per-study adjusted p-value among "
+            "FDR-significant genes outside the shared per-study gene universe; their position instead uses that study's "
+            "own effect and adjusted p-value, so they are a visibility check rather than combined-fit points. "
+            "The site term is omitted when only one site remains estimable. Combined fits do not "
+            "by themselves establish replication across studies._"
+        ))
+        per_study_covariate_summary = []
+        for result in per_study_results:
+            for (covariate, contrast), subset in result.groupby(
+                ["covariate", "contrast"], observed=True
+            ):
+                sample_counts = json.loads(str(subset["study_sample_counts"].iloc[0]))
+                study = str(subset["study"].iloc[0])
+                fit_record = next(
+                    (model for model in de_run_metadata.get("models", [])
+                     if model.get("model") == "per_study"
+                     and model.get("study") == study
+                     and covariate in model.get("results_by_covariate", {})),
+                    {},
+                )
+                per_study_covariate_summary.append({
+                    "study": study,
+                    "covariate": covariate,
+                    "contrast": contrast,
+                    "design": fit_record.get("design", "—"),
+                    "complete-case samples used": (
+                        sum(sample_counts.values()) if sample_counts else "—"
+                    ),
+                    "excluded for missing design values": fit_record.get(
+                        "n_samples_excluded_missing_design_covariates", "—"
+                    ),
+                    "genes tested": subset["gene"].nunique(),
+                    "FDR-significant genes": int(
+                        (pd.to_numeric(subset["padj"], errors="coerce") < de_alpha).sum()
+                    ),
+                })
+        if per_study_covariate_summary:
+            display(Markdown(
+                "<a id=\"per-study-covariate-models\"></a>\n### Per-Study Covariate Models"
+            ))
+            display(Markdown(
+                "Each study is fitted once with its maximal available design. Every coefficient for "
+                "that study comes from the same complete-case sample set and formula."
+            ))
+            per_study_summary = pd.DataFrame(per_study_covariate_summary)
+            per_study_summary["_covariate_order"] = per_study_summary["covariate"].map({
+                "age": 0, "sex": 1, "bmi": 2, "cmv": 3,
+                "log10_total_counts": 4,
+            }).fillna(99)
+            per_study_summary = (
+                per_study_summary
+                .sort_values(
+                    ["study", "_covariate_order", "contrast"], kind="stable",
+                )
+                .drop(columns="_covariate_order")
+            )
+            display_collapsible_table(
+                per_study_summary,
+                "Show per-study fits, sorted by study then coefficient",
+            )
+
+        display(Markdown(
+            "Per-study fits use one maximal available design and also adjust for site when "
+            "multiple sites contribute. Missing values exclude a sample only from models whose "
+            "design includes that variable. Categorical effects use female as the sex reference "
+            "and no CMV (negative where that is the source label) as the CMV reference."
+        ))
+        if summary_rows:
+            display_collapsible_table(
+                pd.DataFrame(summary_rows), "Show per-study age gene-count summary",
+            )
+
+        if has_age_per_study:
+            figure, axes = plt.subplots(1, 2, figsize=(14.5, 5.8))
+            if recurrence.empty:
+                empty_message = (
+                    "No genes were tested in every per-study model"
+                    if not common_per_study_genes
+                    else "No common-universe genes pass the FDR threshold"
+                )
+                axes[0].text(0.5, 0.5, empty_message,
+                             transform=axes[0].transAxes, ha="center", va="center")
+                axes[1].text(0.5, 0.5, empty_message,
+                             transform=axes[1].transAxes, ha="center", va="center")
+            else:
+                top_genes = recurrence.head(50).sort_values("studies_associated")
+                sns.barplot(
+                    data=top_genes, x="studies_associated", y="gene", color="#4c72b0",
+                    ax=axes[0],
+                )
+                axes[0].set_xlabel("Studies with FDR-significant age association")
+                axes[0].set_ylabel("")
+                axes[0].set_title("Genes recurring across studies (top 50)")
+                recurrence_counts = recurrence["studies_associated"].value_counts().sort_index()
+                sns.barplot(
+                    x=recurrence_counts.index.astype(str), y=recurrence_counts.values,
+                    color="#55a868", ax=axes[1],
+                )
+                axes[1].set_xlabel("Number of studies")
+                axes[1].set_ylabel("Unique associated genes")
+                axes[1].set_title(
+                    f"Common-universe union: {recurrence['gene'].nunique():,} genes"
+                )
+            figure.tight_layout()
+            plt.show()
+            if not recurrence.empty:
+                display(Markdown(
+                    "The effect shown for each gene is the **signed** age log2 fold change "
+                    "with the largest absolute magnitude among its per-study estimates."
+                ))
+                display_collapsible_table(
+                    recurrence.head(50),
+                    "Show top 50 recurring age-associated genes and per-study estimates",
+                    max_height=480,
+                )
+
         if not intersection_diagnostics.empty:
             display(Markdown(
                 "<a id=\"per-study-gene-intersection\"></a>\n"
-                "### Per-study gene-intersection diagnostic"
+                "### Per-Study Gene-Intersection Diagnostic"
             ))
             display(Markdown(
                 "This table shows how much restricting a cross-study comparison to genes tested "
@@ -1678,49 +1996,9 @@ if de_dir:
                 ].map(lambda value: f"{value:.1f}%")}
             ), "Show per-study gene-intersection sensitivity details")
 
-        combined_fit_records = [
-            model for model in de_run_metadata.get("models", [])
-            if model.get("model") in {"merged", "combined"}
-        ]
-        combined_covariate_summary = []
-        for covariate, results in combined_results_by_covariate.items():
-            fit_record = next(
-                (model for model in combined_fit_records
-                 if covariate in model.get("results_by_covariate", {})),
-                {},
-            )
-            for contrast, contrast_results in results.groupby("contrast", sort=True, observed=True):
-                padj = pd.to_numeric(contrast_results["padj"], errors="coerce")
-                combined_covariate_summary.append({
-                    "covariate": covariate,
-                    "contrast": contrast,
-                    "design": fit_record.get("design", "—"),
-                    "FDR-significant genes": int((padj < de_alpha).sum()),
-                    "studies used": ", ".join(fit_record.get("studies", [])),
-                    "study sites used": ", ".join(fit_record.get("study_sites", [])),
-                    "complete-case samples used": fit_record.get("n_samples", "—"),
-                    "excluded for missing design values": fit_record.get(
-                        "n_samples_excluded_missing_design_covariates", "—"
-                    ),
-                })
-        if combined_covariate_summary:
-            display(Markdown(
-                "<a id=\"combined-covariate-models\"></a>\n### Combined covariate models"
-            ))
-            display(Markdown(
-                "Each model estimates its named covariate effect using all studies with recorded "
-                "values for that covariate. It adjusts for study-site batch, age, sex, and "
-                "log10(total_counts), and "
-                "uses complete cases for its displayed design."
-            ))
-            display_collapsible_table(
-                pd.DataFrame(combined_covariate_summary),
-                "Show combined-model sample and significant-gene counts",
-            )
-
         if age_trajectory_fit or age_trajectory_results is not None:
             display(Markdown(
-                "<a id=\"age-bin-trajectories\"></a>\n### Age-bin trajectories"
+                "<a id=\"age-bin-trajectories\"></a>\n## Age-Bin Trajectories"
             ))
             if de_dir:
                 cross_type_report = (
@@ -1869,6 +2147,9 @@ if de_dir:
                         profiles,
                         trajectory_settings,
                     )
+                    merge_diagnostics = trajectory_merge_diagnostics(
+                        profiles, trajectory_settings, maximum_merges=20
+                    )
                     cluster_rows = profiles.join(cluster_labels).reset_index()
                     cluster_rows.insert(1, "cell_type", cell_type_name)
                     cluster_rows["omnibus_padj"] = cluster_rows["gene"].map(
@@ -1880,7 +2161,7 @@ if de_dir:
                     cluster_means.to_csv(
                         output_dir / "age_trajectory_cluster_means.csv", index=False
                     )
-                    figure, axes = plt.subplots(1, 2, figsize=(13, 4.8))
+                    figure, axes = plt.subplots(1, 3, figsize=(18, 4.8))
                     palette = sns.color_palette(
                         "husl", n_colors=max(len(cluster_means), 1)
                     )
@@ -1927,12 +2208,22 @@ if de_dir:
                         )
                         axes[1].set_xlabel("UMAP 1")
                         axes[1].set_ylabel("UMAP 2")
+                    plot_trajectory_merge_diagnostic(
+                        axes[2], merge_diagnostics,
+                        max_clusters=trajectory_settings.max_clusters,
+                    )
                     figure.tight_layout()
                     display_collapsible_figure(
                         figure,
-                        f"Show trajectory clusters and UMAP ({len(profiles):,} genes, "
+                        f"Show trajectory clusters, UMAP, and merge diagnostic ({len(profiles):,} genes, "
                         f"FDR ≤ {cluster_fdr:g})",
+                        open_by_default=True,
                     )
+                    display(Markdown(
+                        "The merge-cost panel shows up to the final 20 hierarchical merges. "
+                        "A sharp increase at **K → K−1** supports retaining K trajectory groups; "
+                        "the red marker shows the configured cluster cap when that transition is available."
+                    ))
                     display(Markdown(
                         "Download the [gene cluster assignments and standardized profiles]"
                         "(age_trajectory_clusters.csv) or [cluster mean trajectories]"
@@ -1941,14 +2232,29 @@ if de_dir:
 
         display(Markdown(
             "<a id=\"sample-residual-clustering\"></a>\n"
-            "### Sample clustering from age-bin model residuals"
+                "## Per-Sample Residual Clustering"
         ))
+        display(Markdown(
+            "These sample profiles come from the merged age-bin model. It replaces continuous "
+            "age with configured decade bins and includes sex, plus study-site and "
+            "log10(total counts) terms when estimable. For each sample and gene, the saved "
+            "Pearson residual is the observed count minus the fitted mean, divided by the "
+            "fitted standard deviation \\(\\sqrt{\\mu + \\alpha\\mu^2}\\); it is a scaled "
+            "deviation from the model fit. PCA centers each gene's residuals across samples, "
+            "then retains up to the first 100 principal components, capped by the available "
+            "samples and genes. Those PC scores are the input to the two-dimensional UMAP "
+            "shown below. Colors overlay sample covariates and residual-cluster labels on "
+            "the same UMAP coordinates."
+        ))
+        display(Markdown("### Residual UMAP Covariate Overlays"))
         if de_dir and age_trajectory_fit:
-            residual_clusters, residual_pc_scores, residual_pcs = load_residual_sample_clusters(
-                de_dir, age_trajectory_fit, trajectory_settings
-            )
+            (
+                residual_clusters, residual_pc_scores, residual_pcs, residual_matrix,
+            ) = load_residual_sample_clusters(de_dir, age_trajectory_fit, trajectory_settings)
         else:
-            residual_clusters, residual_pc_scores, residual_pcs = None, None, 0
+            residual_clusters, residual_pc_scores, residual_pcs, residual_matrix = (
+                None, None, 0, None
+            )
         if residual_clusters is None:
             residual_reason = age_trajectory_fit.get(
                 "reason", "the age-bin model did not save Pearson residuals"
@@ -1960,475 +2266,18 @@ if de_dir:
                 output_dir / "residual_sample_pc_scores.csv", index=False
             )
             display(Markdown(
-                f"Hierarchical clusters were fitted to centered PCA scores from the "
-                f"age-bin model's Pearson residuals for **{len(residual_clusters)} samples** "
-                f"and **{residual_pc_scores.shape[1] - 1:,} genes**, using {residual_pcs} "
-                "principal components. The residuals account for the model's fitted age-bin, "
-                "sex, study-site, and library-size effects."
+                f"The embedding includes **{len(residual_clusters)} samples** and "
+                f"**{residual_pc_scores.shape[1] - 1:,} genes**, with {residual_pcs} "
+                "principal components retained. When enough samples are available, "
+                "exploratory K-means cluster labels are selected by silhouette score on "
+                "the two-dimensional UMAP."
             ))
-            residual_cluster_counts = (
-                residual_clusters.groupby("residual_cluster", dropna=False)
-                .agg(samples=("sample_key", "size"))
-                .reset_index()
-            )
-            display_collapsible_table(
-                residual_cluster_counts, "Show residual cluster sample counts"
-            )
             plot_residual_sample_umaps(
                 residual_clusters,
                 minimum_umap_samples=trajectory_settings.minimum_umap_trajectories,
             )
+            plot_residual_cluster_markers(residual_matrix, residual_clusters)
             display(Markdown(
                 "Download the [residual cluster assignments](residual_sample_clusters.csv) "
                 "or [sample PCA scores](residual_sample_pc_scores.csv)."
             ))
-
-        per_study_covariate_summary = []
-        for result in per_study_results:
-            for (covariate, contrast), subset in result.groupby(
-                ["covariate", "contrast"], observed=True
-            ):
-                sample_counts = json.loads(str(subset["study_sample_counts"].iloc[0]))
-                study = str(subset["study"].iloc[0])
-                fit_record = next(
-                    (model for model in de_run_metadata.get("models", [])
-                     if model.get("model") == "per_study"
-                     and model.get("study") == study
-                     and covariate in model.get("results_by_covariate", {})),
-                    {},
-                )
-                per_study_covariate_summary.append({
-                    "study": study,
-                    "covariate": covariate,
-                    "contrast": contrast,
-                    "design": fit_record.get("design", "—"),
-                    "complete-case samples used": (
-                        sum(sample_counts.values()) if sample_counts else "—"
-                    ),
-                    "excluded for missing design values": fit_record.get(
-                        "n_samples_excluded_missing_design_covariates", "—"
-                    ),
-                    "genes tested": subset["gene"].nunique(),
-                    "FDR-significant genes": int(
-                        (pd.to_numeric(subset["padj"], errors="coerce") < de_alpha).sum()
-                    ),
-                })
-        if per_study_covariate_summary:
-            display(Markdown(
-                "<a id=\"per-study-covariate-models\"></a>\n### Per-study covariate models"
-            ))
-            display(Markdown(
-                "Each study is fitted once with its maximal available design. Every coefficient for "
-                "that study comes from the same complete-case sample set and formula."
-            ))
-            per_study_summary = pd.DataFrame(per_study_covariate_summary)
-            per_study_summary["_covariate_order"] = per_study_summary["covariate"].map({
-                "age": 0, "sex": 1, "bmi": 2, "cmv": 3,
-                "log10_total_counts": 4,
-            }).fillna(99)
-            per_study_summary = (
-                per_study_summary
-                .sort_values(
-                    ["study", "_covariate_order", "contrast"], kind="stable",
-                )
-                .drop(columns="_covariate_order")
-            )
-            display_collapsible_table(
-                per_study_summary,
-                "Show per-study fits, sorted by study then coefficient",
-            )
-
-        display(Markdown(
-            f"PyDESeq2 covariate effects; FDR threshold **{de_alpha:g}**. "
-            "Per-study fits use one maximal available model. Combined fits target one covariate "
-                "at a time and adjust for study site, age, sex, and log10(total_counts). "
-                "Per-study fits also adjust for "
-            "site when multiple sites contribute. Missing values exclude a sample only from models whose design includes "
-            "that variable. Categorical effects use female as the sex reference and no CMV "
-            "(negative where that is the source label) as the CMV reference."
-        ))
-        if summary_rows:
-            display_collapsible_table(
-                pd.DataFrame(summary_rows), "Show per-study age gene-count summary",
-            )
-
-        age_diagnostics_path = de_dir / "age_model_diagnostics.csv"
-        age_combined_results = combined_results_by_covariate.get("age")
-        if age_diagnostics_path.is_file() and age_combined_results is not None:
-            age_diagnostics = pd.read_csv(age_diagnostics_path)
-            expected_columns = {
-                "study", "age", "sex", "counts_in_age_gene_intersection",
-                "genes_in_age_intersection",
-            }
-            if expected_columns.issubset(age_diagnostics):
-                display(Markdown(
-                    "<a id=\"shared-age-model-diagnostics\"></a>\n### Shared age-model diagnostics"
-                ))
-                display(Markdown(
-                    "This single figure checks study-site/age support, the relation between age and "
-                    "the raw pseudobulk counts used in the shared age gene intersection, and "
-                    "the unadjusted age-model p-value calibration. Q-Q points are the raw "
-                    "p-values (`pvalue`, before multiple-testing correction) from the combined "
-                    "age model fitted across all eligible studies for this cell type, adjusted "
-                    "for study site, sex, age, and log10(total_counts), and using the model's shared "
-                    "gene intersection. "
-                    "The dashed y=x line is the null reference; "
-                    "the axes retain independent scales so departures remain readable. This is "
-                    "descriptive: it does not diagnose a specific gene or replace model checks."
-                ))
-                figure, axes = plt.subplots(1, 3, figsize=(18, 4.8))
-                support_column = "study_site" if "study_site" in age_diagnostics else "study"
-                sns.stripplot(
-                    data=age_diagnostics, x=support_column, y="age", hue="sex", dodge=True,
-                    jitter=0.18, alpha=0.8, ax=axes[0],
-                )
-                axes[0].set_xlabel("Study site" if support_column == "study_site" else "Study")
-                axes[0].set_ylabel("Age (years)")
-                axes[0].set_title("Age support by study site")
-                axes[0].tick_params(axis="x", rotation=75, labelsize=7)
-                axes[0].legend(title="Sex", fontsize=8, title_fontsize=8)
-
-                plot_samples = age_diagnostics.loc[
-                    age_diagnostics["counts_in_age_gene_intersection"] > 0
-                ].copy()
-                plot_samples["log10_counts"] = np.log10(
-                    plot_samples["counts_in_age_gene_intersection"]
-                )
-                sns.scatterplot(
-                    data=plot_samples, x="age", y="log10_counts", hue=support_column, style="sex",
-                    s=42, alpha=0.85, ax=axes[1],
-                )
-                axes[1].set_xlabel("Age (years)")
-                axes[1].set_ylabel("log10 raw counts in age gene intersection")
-                axes[1].set_title("Age and pseudobulk depth")
-                axes[1].legend(fontsize=7, title_fontsize=8)
-
-                pvalue_source = (
-                    age_combined_results["pvalue"]
-                    if "pvalue" in age_combined_results else pd.Series(dtype=float)
-                )
-                pvalues = pd.to_numeric(pvalue_source, errors="coerce")
-                pvalues = pvalues.loc[(pvalues > 0) & (pvalues <= 1)].sort_values().to_numpy()
-                if len(pvalues):
-                    expected = (np.arange(1, len(pvalues) + 1) - 0.5) / len(pvalues)
-                    axes[2].scatter(
-                        -np.log10(expected), -np.log10(pvalues), s=9, alpha=0.65,
-                        color="#4c72b0", linewidths=0,
-                    )
-                    axes[2].axline(
-                        (0, 0), slope=1, color="black", linestyle="--",
-                        linewidth=1.5, zorder=4, label="Null (y = x)",
-                    )
-                    axes[2].set_xlabel("Expected −log10(p)")
-                    axes[2].set_ylabel("Observed −log10(p)")
-                    axes[2].set_title("Age-model p-value QQ plot")
-                    axes[2].legend(fontsize=8)
-                else:
-                    axes[2].text(
-                        0.5, 0.5, "No finite unadjusted p-values", ha="center", va="center",
-                        transform=axes[2].transAxes,
-                    )
-                    axes[2].set_axis_off()
-                figure.tight_layout()
-                plt.show()
-
-        if has_age_per_study:
-            figure, axes = plt.subplots(1, 2, figsize=(14.5, 5.8))
-            if recurrence.empty:
-                empty_message = (
-                    "No genes were tested in every per-study model"
-                    if not common_per_study_genes
-                    else "No common-universe genes pass the FDR threshold"
-                )
-                axes[0].text(0.5, 0.5, empty_message,
-                             transform=axes[0].transAxes, ha="center", va="center")
-                axes[1].text(0.5, 0.5, empty_message,
-                             transform=axes[1].transAxes, ha="center", va="center")
-            else:
-                top_genes = recurrence.head(20).sort_values("studies_associated")
-                sns.barplot(
-                    data=top_genes, x="studies_associated", y="gene", color="#4c72b0",
-                    ax=axes[0],
-                )
-                axes[0].set_xlabel("Studies with FDR-significant age association")
-                axes[0].set_ylabel("")
-                axes[0].set_title("Genes recurring across studies (top 20)")
-                recurrence_counts = recurrence["studies_associated"].value_counts().sort_index()
-                sns.barplot(
-                    x=recurrence_counts.index.astype(str), y=recurrence_counts.values,
-                    color="#55a868", ax=axes[1],
-                )
-                axes[1].set_xlabel("Number of studies")
-                axes[1].set_ylabel("Unique associated genes")
-                axes[1].set_title(
-                    f"Common-universe union: {recurrence['gene'].nunique():,} genes"
-                )
-            figure.tight_layout()
-            plt.show()
-            if not recurrence.empty:
-                display(Markdown(
-                    "The effect shown for each gene is the **signed** age log2 fold change "
-                    "with the largest absolute magnitude among its per-study estimates."
-                ))
-                display_collapsible_table(
-                    recurrence.head(20),
-                    "Show top recurring age-associated genes and per-study estimates",
-                )
-
-        covariate_order = {
-            "age": 0,
-            "sex": 1,
-            "bmi": 2,
-            "cmv": 3,
-            "log10_total_counts": 4,
-        }
-        ordered_combined_covariates = sorted(
-            combined_results_by_covariate.items(),
-            key=lambda item: (covariate_order.get(item[0], 99), item[0]),
-        )
-        for covariate, combined_results in ordered_combined_covariates:
-            covariate_label = {
-                "log10_total_counts": "log10(total_counts)",
-            }.get(covariate, covariate.upper())
-            covariate_anchor_suffix = re.sub(
-                r"[^a-z0-9]+", "-", covariate_label.lower()
-            ).strip("-")
-            display(Markdown(
-                f'<a id="combined-{covariate_anchor_suffix}"></a>\n### {covariate_label}'
-            ))
-            fit_record = next(
-                (model for model in combined_fit_records
-                 if covariate in model.get("results_by_covariate", {})),
-                {},
-            )
-            for contrast, contrast_results in combined_results.groupby("contrast", sort=True):
-                volcano = contrast_results.copy()
-                volcano["padj"] = pd.to_numeric(volcano["padj"], errors="coerce")
-                volcano["log2FoldChange"] = pd.to_numeric(
-                    volcano["log2FoldChange"], errors="coerce"
-                )
-                volcano = volcano.dropna(subset=["padj", "log2FoldChange"]).copy()
-                if volcano.empty:
-                    display(Markdown(
-                        f"_{covariate} ({contrast}) has no finite adjusted p-values to plot._"
-                    ))
-                    continue
-                volcano["minus_log10_padj"] = -np.log10(
-                    volcano["padj"].clip(lower=np.finfo(float).tiny)
-                )
-                study_results = per_study_by_covariate.get(covariate, [])
-                matching_study_results = pd.DataFrame()
-                if study_results:
-                    matching_study_results = pd.concat(study_results, ignore_index=True)
-                    matching_study_results = matching_study_results.loc[
-                        matching_study_results["contrast"].astype(str) == str(contrast)
-                    ].copy()
-                    matching_study_results["gene"] = matching_study_results[
-                        "gene"
-                    ].astype(str)
-                    matching_study_results["padj"] = pd.to_numeric(
-                        matching_study_results["padj"], errors="coerce"
-                    )
-                    study_hits = (
-                        matching_study_results.loc[
-                            matching_study_results["padj"] < de_alpha
-                        ]
-                        .groupby("gene")["study"]
-                        .nunique()
-                    )
-                    volcano["studies_associated"] = (
-                        volcano["gene"].astype(str).map(study_hits).fillna(0).astype(int)
-                    )
-                else:
-                    volcano["studies_associated"] = 0
-                studies_used = (
-                    str(volcano["studies_included"].iloc[0]).split(";")
-                    if "studies_included" in volcano else fit_record.get("studies", [])
-                )
-                sample_counts = (
-                    json.loads(str(volcano["study_sample_counts"].iloc[0]))
-                    if "study_sample_counts" in volcano
-                    else fit_record.get("study_sample_counts", {})
-                )
-                study_summary = ", ".join(
-                    f"{study} (n={sample_counts.get(study, 0)})" for study in studies_used if study
-                )
-                if not studies_used:
-                    studies_used = sorted(sample_counts)
-                if not study_summary and sample_counts:
-                    study_summary = ", ".join(
-                        f"{study} (n={count})" for study, count in sample_counts.items()
-                    )
-                n_samples_used = sum(sample_counts.values()) if sample_counts else "unavailable"
-                nonintersection_age_markers = pd.DataFrame()
-                if covariate == "age" and not matching_study_results.empty:
-                    marker_results = matching_study_results.copy()
-                    if studies_used:
-                        marker_results = marker_results.loc[
-                            marker_results["study"].astype(str).isin(studies_used)
-                        ].copy()
-                    marker_results["log2FoldChange"] = pd.to_numeric(
-                        marker_results["log2FoldChange"], errors="coerce"
-                    )
-                    marker_results = marker_results.dropna(
-                        subset=["gene", "padj", "log2FoldChange"]
-                    )
-                    study_gene_sets = [
-                        set(group["gene"].astype(str))
-                        for _, group in marker_results.groupby("study", observed=True)
-                    ]
-                    shared_age_genes = (
-                        set.intersection(*study_gene_sets) if study_gene_sets else set()
-                    )
-                    nonintersection_age_markers = marker_results.loc[
-                        (marker_results["padj"] < de_alpha)
-                        & ~marker_results["gene"].astype(str).isin(shared_age_genes)
-                    ].copy()
-                    if not nonintersection_age_markers.empty:
-                        nonintersection_age_markers["minus_log10_padj"] = -np.log10(
-                            nonintersection_age_markers["padj"].clip(
-                                lower=np.finfo(float).tiny
-                            )
-                        )
-                        nonintersection_age_markers = (
-                            nonintersection_age_markers.sort_values(
-                                ["study", "padj", "gene"], kind="stable"
-                            )
-                            .groupby("study", as_index=False, sort=True)
-                            .head(1)
-                        )
-                display(Markdown(
-                    f"**{covariate_label} contrast:** {contrast}. **Studies used:** "
-                    f"{study_summary or 'unavailable in this legacy result set'}; "
-                    f"**samples used:** {n_samples_used}."
-                ))
-                max_associated_studies = max(
-                    int(volcano["studies_associated"].max()), 1
-                )
-                # Leave room for the study-count legend while keeping these panels
-                # comparable in plot-area width to the baseMean-colored panels.
-                figure, axis = plt.subplots(figsize=(12.6, 6.5))
-                sns.scatterplot(
-                    data=volcano, x="log2FoldChange", y="minus_log10_padj",
-                    hue="studies_associated", palette="viridis",
-                    hue_norm=(0, max_associated_studies), legend="brief",
-                    s=16, alpha=0.7, linewidth=0, ax=axis,
-                )
-                study_count_legend = axis.legend(
-                    title="Per-study FDR-significant\nassociations", fontsize=8,
-                    bbox_to_anchor=(1.02, 1), loc="upper left", borderaxespad=0,
-                )
-                if not nonintersection_age_markers.empty:
-                    study_colors = dict(zip(
-                        sorted(nonintersection_age_markers["study"].astype(str).unique()),
-                        sns.color_palette("tab10", n_colors=nonintersection_age_markers["study"].nunique()),
-                    ))
-                    for _, marker in nonintersection_age_markers.iterrows():
-                        study = str(marker["study"])
-                        axis.scatter(
-                            marker["log2FoldChange"], marker["minus_log10_padj"],
-                            marker="D", s=72, facecolors="none",
-                            edgecolors=study_colors[study], linewidths=1.8,
-                            label=study, zorder=4,
-                        )
-                        axis.annotate(
-                            f"{marker['gene']} ({study})",
-                            (marker["log2FoldChange"], marker["minus_log10_padj"]),
-                            xytext=(4, -10), textcoords="offset points", fontsize=7,
-                            color=study_colors[study],
-                        )
-                    axis.legend(
-                        title="Top FDR-significant\nnon-shared age gene",
-                        fontsize=8, bbox_to_anchor=(1.02, 0.46),
-                        loc="upper left", borderaxespad=0,
-                    )
-                    axis.add_artist(study_count_legend)
-                axis.axhline(-np.log10(de_alpha), color="#555555", linestyle="--", linewidth=1)
-                axis.axvline(0, color="#555555", linewidth=0.8)
-                if covariate == "age":
-                    effect_label = "log2 fold change per year"
-                elif covariate == "bmi":
-                    effect_label = "log2 fold change per BMI unit"
-                elif covariate == "log10_total_counts":
-                    effect_label = "log2 fold change per log10(total_counts) unit"
-                else:
-                    effect_label = f"log2 fold change ({contrast})"
-                axis.set_xlabel(f"{covariate_label} effect ({effect_label})")
-                axis.set_ylabel("−log10(adjusted p-value)")
-                if len(studies_used) > 1:
-                    title = f"Combined site-adjusted {covariate_label} association: {contrast}"
-                else:
-                    study_name = studies_used[0] if studies_used else "single study"
-                    title = f"{covariate_label} association in {study_name}: {contrast}"
-                axis.set_title(title)
-                labels = volcano.loc[volcano["padj"] < de_alpha].nsmallest(12, "padj")
-                for _, row in labels.iterrows():
-                    axis.annotate(
-                        str(row["gene"]),
-                        (row["log2FoldChange"], row["minus_log10_padj"]),
-                        xytext=(3, 3), textcoords="offset points", fontsize=7,
-                    )
-                figure.tight_layout(rect=(0, 0, 0.68 if not nonintersection_age_markers.empty else 0.78, 1))
-                plt.show()
-                if not nonintersection_age_markers.empty:
-                    display(Markdown(
-                        "Outlined diamonds use each study's own age-model estimate and adjusted "
-                        "p-value. They select the smallest adjusted p-value among FDR-significant "
-                        "genes outside the shared per-study gene universe."
-                    ))
-                    display(nonintersection_age_markers[[
-                        "study", "gene", "log2FoldChange", "padj",
-                    ]].rename(columns={
-                        "log2FoldChange": "per-study log2 fold change per year",
-                        "padj": "per-study adjusted p-value",
-                    }).sort_values("study", kind="stable"))
-                if covariate in {"age", "log10_total_counts"} and "baseMean" in volcano.columns:
-                    base_mean = pd.to_numeric(volcano["baseMean"], errors="coerce")
-                    finite = np.isfinite(base_mean) & (base_mean > 0)
-                    if finite.any():
-                        log_base_mean = np.log10(base_mean.loc[finite])
-                        base_mean_volcano = volcano.loc[finite]
-                        low = float(log_base_mean.min())
-                        high = float(log_base_mean.max())
-                        norm = Normalize(vmin=low, vmax=high if high > low else low + 0.01)
-                        figure, axis = plt.subplots(figsize=(10.5, 6.5))
-                        points = axis.scatter(
-                            base_mean_volcano["log2FoldChange"],
-                            base_mean_volcano["minus_log10_padj"],
-                            c=log_base_mean,
-                            cmap="viridis",
-                            norm=norm,
-                            s=16,
-                            alpha=0.7,
-                            linewidths=0,
-                        )
-                        colorbar = figure.colorbar(points, ax=axis, pad=0.02)
-                        colorbar.set_label("log10(combined-fit baseMean)")
-                        axis.axhline(
-                            -np.log10(de_alpha), color="#555555", linestyle="--", linewidth=1
-                        )
-                        axis.axvline(0, color="#555555", linewidth=0.8)
-                        axis.set_xlabel(f"{covariate_label} effect ({effect_label})")
-                        axis.set_ylabel("−log10(adjusted p-value)")
-                        axis.set_title(f"{title} (colored by log10(baseMean))")
-                        for _, row in labels.iterrows():
-                            axis.annotate(
-                                str(row["gene"]),
-                                (row["log2FoldChange"], row["minus_log10_padj"]),
-                                xytext=(3, 3), textcoords="offset points", fontsize=7,
-                            )
-                        figure.tight_layout()
-                        plt.show()
-        display(Markdown(
-            "_DE interpretation: the recurrence panels emphasize agreement among available per-study "
-            "models; each combined volcano summarizes eligible samples with study-site, age, sex, "
-            "and log-total-count adjustment. "
-            "Volcano point color gives the number of available per-study fits for the same covariate "
-            "and contrast with FDR-significant association for that gene (using the displayed FDR "
-            "threshold); the plotted effect and adjusted p-value come from the combined fit. "
-            "For age, outlined diamonds mark the smallest per-study adjusted p-value among "
-            "FDR-significant genes outside the shared per-study gene universe; their position instead uses that study's "
-            "own effect and adjusted p-value, so they are a visibility check rather than combined-fit points. "
-            "The site term is omitted when only one site remains estimable. Combined fits do not "
-            "by themselves establish replication across studies._"
-        ))

@@ -80,9 +80,9 @@ merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
   diagnostics, plus optional DE summaries and plots when the matching cell-type
   slug is present in the DE manifest. Its reader HTML leads with support
   metrics, a grouped table of contents, and a study-specific fraction-model
-  evidence summary; it places coverage and the adjusted-fraction forest plot
-  before secondary age trends, embedding, and marker detail. Forest-plot
-  effects and residual SDs are displayed in percentage points, with confidence
+  evidence summary; it places coverage and the explicitly adult-only adjusted-
+  fraction forest plot before secondary age trends, embedding, and marker
+  detail. Forest-plot effects and residual SDs are displayed in percentage points, with confidence
   intervals extending beyond the axis marked at its boundary.
 - `differential_expression.nf` and `modules/differential_expression.nf`: the
   independent pseudobulk DE workflow: label listing, one in-memory type subset
@@ -291,7 +291,7 @@ significance, clustering, and display choices. Current settings are:
 | `cross_cell_type_residual_minimum_sample_coverage` | 0.8 | Target fraction of the union of fitted samples present in every cell type retained for the combined residual embedding. |
 | `cluster_fdr_threshold` | 0.001 | Omnibus adjusted-p-value cutoff for trajectories entering clustering. |
 | `de_fdr_threshold` | 0.05 | Omnibus adjusted-p-value cutoff for cross-type significance and recurrence summaries. |
-| `max_clusters` | 5 | Upper bound on hierarchical clusters. |
+| `max_clusters` | 7 | Upper bound on trajectory hierarchical clusters and candidate residual K-means groups. |
 | `linkage_method` | `ward` | Hierarchical clustering linkage. Supported values are `single`, `complete`, `average`, `weighted`, `centroid`, `median`, and `ward`. |
 | `distance_metric` | `euclidean` | Profile distance. Supported values are `euclidean`, `cityblock`, `cosine`, and `correlation`; Ward, centroid, and median require Euclidean distance. |
 | `minimum_shared_bins` | 5 | Minimum common age bins required for the cross-cell-type trajectory comparison. |

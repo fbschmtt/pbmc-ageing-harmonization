@@ -143,6 +143,10 @@ def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None
     assert synthetic_metadata["age_trajectory_settings"] == TRAJECTORY_SETTINGS.to_mapping()
     assert synthetic_metadata["count_scale_factor"] == 5
     assert len(synthetic_metadata["expected_age_trajectory_profiles"]) == 5
+    assert synthetic_metadata["marker_purposes"]["per_study_age_outside_intersection"] == {
+        "synthetic_study_a": ["SYNTH_STUDY_A_ONLY"],
+        "synthetic_study_b": ["SYNTH_STUDY_B_ONLY"],
+    }
     assert _default_samples_per_study(
         replace(TRAJECTORY_SETTINGS, minimum_samples_per_bin=13), study_count=3
     ) == 35

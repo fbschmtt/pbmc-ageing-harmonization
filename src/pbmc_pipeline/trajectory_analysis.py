@@ -72,6 +72,41 @@ def cluster_trajectory_profiles(
     return annotations, means
 
 
+def trajectory_merge_diagnostics(
+    profiles: pd.DataFrame,
+    settings: AgeTrajectorySettings,
+    *,
+    maximum_merges: int = 20,
+) -> pd.DataFrame:
+    """Return the final hierarchical merges for choosing a trajectory cut.
+
+    Each row records the cost of changing from ``from_clusters`` to one fewer
+    groups.  The final merges are the ones relevant to the small cluster-count
+    cuts used in reports, and are retained in descending cluster-count order
+    for direct plotting.
+    """
+    values = profiles.apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    values = values.dropna(axis=0, how="any")
+    columns = ["from_clusters", "to_clusters", "merge_height"]
+    if len(values) < 2:
+        return pd.DataFrame(columns=columns)
+    if maximum_merges < 1:
+        raise ValueError("maximum_merges must be positive")
+
+    tree = linkage(
+        values.to_numpy(dtype=float),
+        method=settings.linkage_method,
+        metric=settings.distance_metric,
+    )
+    n_profiles = len(values)
+    all_merges = pd.DataFrame({
+        "from_clusters": np.arange(n_profiles, 1, -1, dtype=int),
+        "to_clusters": np.arange(n_profiles - 1, 0, -1, dtype=int),
+        "merge_height": tree[:, 2],
+    })
+    return all_merges.tail(min(maximum_merges, len(all_merges))).reset_index(drop=True)
+
+
 def cluster_sample_residuals(
     residuals: pd.DataFrame,
     sample_metadata: pd.DataFrame,

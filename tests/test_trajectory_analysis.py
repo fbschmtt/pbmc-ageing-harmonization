@@ -15,6 +15,7 @@ from pbmc_pipeline.trajectory_analysis import (
     analyze_age_trajectories,
     build_cross_cell_type_trajectories,
     cluster_trajectory_profiles,
+    trajectory_merge_diagnostics,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -176,6 +177,25 @@ def test_hierarchical_trajectory_clusters_and_umap_use_complete_profiles() -> No
     ]
     assert np.isfinite(annotations[["umap_1", "umap_2"]].to_numpy()).all()
     assert means["n_trajectories"].sum() == len(profiles)
+
+
+def test_trajectory_merge_diagnostic_reports_final_hierarchical_transitions() -> None:
+    profiles = pd.DataFrame(
+        [[0.0, value] for value in range(25)],
+        index=[f"gene_{value}" for value in range(25)],
+        columns=["20-30", "30-40"],
+    )
+
+    diagnostics = trajectory_merge_diagnostics(profiles, SETTINGS, maximum_merges=20)
+
+    assert diagnostics.columns.tolist() == [
+        "from_clusters", "to_clusters", "merge_height",
+    ]
+    assert diagnostics["from_clusters"].tolist() == list(range(21, 1, -1))
+    assert diagnostics["to_clusters"].tolist() == list(range(20, 0, -1))
+    assert np.all(np.diff(diagnostics["merge_height"].to_numpy()) >= 0)
+
+    assert trajectory_merge_diagnostics(profiles.iloc[:1], SETTINGS).empty
 
 
 def test_cross_cell_type_analysis_uses_shared_bins_and_counts_de_recurrence() -> None:
