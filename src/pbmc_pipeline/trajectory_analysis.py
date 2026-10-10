@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import pdist
-from sklearn.cluster import KMeans
+from sklearn.cluster import HDBSCAN, KMeans
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
 
@@ -120,6 +120,10 @@ def cluster_sample_residuals(
     annotations["sample_key"] = annotations.index.astype(str)
     if len(values) < 2 or values.shape[1] < 1:
         annotations["residual_cluster"] = pd.Series(index=annotations.index, dtype="Int64")
+        annotations["residual_leiden_selected_resolution"] = np.nan
+        for column in residual_cluster_label_columns(settings):
+            if column != "residual_cluster":
+                annotations[column] = pd.Series(index=annotations.index, dtype="Int64")
         annotations["umap_1"] = np.nan
         annotations["umap_2"] = np.nan
         return annotations.reset_index(drop=True), pd.DataFrame(), 0
@@ -146,8 +150,19 @@ def cluster_sample_residuals(
         ).fit_transform(scores)
         annotations["umap_1"] = embedding[:, 0]
         annotations["umap_2"] = embedding[:, 1]
+        if len(scores) >= settings.residual_hdbscan_min_cluster_size:
+            umap_hdbscan_labels = HDBSCAN(
+                min_cluster_size=settings.residual_hdbscan_min_cluster_size,
+                min_samples=settings.residual_hdbscan_min_samples,
+                metric="euclidean",
+                cluster_selection_method=settings.residual_hdbscan_cluster_selection_method,
+                allow_single_cluster=False,
+            ).fit_predict(embedding)
+        else:
+            umap_hdbscan_labels = np.full(len(scores), -1, dtype=int)
+        annotations["residual_cluster_hdbscan_umap"] = umap_hdbscan_labels
         candidates = range(2, min(settings.max_clusters, len(scores) // 3) + 1)
-        best_labels = np.ones(len(scores), dtype=int)
+        kmeans_labels = np.ones(len(scores), dtype=int)
         best_score = -np.inf
         for n_clusters in candidates:
             labels = KMeans(
@@ -157,26 +172,181 @@ def cluster_sample_residuals(
                 continue
             score = silhouette_score(embedding, labels)
             if score > best_score:
-                best_labels = labels + 1
+                kmeans_labels = labels + 1
                 best_score = score
-        cluster_ids = best_labels
+        annotations["residual_cluster_kmeans"] = kmeans_labels
     else:
         annotations["umap_1"] = np.nan
         annotations["umap_2"] = np.nan
-        cluster_ids = np.ones(len(scores), dtype=int)
+        annotations["residual_cluster_kmeans"] = np.nan
+        annotations["residual_cluster_hdbscan_umap"] = -1
+
+    pc_hdbscan_dimensions = min(
+        settings.residual_pc_hdbscan_components, scores.shape[1]
+    )
+    if len(scores) >= settings.residual_hdbscan_min_cluster_size:
+        pc_hdbscan_labels = HDBSCAN(
+            min_cluster_size=settings.residual_hdbscan_min_cluster_size,
+            min_samples=settings.residual_hdbscan_min_samples,
+            metric="euclidean",
+            cluster_selection_method=settings.residual_hdbscan_cluster_selection_method,
+            allow_single_cluster=False,
+        ).fit_predict(scores[:, :pc_hdbscan_dimensions])
+    else:
+        pc_hdbscan_labels = np.full(len(scores), -1, dtype=int)
+    annotations["residual_cluster_hdbscan_pcs"] = pc_hdbscan_labels
+
+    leiden_dimensions = min(settings.residual_pc_hdbscan_components, scores.shape[1])
+    if len(scores) >= settings.minimum_umap_trajectories:
+        import scanpy as sc
+
+        leiden_input = sc.AnnData(
+            X=np.asarray(scores[:, :leiden_dimensions], dtype=np.float32)
+        )
+        sc.pp.neighbors(
+            leiden_input,
+            n_neighbors=min(settings.residual_leiden_neighbors, len(scores) - 1),
+            use_rep="X",
+            metric="euclidean",
+            random_state=settings.random_state,
+        )
+        leiden_labels = {}
+        for resolution in settings.residual_leiden_resolutions:
+            column = residual_leiden_label_column(resolution)
+            sc.tl.leiden(
+                leiden_input,
+                resolution=resolution,
+                key_added=column,
+                random_state=settings.random_state,
+                flavor="leidenalg",
+                directed=False,
+            )
+            leiden_labels[resolution] = (
+                leiden_input.obs[column].astype("category").cat.codes.to_numpy()
+            )
+            annotations[column] = leiden_labels[resolution]
+        selected_resolution = select_residual_leiden_resolution(
+            leiden_labels, settings.residual_leiden_min_clusters
+        )
+        cluster_ids = leiden_labels[selected_resolution]
+    else:
+        for column in residual_leiden_label_columns(settings):
+            annotations[column] = np.nan
+        selected_resolution = np.nan
+        cluster_ids = np.full(len(scores), np.nan)
+
     annotations["residual_cluster"] = cluster_ids
+    annotations["residual_leiden_selected_resolution"] = selected_resolution
     pc_columns = [f"PC{index + 1}" for index in range(scores.shape[1])]
     pc_scores = pd.DataFrame(scores, index=values.index, columns=pc_columns)
-    pc_scores.insert(0, "residual_cluster", cluster_ids)
+    for column in reversed(residual_cluster_label_columns(settings)):
+        pc_scores.insert(0, column, annotations[column].to_numpy())
     return annotations.reset_index(drop=True), pc_scores.reset_index(names="sample_key"), n_components
 
 
+def residual_leiden_label_column(resolution: float) -> str:
+    """Return a stable output column name for one Leiden resolution."""
+    return f"residual_cluster_leiden_r{str(resolution).replace('.', '_')}"
+
+
+def select_residual_leiden_resolution(
+    labels_by_resolution: dict[float, np.ndarray], minimum_clusters: int,
+) -> float:
+    """Choose the lowest tested Leiden resolution reaching the cluster-count target.
+
+    If no tested resolution reaches the target, use the resolution with the most
+    clusters, preferring the lower resolution when counts tie.
+    """
+    cluster_counts = {
+        resolution: int(pd.Series(labels).nunique())
+        for resolution, labels in labels_by_resolution.items()
+    }
+    eligible = [
+        resolution for resolution, count in cluster_counts.items()
+        if count >= minimum_clusters
+    ]
+    if eligible:
+        return min(eligible)
+    return min(cluster_counts, key=lambda resolution: (-cluster_counts[resolution], resolution))
+
+
+def residual_leiden_label_columns(settings: AgeTrajectorySettings) -> list[str]:
+    return [
+        residual_leiden_label_column(resolution)
+        for resolution in settings.residual_leiden_resolutions
+    ]
+
+
+def residual_cluster_label_columns(settings: AgeTrajectorySettings) -> list[str]:
+    return [
+        "residual_cluster",
+        "residual_cluster_hdbscan_umap",
+        "residual_cluster_kmeans",
+        "residual_cluster_hdbscan_pcs",
+        *residual_leiden_label_columns(settings),
+    ]
+
+
+def summarize_residual_clustering(
+    annotations: pd.DataFrame,
+    settings: AgeTrajectorySettings,
+) -> pd.DataFrame:
+    """Summarize cluster counts, noise, and sizes for each residual labeling."""
+    selected_values = pd.to_numeric(
+        annotations.get("residual_leiden_selected_resolution", pd.Series(dtype=float)),
+        errors="coerce",
+    ).dropna().unique()
+    selected_resolution = float(selected_values[0]) if len(selected_values) else None
+    primary_method = (
+        f"Leiden primary (resolution={selected_resolution:g})"
+        if selected_resolution is not None else "Leiden primary (no resolution available)"
+    )
+    labels = [
+        (primary_method, "residual_cluster"),
+        ("K-means on residual UMAP (silhouette-selected)", "residual_cluster_kmeans"),
+        (
+            "HDBSCAN on residual UMAP",
+            "residual_cluster_hdbscan_umap",
+        ),
+        (
+            f"HDBSCAN on first {settings.residual_pc_hdbscan_components} PCs",
+            "residual_cluster_hdbscan_pcs",
+        ),
+        *(
+            (f"Leiden on PCs (resolution={resolution:g})", residual_leiden_label_column(resolution))
+            for resolution in settings.residual_leiden_resolutions
+            if residual_leiden_label_column(resolution) in annotations
+            and resolution != selected_resolution
+        ),
+    ]
+    rows = []
+    for method, column in labels:
+        if column not in annotations:
+            continue
+        values = pd.to_numeric(annotations[column], errors="coerce").dropna().astype(int)
+        noise_count = int(values.eq(-1).sum()) if method.startswith("HDBSCAN") else 0
+        cluster_sizes = values[values.ne(-1)].value_counts().sort_values(ascending=False)
+        rows.append({
+            "method": method,
+            "label_column": column,
+            "n_assigned": int(len(values) - noise_count),
+            "n_clusters": int(cluster_sizes.size),
+            "n_noise": noise_count,
+            "noise_fraction": float(noise_count / len(values)) if len(values) else np.nan,
+            "cluster_sizes": ", ".join(str(int(size)) for size in cluster_sizes),
+        })
+    return pd.DataFrame(rows)
+
+
 def summarize_residual_cluster_markers(
-    residuals: pd.DataFrame, annotations: pd.DataFrame
+    residuals: pd.DataFrame,
+    annotations: pd.DataFrame,
+    max_clusters: int = 16,
 ) -> tuple[pd.DataFrame, pd.DataFrame, int | None]:
-    """Compare each residual cluster with the largest cluster and track feature origins."""
+    """Compare the largest clusters with the largest cluster and track feature origins."""
     clusters = annotations.set_index("sample_key")["residual_cluster"].reindex(residuals.index)
-    cluster_sizes = clusters.value_counts()
+    clusters = clusters.loc[clusters >= 0]
+    cluster_sizes = clusters.value_counts().sort_values(ascending=False).head(max_clusters)
     if len(cluster_sizes) < 2:
         return pd.DataFrame(), pd.DataFrame(), None
     reference_cluster = int(cluster_sizes.index[0])
@@ -283,6 +453,9 @@ def _read_cell_type_residuals(
         )
         pc_scores.to_csv(output_dir / f"{slugify(cell_type)}_residual_pc_scores.csv", index=False)
         support_by_type[cell_type]["n_pcs_used"] = n_components
+        support_by_type[cell_type]["cluster_methods"] = summarize_residual_clustering(
+            annotations, settings
+        ).to_dict("records")
 
     cross_types = sorted(residuals_by_type)
     all_samples = set().union(*(set(matrix.index) for matrix in residuals_by_type.values()))
@@ -334,8 +507,9 @@ def _read_cell_type_residuals(
         )
         annotations.to_csv(output_dir / "cross_cell_type_residual_clusters.csv", index=False)
         pc_scores.to_csv(output_dir / "cross_cell_type_residual_pc_scores.csv", index=False)
+        clustering_comparison = summarize_residual_clustering(annotations, settings)
         markers, composition, reference_cluster = summarize_residual_cluster_markers(
-            cross_matrix, annotations
+            cross_matrix, annotations, settings.residual_marker_max_clusters
         )
         markers.to_csv(
             output_dir / "cross_cell_type_residual_cluster_markers.csv", index=False
@@ -363,7 +537,23 @@ def _read_cell_type_residuals(
             "n_genes": cross_matrix.shape[1],
             "n_pcs_requested": settings.residual_pca_components,
             "n_pcs_used": n_components,
-            "residual_cluster_method": "K-means on UMAP coordinates; silhouette-selected with at least 3 samples per cluster",
+            "residual_cluster_method": "Leiden on residual PC graph",
+            "residual_leiden_selected_resolution": (
+                float(annotations["residual_leiden_selected_resolution"].dropna().iloc[0])
+                if annotations["residual_leiden_selected_resolution"].notna().any()
+                else None
+            ),
+            "residual_leiden_min_clusters": settings.residual_leiden_min_clusters,
+            "residual_hdbscan_min_cluster_size": settings.residual_hdbscan_min_cluster_size,
+            "residual_hdbscan_min_samples": settings.residual_hdbscan_min_samples,
+            "residual_hdbscan_cluster_selection_method": (
+                settings.residual_hdbscan_cluster_selection_method
+            ),
+            "residual_pc_hdbscan_components": settings.residual_pc_hdbscan_components,
+            "residual_leiden_neighbors": settings.residual_leiden_neighbors,
+            "residual_leiden_resolutions": settings.residual_leiden_resolutions,
+            "residual_marker_max_clusters": settings.residual_marker_max_clusters,
+            "clustering_comparison": clustering_comparison.to_dict("records"),
             "residual_marker_reference_cluster": reference_cluster,
         }
     else:

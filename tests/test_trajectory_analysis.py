@@ -15,6 +15,8 @@ from pbmc_pipeline.trajectory_analysis import (
     analyze_age_trajectories,
     build_cross_cell_type_trajectories,
     cluster_trajectory_profiles,
+    select_residual_leiden_resolution,
+    summarize_residual_cluster_markers,
     trajectory_merge_diagnostics,
 )
 
@@ -25,6 +27,40 @@ SETTINGS = AgeTrajectorySettings.from_mapping(
 ATLAS_SETTINGS = ExpressionAtlasSettings.from_mapping(
     read_json(ROOT / "config/pipeline.json")["differential_expression"]["expression_atlas"]
 )
+
+
+def test_residual_leiden_resolution_selects_lowest_candidate_meeting_target() -> None:
+    labels = {
+        0.25: np.repeat(np.arange(2), 10),
+        0.5: np.repeat(np.arange(4), 5),
+        1.0: np.repeat(np.arange(7), 3),
+        1.5: np.repeat(np.arange(10), 2),
+    }
+    assert select_residual_leiden_resolution(labels, minimum_clusters=6) == 1.0
+    assert select_residual_leiden_resolution(labels, minimum_clusters=12) == 1.5
+
+
+def test_residual_marker_summary_caps_clusters_by_size() -> None:
+    cluster_ids = np.concatenate([
+        np.full(20 - cluster, cluster) for cluster in range(20)
+    ])
+    sample_ids = [f"sample-{index}" for index in range(len(cluster_ids))]
+    annotations = pd.DataFrame({
+        "sample_key": sample_ids,
+        "residual_cluster": cluster_ids,
+    })
+    residuals = pd.DataFrame({
+        "gene_a": cluster_ids.astype(float),
+        "gene_b": -cluster_ids.astype(float),
+    }, index=sample_ids)
+
+    markers, _, reference_cluster = summarize_residual_cluster_markers(
+        residuals, annotations, max_clusters=16
+    )
+
+    assert reference_cluster == 0
+    assert markers["residual_cluster"].nunique() <= 15
+    assert set(markers["residual_cluster"]).issubset(set(range(1, 16)))
 
 
 def test_expression_atlas_uses_common_genes_depth_gate_and_technology_contrast(tmp_path) -> None:

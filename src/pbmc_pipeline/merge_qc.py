@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 from .logging_utils import configure_logging
-from .report_toc import populate_html_toc
+from .report_toc import populate_html_toc, set_notebook_title
 
 
 def generate_merge_qc_report(
@@ -63,6 +63,7 @@ def generate_merge_qc_report(
             "--ExecutePreprocessor.timeout=-1", f"--output={executed.name}",
             f"--output-dir={output_dir}", str(materialized_template),
         ], cwd=root, env=env, check=True)
+    set_notebook_title(executed, "Merged data QC | PBMC ageing")
     subprocess.run([
         sys.executable, "-m", "jupyter", "nbconvert", "--to", "html",
         "--HTMLExporter.exclude_input=True",

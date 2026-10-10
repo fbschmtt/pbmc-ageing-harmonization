@@ -6,7 +6,7 @@
   "input_root": ".",
   "test_input_root": "test_data",
   "output_dir": "output/harmonized",
-  "report_dir": "output/reports",
+  "report_dir": "output/provenance",
   "models": {
     "aifi_l1": "aifi_models/ref_pbmc_clean_celltypist_model_AIFI_L1_2024-04-18.pkl",
     "aifi_l2": "aifi_models/ref_pbmc_clean_celltypist_model_AIFI_L2_2024-04-19.pkl",
@@ -43,6 +43,44 @@
         "name": "unintegrated_pca",
         "method": "none",
         "basis": "X_pca"
+      },
+      {
+        "name": "scanorama",
+        "method": "scanorama",
+        "batch_key": "study",
+        "basis": "X_pca",
+        "adjusted_basis": "X_scanorama",
+        "batch_size": 5000
+      },
+      {
+        "name": "bbknn",
+        "method": "bbknn",
+        "batch_key": "study",
+        "basis": "X_pca",
+        "neighbors_within_batch": 3,
+        "n_pcs": 30
+      },
+      {
+        "name": "scvi",
+        "method": "scvi",
+        "batch_key": "study",
+        "adjusted_basis": "X_scvi",
+        "n_top_genes": 2000,
+        "hvg_chunksize": 1000,
+        "n_latent": 30,
+        "max_epochs": 100,
+        "batch_size": 512
+      },
+      {
+        "name": "scvi_unintegrated",
+        "method": "scvi",
+        "hvg_batch_key": "study",
+        "adjusted_basis": "X_scvi_unintegrated",
+        "n_top_genes": 2000,
+        "hvg_chunksize": 1000,
+        "n_latent": 30,
+        "max_epochs": 100,
+        "batch_size": 512
       }
     ]
   },
@@ -123,7 +161,15 @@
       "random_state": 413,
       "minimum_shared_bins": 5,
       "residual_pca_components": 100,
-      "residual_umap_neighbors": 50
+      "residual_umap_neighbors": 50,
+      "residual_hdbscan_min_cluster_size": 15,
+      "residual_hdbscan_min_samples": 5,
+      "residual_hdbscan_cluster_selection_method": "eom",
+      "residual_pc_hdbscan_components": 100,
+      "residual_leiden_neighbors": 15,
+      "residual_leiden_resolutions": [0.25, 0.5, 1.0, 1.5],
+      "residual_leiden_min_clusters": 10,
+      "residual_marker_max_clusters": 16
     },
     "expression_atlas": {
       "minimum_study_cell_type_total_counts": 1000000,

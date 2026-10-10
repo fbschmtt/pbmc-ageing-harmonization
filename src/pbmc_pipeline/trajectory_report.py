@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 from .config import AgeTrajectorySettings, ExpressionAtlasSettings, read_json
+from .report_toc import set_notebook_title
 from .trajectory_analysis import analyze_age_trajectories
 
 
@@ -69,6 +70,7 @@ def generate_trajectory_report(
             "--ExecutePreprocessor.timeout=-1", f"--output={executed.name}",
             f"--output-dir={output_dir}", str(notebook),
         ], cwd=project_root, env=env, check=True)
+    set_notebook_title(executed, "Merged age-DE results | PBMC ageing")
     subprocess.run([
         sys.executable, "-m", "jupyter", "nbconvert", "--to", "html",
         "--HTMLExporter.exclude_input=True",

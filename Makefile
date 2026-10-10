@@ -10,6 +10,10 @@ OUTDIR ?= output
 IMAGE_TAG ?=
 PYTHON_IMAGE_TAG ?= $(if $(IMAGE_TAG),$(IMAGE_TAG),$(shell git ls-files -co --exclude-standard docker/python.Dockerfile config src pyproject.toml requirements.lock | sort | while IFS= read -r file; do test -f "$$file" && sha256sum "$$file"; done | sha256sum | cut -c1-12))
 R_IMAGE_TAG ?= $(if $(IMAGE_TAG),$(IMAGE_TAG),$(shell git ls-files -co --exclude-standard docker/r-conversion.Dockerfile scripts/convert_rds.R | sort | while IFS= read -r file; do test -f "$$file" && sha256sum "$$file"; done | sha256sum | cut -c1-12))
+# Freeze the content hashes at parse time. Recursive expansion can otherwise
+# recompute a different tag between an image prerequisite and its recipe.
+PYTHON_IMAGE_TAG := $(PYTHON_IMAGE_TAG)
+R_IMAGE_TAG := $(R_IMAGE_TAG)
 PYTHON_IMAGE ?= pbmc-ageing-python:$(PYTHON_IMAGE_TAG)
 R_IMAGE ?= pbmc-ageing-r:$(R_IMAGE_TAG)
 PIPELINE_REVISION ?= $(shell git describe --always --dirty)
@@ -21,9 +25,14 @@ MERGE_SINGLE_CELL ?= false
 MERGED_INPUT ?= $(OUTDIR)/merged/single_cell_merged.h5ad
 INTEGRATION_BENCHMARK_INPUT ?= $(MERGED_INPUT)
 CELL_TYPE ?= cd14-monocyte
+GENE ?=
+TOP_AGE_GENE_COUNT ?= 10
 CELL_TYPE_INPUT ?= $(OUTDIR)/cell_type_splits/$(CELL_TYPE).h5ad
 CELL_TYPE_ANALYSIS_INPUT ?= $(OUTDIR)/cell_type_analysis/$(CELL_TYPE)
 PSEUDOBULK_INPUT ?= $(OUTDIR)/merged/pseudobulk_merged.h5ad
+GENE_PROFILE_DIR ?= $(OUTDIR)/gene_profiles
+GENE_PROFILE_TEST_DIR ?= $(OUTDIR)/gene_profile_synthetic
+GENE_PROFILE_TEST_INPUT ?= $(GENE_PROFILE_TEST_DIR)/pseudobulk_merged.h5ad
 DE_RESULTS_DIR ?= $(OUTDIR)/differential_expression
 SYNTHETIC_DE_DIR ?= $(OUTDIR)/synthetic_de
 VENV_PYTHON := .venv/bin/python
@@ -42,18 +51,22 @@ TEST_DATA_CONTAINER_PREREQS := image-python $(PRODUCTION_R_IMAGE_PREREQ)
 PYTHON_CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),image-python,)
 MERGE_ARGS = $(if $(filter true 1 yes,$(MERGE_SINGLE_CELL)),--merge_single_cell,)
 
-.PHONY: help install lint workflow-lint docs-check test-unit verify run-all-test run-trajectory-test \
+.PHONY: help install lint workflow-lint docs-check docs-update test-unit verify run-all-test run-trajectory-test \
 	validate-study validate-test validate-full test-data download-inputs images image-python \
 	download-inputs-strict check-download-inputs \
 	image-r run run-no-qc run-test run-all split-cell-types split-cell-types-test \
 	run-cell-type-analysis run-cell-type-analysis-test \
 	run-cell-type run-cell-type-test render-cell-type render-cell-type-test \
 	render-cell-type-reports render-cell-type-reports-test \
+	profile-gene profile-top-age-genes check-top-age-profile-prerequisites \
+	profile-top-age-genes-test \
+	run-gene-profile-synthetic-test \
 	run-integration-benchmark run-integration-benchmark-test check-integration-benchmark-prerequisites check-integration-benchmark-test \
 	run-de run-de-test run-de-synthetic-test \
-	render-trajectory-report render-trajectory-report-test \
+	render-trajectory-report render-trajectory-report-test render-trajectory-reports-focused-test \
 	check-synthetic-de-results check-synthetic-de-reports check-de-prerequisites \
 	check-cell-type-prerequisites check-cell-type-analysis-test-prerequisites check-cell-type-test-prerequisites \
+	check-focused-trajectory-test-prerequisites \
 	check-cell-type-render-prerequisites check-cell-type-test-render-prerequisites \
 	check-cell-type-reports-prerequisites clean-core-output clean-analysis-output clean-work
 
@@ -82,6 +95,9 @@ workflow-lint: ## Lint the Nextflow workflow (requires Nextflow >=25.04)
 docs-check: ## Validate repository Markdown links and documented Make targets
 	python3 scripts/check_docs.py
 
+docs-update: ## Update generated documentation from config/pipeline.json
+	python3 scripts/check_docs.py --write
+
 test-unit: $(VENV_DEPS) ## Run deterministic unit and output-contract tests
 	$(VENV_PYTHON) -m pytest -q
 
@@ -89,11 +105,13 @@ verify: lint test-unit workflow-lint docs-check run-all-test ## Run all checks a
 
 # Keep benchmark, DE, and reports ordered even under `make -j`: each stage
 # consumes the fresh core output or synthetic-DE manifest from the prior stage.
-run-all-test: run-test ## Run the ordered core, benchmark, positive-DE, and cell-type Docker test workflows
+run-all-test: run-test ## Run core, benchmark, DE, top-gene profiles, and cell-type test workflows
 	$(MAKE) run-integration-benchmark-test
 	$(MAKE) check-integration-benchmark-test
 	$(MAKE) run-de-synthetic-test
 	$(MAKE) check-synthetic-de-results
+	$(MAKE) profile-top-age-genes-test
+	$(MAKE) run-gene-profile-synthetic-test
 	$(MAKE) run-cell-type-analysis-test
 	$(MAKE) check-synthetic-de-reports
 
@@ -145,6 +163,7 @@ run: $(CORE_CONTAINER_PREREQS) ## Resumable production workflow; opt in with MER
 run-all: ## Run the core workflow, pseudobulk DE, and all cell-type analyses/reports in order
 	$(MAKE) run MERGE_SINGLE_CELL=true
 	$(MAKE) run-de
+	$(MAKE) profile-top-age-genes
 	$(MAKE) run-cell-type-analysis
 
 run-no-qc: $(CORE_CONTAINER_PREREQS) ## Resumable workflow without rendered QC reports
@@ -173,6 +192,38 @@ run-de-test: PSEUDOBULK_INPUT = output/test/merged/pseudobulk_merged.h5ad
 run-de-test: check-de-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Run DE from an existing test pseudobulk merge
 	$(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --pseudobulk_input "$(PSEUDOBULK_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
 
+profile-gene: image-python check-de-prerequisites ## Refit merged DESeq2 for one cell type and profile one gene; set CELL_TYPE and GENE
+	@test -n "$(CELL_TYPE)" || { echo "Set CELL_TYPE to a cell-type label or slug" >&2; exit 2; }
+	@test -n "$(GENE)" || { echo "Set GENE to a gene identifier" >&2; exit 2; }
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/profile_gene.py --input "$(PSEUDOBULK_INPUT)" --config config/pipeline.json --cell-type "$(CELL_TYPE)" --gene "$(GENE)" --output-dir "$(GENE_PROFILE_DIR)"
+
+check-top-age-profile-prerequisites: check-de-prerequisites
+	@if ! find "$(DE_RESULTS_DIR)" -mindepth 2 -maxdepth 2 -name merged.csv -print -quit 2>/dev/null | grep -q .; then \
+		echo "Missing merged age-DE result files under $(DE_RESULTS_DIR). Run make run-de first." >&2; exit 2; \
+	else \
+		echo "Ready: merged age-DE results under $(DE_RESULTS_DIR)"; \
+	fi
+
+profile-top-age-genes: image-python check-top-age-profile-prerequisites ## Profile top age-DE genes from the merged model in each cell type
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/profile_top_age_genes.py --input "$(PSEUDOBULK_INPUT)" --config config/pipeline.json --differential-expression-dir "$(DE_RESULTS_DIR)" --output-dir "$(GENE_PROFILE_DIR)" --top-n "$(TOP_AGE_GENE_COUNT)"
+
+profile-top-age-genes-test: OUTDIR = output/test
+profile-top-age-genes-test: PSEUDOBULK_INPUT = $(OUTDIR)/synthetic_de/pseudobulk_merged.h5ad
+profile-top-age-genes-test: DE_RESULTS_DIR = $(OUTDIR)/differential_expression
+profile-top-age-genes-test: GENE_PROFILE_DIR = $(OUTDIR)/top_age_gene_profiles
+profile-top-age-genes-test: TOP_AGE_GENE_COUNT = 2
+profile-top-age-genes-test: image-python check-top-age-profile-prerequisites ## Profile top synthetic merged age-DE genes per cell type
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/profile_top_age_genes.py --input "$(PSEUDOBULK_INPUT)" --config config/pipeline.json --differential-expression-dir "$(DE_RESULTS_DIR)" --output-dir "$(GENE_PROFILE_DIR)" --top-n "$(TOP_AGE_GENE_COUNT)"
+
+run-gene-profile-synthetic-test: OUTDIR = output/test
+run-gene-profile-synthetic-test: GENE_PROFILE_TEST_DIR = $(OUTDIR)/gene_profile_synthetic
+run-gene-profile-synthetic-test: GENE_PROFILE_TEST_INPUT = $(GENE_PROFILE_TEST_DIR)/pseudobulk_merged.h5ad
+run-gene-profile-synthetic-test: GENE_PROFILE_DIR = $(OUTDIR)/gene_profiles
+run-gene-profile-synthetic-test: image-python ## Fit and render a focused gene profile from a synthetic pseudobulk fixture
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.synthetic_de --config config/pipeline.json --output "$(GENE_PROFILE_TEST_INPUT)"
+	$(MAKE) profile-gene OUTDIR="$(OUTDIR)" PSEUDOBULK_INPUT="$(GENE_PROFILE_TEST_INPUT)" GENE_PROFILE_DIR="$(GENE_PROFILE_DIR)" CELL_TYPE="CD14 monocyte" GENE=SYNTH_AGE_MARKER_1
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/check_gene_profile.py --profile-dir "$(GENE_PROFILE_DIR)/cd14-monocyte/synth-age-marker-1" --gene SYNTH_AGE_MARKER_1
+
 check-integration-benchmark-prerequisites:
 	@if test ! -f "$(INTEGRATION_BENCHMARK_INPUT)"; then \
 		echo "Missing merged single-cell input: $(INTEGRATION_BENCHMARK_INPUT). Run the core workflow first." >&2; exit 2; \
@@ -180,7 +231,7 @@ check-integration-benchmark-prerequisites:
 		echo "Ready: $(INTEGRATION_BENCHMARK_INPUT)"; \
 	fi
 
-run-integration-benchmark: check-integration-benchmark-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Run optional global Harmony and unintegrated-PCA label/UMAP diagnostics
+run-integration-benchmark: check-integration-benchmark-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Run optional global embedding and type-calling benchmark
 	$(NXF) run integration_benchmark.nf -profile $(NF_PROFILE),integration_benchmark -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(INTEGRATION_BENCHMARK_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume
 
 run-integration-benchmark-test: OUTDIR = output/test
@@ -211,12 +262,28 @@ check-trajectory-report-prerequisites:
 	fi
 
 render-trajectory-report: check-trajectory-report-prerequisites image-python ## Rerender the cross-cell-type trajectory report from existing DE results
-	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) pbmc-trajectory-report --differential-expression-dir "$(DE_RESULTS_DIR)" --pseudobulk-input "$(PSEUDOBULK_INPUT)" --output-dir "$(DE_RESULTS_DIR)/trajectory_analysis" --config config/pipeline.json --template reports/trajectory_analysis_report.py --project-root /work
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) pbmc-trajectory-report --differential-expression-dir "$(DE_RESULTS_DIR)" --pseudobulk-input "$(PSEUDOBULK_INPUT)" --output-dir "$(DE_RESULTS_DIR)/combined_analysis" --config config/pipeline.json --template reports/trajectory_analysis_report.py --project-root /work
 
 render-trajectory-report-test: OUTDIR = output/test
 render-trajectory-report-test: DE_RESULTS_DIR = $(OUTDIR)/differential_expression
-render-trajectory-report-test: check-trajectory-report-prerequisites image-python ## Rerender the test trajectory report from existing DE results
-	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) pbmc-trajectory-report --differential-expression-dir "$(DE_RESULTS_DIR)" --pseudobulk-input "$(PSEUDOBULK_INPUT)" --output-dir "$(DE_RESULTS_DIR)/trajectory_analysis" --config config/pipeline.json --template reports/trajectory_analysis_report.py --project-root /work
+render-trajectory-report-test: PSEUDOBULK_INPUT = $(OUTDIR)/synthetic_de/pseudobulk_merged.h5ad
+render-trajectory-report-test: check-trajectory-report-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Rerender the test trajectory report from existing DE results
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) pbmc-trajectory-report --differential-expression-dir "$(DE_RESULTS_DIR)" --pseudobulk-input "$(PSEUDOBULK_INPUT)" --output-dir "$(DE_RESULTS_DIR)/combined_analysis" --config config/pipeline.json --template reports/trajectory_analysis_report.py --project-root /work
+
+check-focused-trajectory-test-prerequisites: OUTDIR = output/test
+check-focused-trajectory-test-prerequisites: DE_RESULTS_DIR = $(OUTDIR)/differential_expression
+check-focused-trajectory-test-prerequisites: PSEUDOBULK_INPUT = $(OUTDIR)/synthetic_de/pseudobulk_merged.h5ad
+check-focused-trajectory-test-prerequisites: check-cell-type-test-render-prerequisites check-trajectory-report-prerequisites
+	@if test ! -f "$(PSEUDOBULK_INPUT)"; then \
+		echo "Missing synthetic test pseudobulk: $(PSEUDOBULK_INPUT). Run make run-de-synthetic-test first." >&2; exit 2; \
+	fi
+
+render-trajectory-reports-focused-test: OUTDIR = output/test
+render-trajectory-reports-focused-test: DE_RESULTS_DIR = $(OUTDIR)/differential_expression
+render-trajectory-reports-focused-test: check-focused-trajectory-test-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Rerender combined and one per-type test report from existing artifacts
+	$(MAKE) render-trajectory-report-test OUTDIR="$(OUTDIR)" DE_RESULTS_DIR="$(DE_RESULTS_DIR)" PSEUDOBULK_INPUT="$(OUTDIR)/synthetic_de/pseudobulk_merged.h5ad"
+	$(MAKE) render-cell-type-test OUTDIR="$(OUTDIR)" DE_RESULTS_DIR="$(DE_RESULTS_DIR)" CELL_TYPE="$(CELL_TYPE)"
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/check_synthetic_de.py reports --outdir "$(OUTDIR)" --cell-type "$(CELL_TYPE)"
 
 split-cell-types: $(PYTHON_CONTAINER_PREREQS) ## Create reusable raw-count cell-type splits from an existing merged H5AD
 	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(MERGED_INPUT)" --split_only --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume
@@ -323,7 +390,7 @@ clean-work: ## Delete completed Nextflow cache entries (destructive)
 	$(NXF) clean -f
 
 clean-core-output: ## Delete all published production outputs, preserving output/test and the Nextflow cache
-	rm -rf output/prepared output/harmonized output/pseudobulk output/merged output/reports output/qc output/differential_expression output/cell_type_analysis output/cell_type_splits output/run_manifest.json
+	rm -rf output/prepared output/harmonized output/pseudobulk output/merged output/provenance output/harmonization_qc output/reports output/qc output/differential_expression output/cell_type_analysis output/cell_type_splits output/run_manifest.json
 
 clean-analysis-output: ## Delete published production DE and cell-type-analysis outputs, preserving core and output/test
 	rm -rf output/differential_expression output/cell_type_analysis output/cell_type_splits

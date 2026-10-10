@@ -26,7 +26,7 @@ sample × AIFI-L2 pseudobulk per study
 outer-gene merged pseudobulk ─┐
                               ├─ one combined merge QC report
 optional: all harmonized cells → raw joined single-cell H5AD
-                                      ├─ integration benchmark → labels, UMAP, report
+                                      ├─ integration benchmark → method embeddings, graphs, labels, report
                                       └─ cell-type split → per-type analysis and reports
 
 The core merge writes no global normalization, embedding, graph, or prediction.
@@ -54,7 +54,7 @@ The core merge writes no global normalization, embedding, graph, or prediction.
   source metadata available for adapter audit without expanding the harmonized
   H5AD contract.
 - `config/pipeline.json`: common processing parameters, model locations, and
-merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
+  merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
   the legacy notebook; study-qualified row IDs prevent cross-study collisions.
 - `src/pbmc_pipeline/harmonize.py`: creates the validated per-study H5AD.
   Its run report records feature-label provenance metrics, including the counts
@@ -95,18 +95,35 @@ merge policy. Pseudobulk grouping is `sample` and `aifi_l2_majority`, matching
   required `AgeTrajectorySettings` view used by the DE fit and report stages.
 - `src/pbmc_pipeline/trajectory_analysis.py` and
   `src/pbmc_pipeline/trajectory_report.py`: support-filtered per-type and
-  shared-bin cross-type hierarchical clustering, UMAP coordinates, recurrence
-  summaries, and the trajectory notebook/HTML report.
+  shared-bin cross-type hierarchical clustering of gene trajectories, residual
+  PCA/UMAP embeddings and sample clusterings, recurrence summaries, and
+  cross-type report data.
 - `reports/trajectory_analysis_report.py`: source notebook for the combined
   age-trajectory report.
 - `src/pbmc_pipeline/synthetic_de.py`: deterministic on-demand positive-fit
   pseudobulk fixture generation (28 samples per study, balanced across seven
   age decades below 90); the generated H5AD is ignored output, not a checked-in fixture.
-- `scripts/check_synthetic_de.py`: assertions used by `make run-all-test` and
-  `make verify` for age, sex, BMI, and CMV marker detection; covariate-specific
-  study selection; complete-case counts; and report output. The fixture uses
-  28 independent samples per study, balanced over the seven age decades below
-  90, so it meets the production trajectory support threshold.
+- `scripts/profile_gene.py`, `src/pbmc_pipeline/gene_profile_report.py`, and
+  `reports/gene_profile_report.py`: standalone focused gene profiling from a
+  merged pseudobulk, refitting PyDESeq2 and then fitting naive total-count
+  normalization models: a covariate-adjusted linear age model, categorical
+  age-bin model, unpooled study-specific intercept and slope model, and a
+  fixed-study-intercept/random-slope mixed model. Each model has sample-level
+  residual plots against age and library depth, faceted by study. The age-bin
+  normalization reference uses all cell-type samples before model filters.
+  `scripts/profile_top_age_genes.py` applies the same report to the most
+  significant merged age-DE genes per cell type.
+- `scripts/check_gene_profile.py`: output-contract and notebook smoke checks
+  for the focused gene report. `make run-gene-profile-synthetic-test` fits and
+  renders a planted synthetic gene profile; `make profile-top-age-genes-test`
+  renders two top merged age-DE genes per cell type from the synthetic DE
+  fixture. Both report workflows are included in `make run-all-test`.
+- `scripts/check_synthetic_de.py`: output-contract checks for positive
+  synthetic DE and trajectory reports. They cover planted age, sex, BMI, and
+  CMV effects; covariate-specific study selection and complete-case counts;
+  trajectory clustering exports; and report content. The fixture uses 28
+  independent samples per study, balanced over the seven age decades below 90,
+  so it meets the production trajectory support threshold.
 - `src/pbmc_pipeline/reporting.py`: testable report data transformations.
 - `reports/merge_qc_report.py`: Jupytext source for the generated merge
   notebook. Report runners materialize these Python sources in a temporary
@@ -125,11 +142,11 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/pseudobulk/<study>.pseudobulk.h5ad`
 - `<outdir>/merged/pseudobulk_merged.h5ad`
 - `<outdir>/merged/single_cell_merged.h5ad` (optional raw-count joined matrix)
-- `<outdir>/reports/*.json`
-- `<outdir>/qc/<study>/report.html`
-- `<outdir>/qc/merged/report.html` (one report for both merge branches)
+- `<outdir>/provenance/*.json` (preparation, harmonization, and merge run summaries)
+- `<outdir>/harmonization_qc/<study>/report.html`
+- `<outdir>/harmonization_qc/merged/report.html` (one report for both merge branches)
 - `<outdir>/integration_benchmark/integration_benchmark.h5ad` (optional thin
-  diagnostic artifact with labels and UMAP coordinates)
+  diagnostic artifact with labels, method embeddings, and neighbor graphs)
 - `<outdir>/integration_benchmark/integration_benchmark.json` (optional method
   and input provenance)
 - `<outdir>/integration_benchmark/{executed.ipynb,report.html}` (optional
@@ -145,11 +162,12 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/differential_expression/<cell-type-slug>/age_model_diagnostics.csv` (sample support and raw-count inputs for the shared age-model diagnostic figure)
 - `<outdir>/differential_expression/<cell-type-slug>/cell_type_result.json` (per-task fit record collected into the root manifest)
 - `<outdir>/differential_expression/differential_expression.json` (DE status and cell-type result index)
-- `<outdir>/differential_expression/trajectory_analysis/{report.html,executed.ipynb}` (combined trajectory report)
-- `<outdir>/differential_expression/trajectory_analysis/*.csv` (shared-bin cross-type clusters and means, gene-level DE recurrence, and cross-type pattern concordance)
-- `<outdir>/differential_expression/trajectory_analysis/expression_atlas_*.csv` (study-balanced common-gene expression matrix, gene UMAP, depth support, and independent 3′/5′ and intronic-read sensitivity summaries)
-- `<outdir>/differential_expression/trajectory_analysis/*_residual_{clusters,pc_scores}.csv` (per-cell-type sample cluster assignments and PCA scores)
-- `<outdir>/differential_expression/trajectory_analysis/cross_cell_type_pearson_residuals.npz` and residual metadata/cluster CSVs (wide matrix, UMAP K-means assignments, marker contrasts, and cell-type feature composition for shared samples across full-trajectory-supported cell types)
+- `<outdir>/differential_expression/combined_analysis/{report.html,executed.ipynb}` (combined trajectory report)
+- `<outdir>/differential_expression/combined_analysis/*.csv` (shared-bin cross-type clusters and means, gene-level DE recurrence, and cross-type pattern concordance)
+- `<outdir>/differential_expression/combined_analysis/expression_atlas_*.csv` (study-balanced common-gene expression matrix, gene UMAP, depth support, and independent 3′/5′ and intronic-read sensitivity summaries)
+- `<outdir>/differential_expression/combined_analysis/*_residual_{clusters,pc_scores}.csv` (per-cell-type sample cluster assignments and PCA scores)
+- `<outdir>/differential_expression/combined_analysis/cross_cell_type_pearson_residuals.npz` and residual metadata/cluster CSVs (wide matrix, Leiden-primary assignments, K-means/HDBSCAN alternatives, marker contrasts, and cell-type feature composition for shared samples across full-trajectory-supported cell types)
+- `<outdir>/gene_profiles/<cell-type-slug>/<gene-slug>/` (focused gene-profile HTML and executed notebook, model coefficient and residual tables, mean–dispersion diagnostics, normalized sample counts, and compressed VST matrix)
 - `<outdir>/run_manifest.json` (requested, selected, and skipped studies;
   hashes of selected source inputs, metadata dependencies, and annotation models;
   selected studies are the complete requested set for explicit study lists)
@@ -174,18 +192,25 @@ matrix is large. An on-disk concat streams source matrices into a temporary
 H5AD, then writes the raw joined counts and metadata. Per-cell QC fields
 (`total_counts`, `n_genes_by_counts`, and `percent_mito`) are computed during
 harmonization and carried through the join. The merge does not normalize the
-full matrix, construct a global graph, or run another CellTypist prediction.
 
 `make run-integration-benchmark` is a separate optional workflow over that
-merged H5AD. It selects HVGs from the shared genes, runs PCA, applies Harmony
-over `obs['study']`, and uses the resulting graph both for Harmony CellTypist
-majority voting and UMAP. It then constructs one unintegrated PCA graph for the
-comparison prediction. The published benchmark H5AD contains only metadata,
-diagnostic labels, and UMAP coordinates, so it does not duplicate the raw
-matrix. Its `benchmark_*_aifi_l2_majority` columns are diagnostic; the retained
-per-study `obs['aifi_l2_majority']` remains the downstream label.
-The accompanying integration-benchmark notebook renders the global UMAPs and
-the AIFI-L2 concordance matrices formerly shown by merge QC.
+merged H5AD. It loads the expression matrix once. Batch-corrected and
+unintegrated scVI are trained from the same count-based, batch-aware HVG subset
+before the matrix is normalized; the unintegrated model omits the study
+covariate. scVI returns a latent representation, from which the benchmark
+computes neighbors and UMAP. The other methods share the normalized HVG/PCA
+workspace. Harmony and Scanorama adjust
+embeddings, BBKNN balances the neighbor graph, and the unintegrated PCA graph is
+the baseline. Every method's graph supplies both CellTypist majority voting
+and its UMAP. The integration report places unintegrated PCA and scVI before
+Harmony, Scanorama, BBKNN, and batch-corrected scVI; it compares graph edge
+overlap with unintegrated PCA and AIFI-L2 label concordance without applying
+acceptance thresholds. The published benchmark H5AD contains metadata, diagnostic
+labels, method embeddings, and neighbor graphs, but no expression matrix. Its
+`benchmark_*_aifi_l2_majority` columns are diagnostic; the retained per-study
+`obs['aifi_l2_majority']` remains the downstream label. The notebook separates
+embedding integration from type calling and reports graph edge overlap and
+AIFI-L2 concordance.
 
 ### Cell-type analysis contract
 
@@ -279,7 +304,11 @@ before using within-L1 fractions for inference.
 
 The `differential_expression.age_trajectory` object in
 `config/pipeline.json` is the source of truth for trajectory support,
-significance, clustering, and display choices. Current settings are:
+significance, clustering, and display choices. The settings table below is
+generated from that object with `make docs-update` and
+checked for drift by `make docs-check`.
+
+<!-- generated-age-trajectory-settings:start -->
 
 | Setting | Default | Meaning |
 | --- | ---: | --- |
@@ -292,22 +321,32 @@ significance, clustering, and display choices. Current settings are:
 | `cluster_fdr_threshold` | 0.001 | Omnibus adjusted-p-value cutoff for trajectories entering clustering. |
 | `de_fdr_threshold` | 0.05 | Omnibus adjusted-p-value cutoff for cross-type significance and recurrence summaries. |
 | `max_clusters` | 7 | Upper bound on trajectory hierarchical clusters and candidate residual K-means groups. |
-| `linkage_method` | `ward` | Hierarchical clustering linkage. Supported values are `single`, `complete`, `average`, `weighted`, `centroid`, `median`, and `ward`. |
-| `distance_metric` | `euclidean` | Profile distance. Supported values are `euclidean`, `cityblock`, `cosine`, and `correlation`; Ward, centroid, and median require Euclidean distance. |
-| `minimum_shared_bins` | 5 | Minimum common age bins required for the cross-cell-type trajectory comparison. |
-| `residual_pca_components` | 100 | Maximum number of centered PCA components used before residual UMAP. The count is capped by the available samples and genes. |
-| `residual_umap_neighbors` | 50 | Neighbourhood size for residual-sample UMAPs; capped at one fewer than the available samples. |
+| `linkage_method` | `"ward"` | Hierarchical clustering linkage. Supported values are `single`, `complete`, `average`, `weighted`, `centroid`, `median`, and `ward`. |
+| `distance_metric` | `"euclidean"` | Profile distance. Supported values are `euclidean`, `cityblock`, `cosine`, and `correlation`; Ward, centroid, and median require Euclidean distance. |
 | `umap_neighbors` | 15 | UMAP neighborhood size. |
 | `minimum_umap_trajectories` | 4 | Minimum number of profiles required to compute UMAP coordinates. |
 | `umap_min_dist` | 0.15 | UMAP minimum-distance parameter. |
-| `random_state` | 413 | Seed for reproducible UMAP coordinates. |
 | `report_top_n_genes` | 30 | Maximum gene rows shown in a per-cell-type trajectory table. |
 | `cross_report_top_n_genes` | 100 | Maximum gene rows shown in cross-cell-type trajectory tables. |
+| `random_state` | 413 | Seed for reproducible UMAP coordinates. |
+| `minimum_shared_bins` | 5 | Minimum common age bins required for the cross-cell-type trajectory comparison. |
+| `residual_pca_components` | 100 | Maximum number of centered PCA components used before residual UMAP. The count is capped by the available samples and genes. |
+| `residual_umap_neighbors` | 50 | Neighbourhood size for residual-sample UMAPs; capped at one fewer than the available samples. |
+| `residual_hdbscan_min_cluster_size` | 15 | Smallest sample group retained by the HDBSCAN alternatives; points outside selected clusters are labeled noise. |
+| `residual_hdbscan_min_samples` | 5 | Local-density conservativeness, used for both HDBSCAN comparison embeddings. |
+| `residual_hdbscan_cluster_selection_method` | `"eom"` | HDBSCAN selection strategy, used for both UMAP and PC-space comparison labels. No HDBSCAN parameter sweep is shown. |
+| `residual_pc_hdbscan_components` | 100 | Maximum number of leading residual PCs used for the HDBSCAN-in-PC-space alternative and primary Leiden graph. |
+| `residual_leiden_neighbors` | 15 | Number of PC-space nearest neighbors used to construct the Leiden graph; capped at one fewer than the available samples. |
+| `residual_leiden_resolutions` | `[0.25, 0.5, 1.0, 1.5]` | Candidate Leiden resolutions tested on the same PC-space graph. |
+| `residual_leiden_min_clusters` | 10 | Target used to select the lowest candidate resolution yielding at least this many clusters; if none do, use the candidate yielding the most clusters. |
+| `residual_marker_max_clusters` | 16 | Maximum number of largest clusters included in marker and feature-origin contrasts. |
+<!-- generated-age-trajectory-settings:end -->
 
 The 90–100 age bin is explicitly removed before trajectory fitting. Its sample
-count is measured before filtering and recorded per cell type in run_metadata.json;
-per-cell-type reports and the combined trajectory support table display that count.
-The strict age cutoff also excludes any eligible samples aged 100 or older.
+count is measured before filtering and recorded per cell type in
+`run_metadata.json`; per-cell-type reports and the combined trajectory support
+table display that count. The strict age cutoff also excludes samples aged 100
+or older.
 
 The omnibus test asks whether any retained age-bin coefficient differs from
 the reference bin; it tests any age-bin difference, including a monotone
@@ -322,18 +361,36 @@ beside each matrix. The age-bin fit excludes samples aged 90 years or older,
 requires at least ten eligible pseudobulks in each retained bin, and adjusts for
 age-bin, sex, log10(total counts), and study site when that term is estimable. Samples are clustered
 using up to `residual_pca_components` centered PCA scores. UMAP uses Euclidean
-distance in PC space, then silhouette-selected K-means clusters its coordinates
-while excluding solutions with clusters smaller than three samples. Each per-type report
+distance in PC space. Primary residual labels use Leiden on a PC-space
+nearest-neighbor graph. The selected resolution is the lowest configured
+candidate yielding at least `residual_leiden_min_clusters` groups; if no
+candidate reaches the target, the candidate with the most groups is selected.
+The reports show candidate cluster counts and compare the selected result with
+silhouette-selected K-means on UMAP and one configured HDBSCAN result on UMAP
+and on up to the configured number of leading PCs. The HDBSCAN comparisons
+both use the same `min_cluster_size`, `min_samples`, and selection method;
+those parameters are not swept. Marker and feature-origin contrasts include at most the
+`residual_marker_max_clusters` largest clusters; all labels remain in the
+exported assignments. Each per-type report
 shows a 2 × 2 UMAP grid for sex, age, log10(total counts), and study, plus a
 second 2 × 2 grid for residual clusters, BMI, and CMV; BMI and CMV panels show
-recorded-value counts.
+recorded-value counts. The model-covariate grid is collapsed by default, while
+the non-model grid is open. A collapsed PCA panel shows PC1 versus PC2 by
+cluster and the residual UMAP colored by PC1 and PC2. A separate section
+shows a clustering summary table and UMAP overlays for the K-means and two
+HDBSCAN alternatives. The summary table also lists the tested Leiden candidate
+resolutions and their cluster counts.
 
 The cross-type matrix starts with every cell type that has residual artifacts,
 then removes the type with the fewest fitted samples until samples present in
 every remaining type reach the configured fraction of the union sample set, or
 one type remains. Its report names included and removed types, the shared sample
 count, and achieved coverage. It contains a 2 × 2 UMAP grid for model covariates
-and a second grid for BMI and CMV coverage. Wide columns are labeled
+and a second grid for BMI and CMV coverage; only the non-model grid is open by
+default. A collapsed PCA panel shows PC1 versus PC2 by cluster and the residual
+UMAP colored by PC1 and PC2. It shows a clustering summary table and UMAP
+overlays for the K-means and two HDBSCAN alternatives; the table includes the
+tested Leiden resolution counts. Wide columns are labeled
 `cell type::gene`. Per-type and cross-type cluster assignments, PC scores,
 matrices, and sample metadata are materialized for downstream analysis.
 
@@ -401,7 +458,9 @@ make split-cell-types-test
 make run-cell-type-test CELL_TYPE=cd14-monocyte
 make render-cell-type-test CELL_TYPE=cd14-monocyte
 make render-trajectory-report-test
+make render-trajectory-reports-focused-test
 make run-trajectory-test
+make docs-update
 make docs-check
 ```
 
@@ -418,6 +477,11 @@ documentation-tool dependency.
 `make render-trajectory-report[-test]` reruns the cross-cell-type analysis and
 notebook from an existing DE manifest; it does not refit any model or rerender
 the per-cell-type reports.
+`make render-trajectory-reports-focused-test` rerenders the combined synthetic
+trajectory report plus one representative per-type report (defaulting to
+`cd14-monocyte`) from existing pseudobulk, split, and analysis artifacts. It
+does not rerun synthetic DE fitting or cell-type analysis. Pass `CELL_TYPE` to
+choose another fixture type.
 `make run-trajectory-test` reuses an existing test single-cell merge (run
 `make run-test` if it is missing), fits the config-sized synthetic DE fixture,
 then renders and checks per-cell-type and cross-cell-type trajectory reports.
@@ -426,8 +490,10 @@ It omits the separate integration benchmark stage from `make run-all-test`.
 non-resumed Docker workflows across all configured studies by default. After
 the core merge it runs and checks the integration benchmark report, then
 generates synthetic pseudobulk data for positive DE fits, checks the completed
-models and planted markers, and renders all cell-type reports from the fresh
-core test merge. Reserve it for cross-cutting or release-level validation;
+models and planted markers, profiles the top two merged age-DE genes per cell
+type, exercises the focused synthetic gene-profile report, and renders all
+cell-type reports from the fresh core test merge. Reserve it for cross-cutting
+or release-level validation;
 pass `STUDIES=<list>` for a narrower verification. The synthetic fixture has
 only two cell types, so other reports exercise the ordinary no-DE path. It is
 workflow coverage rather than a realistic model of study balance or biological
@@ -438,9 +504,7 @@ report rendering.
 `MERGE_SINGLE_CELL=true` enables the optional single-cell branch.
 The current Nextflow profiles leave CPU and time requests unspecified except
 for one CPU per parallel cell-type DE task; they do not set per-process memory
-limits. The full production pipeline and a fresh-clone input acquisition plus
-`make run-all` completed successfully before the latest manual metadata
-corrections. Resource reports/traces are not yet part of the tracked run
+limits. Resource reports and traces are not yet part of the tracked run
 artifacts; record measured peak RAM before sizing a different runner or adding
 resource directives.
 

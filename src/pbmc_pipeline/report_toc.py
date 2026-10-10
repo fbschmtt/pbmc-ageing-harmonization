@@ -11,8 +11,9 @@ from pathlib import Path
 class _HeadingParser(HTMLParser):
     """Collect rendered H2-H4 headings and their anchor IDs."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, minimum_level: int = 2) -> None:
         super().__init__(convert_charrefs=True)
+        self.minimum_level = minimum_level
         self.headings: list[tuple[int, str, str]] = []
         self._current: tuple[int, str, list[str]] | None = None
         self._skip_anchor = False
@@ -20,7 +21,7 @@ class _HeadingParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
-        if tag in {"h2", "h3", "h4"}:
+        if tag in {f"h{level}" for level in range(self.minimum_level, 5)}:
             inherited_id = next(
                 (anchor for _, anchor in reversed(self._stack) if anchor), ""
             )
@@ -52,6 +53,15 @@ class _HeadingParser(HTMLParser):
             if self._stack[index][0] == tag:
                 del self._stack[index:]
                 break
+
+
+def set_notebook_title(notebook_path: Path, title: str) -> None:
+    """Set the document title used by nbconvert for the browser tab."""
+    import nbformat
+
+    notebook = nbformat.read(notebook_path, as_version=4)
+    notebook.metadata["title"] = title
+    nbformat.write(notebook, notebook_path)
 
 
 @dataclass
@@ -86,18 +96,24 @@ def _render_toc_items(headings: list[tuple[int, str, str]]) -> str:
 
 
 def populate_html_toc(
-    html_path: Path, *, placeholder: str = "<!-- REPORT_TOC_PLACEHOLDER -->"
+    html_path: Path,
+    *,
+    placeholder: str = "<!-- REPORT_TOC_PLACEHOLDER -->",
+    minimum_heading_level: int = 2,
 ) -> None:
-    """Replace a report TOC placeholder with links derived from H2-H4 headings.
+    """Replace a report TOC placeholder with links derived from HTML headings.
 
     Place ``placeholder`` inside the report's TOC list. The final rendered HTML
     is parsed so conditional and programmatically emitted notebook headings are
-    included without maintaining a second list of section names.
+    included without maintaining a second list of section names. By default,
+    include H2-H4; reports with semantic H1 model headings can start at H1.
     """
+    if minimum_heading_level not in {1, 2, 3, 4}:
+        raise ValueError("minimum_heading_level must be between 1 and 4")
     document = html_path.read_text()
     if placeholder not in document:
         raise ValueError(f"Report TOC placeholder is missing from {html_path}")
-    parser = _HeadingParser()
+    parser = _HeadingParser(minimum_level=minimum_heading_level)
     parser.feed(document)
     if not parser.headings:
         raise ValueError(f"No report headings were found in {html_path}")

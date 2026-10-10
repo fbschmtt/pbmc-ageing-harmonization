@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 from .logging_utils import configure_logging
+from .report_toc import populate_html_toc, set_notebook_title
 
 
 def generate_integration_benchmark_report(
@@ -24,9 +25,17 @@ def generate_integration_benchmark_report(
         "INTEGRATION_BENCHMARK_REPORT": str(run_report.resolve()),
         "MPLCONFIGDIR": str((root / ".cache" / "matplotlib").resolve()),
     })
+    source_path = str(root / "src")
+    env["PYTHONPATH"] = os.pathsep.join(
+        path for path in (source_path, env.get("PYTHONPATH", "")) if path
+    )
     executed, html = output_dir / "executed.ipynb", output_dir / "report.html"
     with tempfile.TemporaryDirectory(prefix="pbmc-integration-benchmark-notebook-") as temporary_dir:
-        notebook = Path(temporary_dir) / f"{template.stem}.ipynb"
+        temporary_path = Path(temporary_dir)
+        jupyter_data = temporary_path / "jupyter-data"
+        jupyter_data.mkdir()
+        env["JUPYTER_DATA_DIR"] = str(jupyter_data)
+        notebook = temporary_path / f"{template.stem}.ipynb"
         subprocess.run([
             sys.executable, "-m", "jupytext", "--to", "notebook",
             "--output", str(notebook), str(template),
@@ -36,10 +45,15 @@ def generate_integration_benchmark_report(
             "--ExecutePreprocessor.timeout=-1", f"--output={executed.name}",
             f"--output-dir={output_dir}", str(notebook),
         ], cwd=root, env=env, check=True)
+    set_notebook_title(executed, "Integration benchmark | PBMC ageing")
     subprocess.run([
         sys.executable, "-m", "jupyter", "nbconvert", "--to", "html",
+        "--HTMLExporter.exclude_input=True",
+        "--HTMLExporter.exclude_input_prompt=True",
+        "--HTMLExporter.exclude_output_prompt=True",
         f"--output={html.name}", f"--output-dir={output_dir}", str(executed),
     ], cwd=root, env=env, check=True)
+    populate_html_toc(html)
     return html
 
 

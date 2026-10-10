@@ -40,7 +40,7 @@ main { max-width: 1600px; margin: 0 auto; padding: 2rem clamp(1.25rem, 3vw, 2.5r
   box-shadow: 0 12px 30px rgba(49, 92, 109, .16);
 }
 .report-eyebrow { margin: 0 0 .45rem; color: #bde7f0; font-size: .76rem; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
-.report-hero h1 { margin: 0; color: #fff; font-size: clamp(2rem, 5vw, 3.4rem); line-height: 1.08; }
+.report-hero-title { margin: 0; color: #fff; font-size: clamp(2rem, 5vw, 3.4rem); line-height: 1.08; }
 .report-subtitle { max-width: 48rem; margin: .85rem 0 1.4rem; color: #e2f3f7; line-height: 1.55; }
 .report-metrics { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .55rem; margin: 0; }
 .report-metric { display: flex; align-items: baseline; gap: .55rem; padding: .62rem .78rem; border: 1px solid rgba(255,255,255,.22); border-radius: 10px; background: rgba(255,255,255,.1); }
@@ -105,8 +105,13 @@ html { scroll-behavior: smooth; scroll-padding-top: 1.25rem; }
 """
 
 
-def render_report_header(*, title: str, eyebrow: str, subtitle: str, metrics: list[tuple[str, str]]) -> str:
+def render_report_header(
+    *, title: str, eyebrow: str, subtitle: str, metrics: list[tuple[str, str]],
+    title_tag: str = "h1",
+) -> str:
     """Render the shared report hero and responsive heading-based TOC shell."""
+    if title_tag not in {"div", "h1"}:
+        raise ValueError("title_tag must be 'div' or 'h1'")
     metrics_html = "".join(
         f'<div class="report-metric"><dt>{escape(label)}</dt>'
         f'<dd>{escape(value)}</dd></div>'
@@ -116,7 +121,7 @@ def render_report_header(*, title: str, eyebrow: str, subtitle: str, metrics: li
 <style>\n{REPORT_CSS}\n</style>
 <header class="report-hero">
   <p class="report-eyebrow">{escape(eyebrow)}</p>
-  <h1>{escape(title)}</h1>
+  <{title_tag} class="report-hero-title">{escape(title)}</{title_tag}>
   <p class="report-subtitle">{escape(subtitle)}</p>
   <dl class="report-metrics">{metrics_html}</dl>
   <div class="report-toc-shell">

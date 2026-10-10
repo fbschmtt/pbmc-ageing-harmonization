@@ -11,6 +11,9 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 
+from pbmc_pipeline.trajectory_analysis import residual_leiden_label_column
+
+ROOT = Path(__file__).resolve().parents[1]
 
 def _load_fixture(
     outdir: Path,
@@ -276,8 +279,28 @@ def check_results(outdir: Path) -> None:
     )
 
 
-def check_reports(outdir: Path) -> None:
+def check_reports(
+    outdir: Path,
+    *,
+    selected_cell_type: str | None = None,
+    config_path: Path = ROOT / "config/pipeline.json",
+) -> None:
     cell_types, expected_genes, _, _, _, _ = _load_fixture(outdir)
+    if selected_cell_type is not None:
+        requested = selected_cell_type.casefold()
+        matching = [
+            label for label in cell_types
+            if label.casefold() == requested
+            or "-".join(label.lower().split()) == requested
+        ]
+        if not matching:
+            raise SystemExit(
+                f"Cell type {selected_cell_type!r} is not present in the synthetic fixture: {cell_types}"
+            )
+        cell_types = matching
+    age_settings = json.loads(config_path.read_text(encoding="utf-8"))[
+        "differential_expression"
+    ]["age_trajectory"]
     for cell_type in cell_types:
         slug = "-".join(cell_type.lower().split())
         cell_type_dir = outdir / "cell_type_analysis" / slug
@@ -301,7 +324,7 @@ def check_reports(outdir: Path) -> None:
         html = report_path.read_text(errors="replace").lower()
         required = [
             "synthetic test data", "differential gene expression",
-            "shared age-model diagnostics",
+            "shared age-model diagnostics", "alternative clusterings",
         ]
         missing = [item for item in required if item.lower() not in html]
         section_heading = re.search(
@@ -391,7 +414,7 @@ def check_reports(outdir: Path) -> None:
             for phrase, label in (
                 ("show trajectory clusters, umap, and merge diagnostic", "trajectory clusters"),
                 (
-                    "../../differential_expression/trajectory_analysis/report.html",
+                    "../../differential_expression/combined_analysis/report.html",
                     "cross-cell-type trajectory report link",
                 ),
             ):
@@ -399,7 +422,7 @@ def check_reports(outdir: Path) -> None:
                     missing.append(label)
         if missing:
             raise SystemExit(f"{report_path} is missing expected DE content: {missing}")
-    trajectory_dir = outdir / "differential_expression" / "trajectory_analysis"
+    trajectory_dir = outdir / "differential_expression" / "combined_analysis"
     required_outputs = [
         trajectory_dir / "report.html",
         trajectory_dir / "executed.ipynb",
@@ -451,9 +474,42 @@ def check_reports(outdir: Path) -> None:
         raise SystemExit("Synthetic report did not materialize a gene-expression UMAP")
     residual_support = metadata.get("pearson_residual_clustering", {}).get("cross_cell_type", {})
     if residual_support.get("residual_cluster_method") != (
-        "K-means on UMAP coordinates; silhouette-selected with at least 3 samples per cluster"
+        "Leiden on residual PC graph"
     ):
         raise SystemExit("Synthetic report did not use the configured residual clustering method")
+    residual_clusters = pd.read_csv(
+        trajectory_dir / "cross_cell_type_residual_clusters.csv"
+    )
+    expected_target = age_settings["residual_leiden_min_clusters"]
+    if residual_support.get("residual_leiden_min_clusters") != expected_target:
+        raise SystemExit("Synthetic report did not record the configured Leiden cluster-count target")
+    if residual_support.get("residual_leiden_resolutions") != age_settings[
+        "residual_leiden_resolutions"
+    ]:
+        raise SystemExit("Synthetic report did not record configured Leiden resolutions")
+    expected_leiden_columns = {
+        residual_leiden_label_column(resolution)
+        for resolution in age_settings["residual_leiden_resolutions"]
+    }
+    expected_clusterings = {
+        "residual_cluster", "residual_cluster_kmeans", "residual_cluster_hdbscan_pcs",
+        "residual_cluster_hdbscan_umap", "residual_leiden_selected_resolution",
+        *expected_leiden_columns,
+    }
+    if not expected_clusterings.issubset(residual_clusters.columns):
+        missing_clusterings = sorted(expected_clusterings - set(residual_clusters.columns))
+        raise SystemExit(
+            f"Synthetic report omitted configured residual clustering columns: {missing_clusterings}"
+        )
+    marker_path = trajectory_dir / "cross_cell_type_residual_cluster_markers.csv"
+    marker_limit = age_settings["residual_marker_max_clusters"]
+    if marker_path.is_file() and marker_path.stat().st_size:
+        marker_clusters = pd.read_csv(marker_path)["residual_cluster"].nunique()
+        if marker_clusters >= marker_limit:
+            raise SystemExit(
+                "Residual marker contrasts should exclude the reference cluster and include "
+                f"at most {marker_limit - 1} other clusters; found {marker_clusters}"
+            )
     cross_trajectories = pd.read_csv(
         trajectory_dir / "cross_cell_type_trajectory_clusters.csv"
     )
@@ -463,8 +519,11 @@ def check_reports(outdir: Path) -> None:
             "Synthetic report fixture did not exercise cross-cell-type trajectory UMAP"
         )
     html = (trajectory_dir / "report.html").read_text(errors="replace").lower()
+    if "<title>merged age-de results | pbmc ageing</title>" not in html:
+        raise SystemExit("Merged age-DE report has an uninformative browser title")
     for phrase in (
         "cross-cell-type age trajectories", "recurrence", "each point is one gene",
+        "alternative clusterings", "residual cluster method comparison",
     ):
         if phrase not in html:
             raise SystemExit(
@@ -482,11 +541,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", choices=("results", "reports"))
     parser.add_argument("--outdir", type=Path, default=Path("output/test"))
+    parser.add_argument("--cell-type", help="check only this cell type plus the combined report")
+    parser.add_argument("--config", type=Path, default=ROOT / "config/pipeline.json")
     args = parser.parse_args()
     if args.phase == "results":
         check_results(args.outdir)
     else:
-        check_reports(args.outdir)
+        check_reports(
+            args.outdir, selected_cell_type=args.cell_type, config_path=args.config
+        )
 
 
 if __name__ == "__main__":

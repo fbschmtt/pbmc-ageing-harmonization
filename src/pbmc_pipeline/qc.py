@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from .logging_utils import configure_logging
+from .report_toc import populate_html_toc, set_notebook_title
 
 LOGGER = logging.getLogger(__name__)
 
@@ -88,6 +89,7 @@ def generate_qc_report(
         "study=%s step=execute_qc_notebook duration_seconds=%.2f path=%s",
         study, time.perf_counter() - started, executed,
     )
+    set_notebook_title(executed, f"{study} QC | PBMC ageing")
     export_command = [
         sys.executable,
         "-m",
@@ -95,12 +97,16 @@ def generate_qc_report(
         "nbconvert",
         "--to",
         "html",
+        "--HTMLExporter.exclude_input=True",
+        "--HTMLExporter.exclude_input_prompt=True",
+        "--HTMLExporter.exclude_output_prompt=True",
         f"--output={html.name}",
         f"--output-dir={output_dir}",
         str(executed),
     ]
     started = time.perf_counter()
     subprocess.run(export_command, cwd=root, env=env, check=True)
+    populate_html_toc(html)
     LOGGER.info(
         "study=%s step=export_qc_html duration_seconds=%.2f path=%s",
         study, time.perf_counter() - started, html,

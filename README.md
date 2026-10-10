@@ -2,9 +2,10 @@
 
 Configuration-driven processing of PBMC ageing scRNA-seq studies. It produces
 one harmonized H5AD per study, per-study sample × AIFI-L2 pseudobulks, and a
-cross-study pseudobulk matrix. An explicitly enabled pathway also
-creates a raw-count cross-study single-cell merge. A separate, opt-in
-integration benchmark creates global embeddings and diagnostic annotations.
+cross-study pseudobulk matrix. An explicitly enabled pathway also creates a
+raw-count cross-study single-cell merge. A separate, opt-in integration
+benchmark compares unintegrated PCA and scVI, batch-corrected scVI, Harmony,
+Scanorama, and BBKNN representations and their method-specific cell graphs.
 
 Study-specific inputs and adapter dependencies live in `config/studies.json`;
 the tracked `config/studies.schema.json` and
@@ -118,8 +119,8 @@ input_data/ expression objects + metadata
       harmonize one configured study
                 │
                 ├──> output/harmonized/<study>.h5ad
-                ├──> output/reports/<study>.json
-                └──> output/qc/<study>/{executed.ipynb,report.html}
+                ├──> output/provenance/<study>.json
+                └──> output/harmonization_qc/<study>/{executed.ipynb,report.html}
                 │
                 ▼
   pseudobulk each study by sample/AIFI-L2
@@ -129,11 +130,11 @@ input_data/ expression objects + metadata
        output/merged/pseudobulk_merged.h5ad
                 │
                 ├── optional: output/merged/single_cell_merged.h5ad
-                └──> output/qc/merged/{executed.ipynb,report.html}
+                └──> output/harmonization_qc/merged/{executed.ipynb,report.html}
 
 optional global integration benchmark
   single_cell_merged.h5ad ──> output/integration_benchmark/
-                                └──> labels-and-UMAP-only H5AD + JSON + report.html
+                                └──> embeddings + graphs + labels H5AD + JSON + report.html
 
 optional downstream cell-type workflow
   single_cell_merged.h5ad ──> split once by per-study AIFI-L2
@@ -309,7 +310,7 @@ Passing `--qc` executes the tracked `reports/qc_report.py` template after each
 harmonized H5AD is written. Each study gets a separate directory:
 
 ```text
-output/qc/<study>/
+output/harmonization_qc/<study>/
 ├── executed.ipynb
 └── report.html
 ```
@@ -324,12 +325,13 @@ study:
 ```bash
 pbmc-qc \
   --input output/harmonized/onek1k.test.h5ad \
-  --run-report output/reports/onek1k.test.json \
-  --output-dir output/qc/onek1k.test \
+  --run-report output/provenance/onek1k.test.json \
+  --output-dir output/harmonization_qc/onek1k.test \
   --study onek1k
 ```
 
-The merge workflow renders one combined document at `output/qc/merged/`. It
+The merge workflow renders one combined document at
+`output/harmonization_qc/merged/`. It
 covers pseudobulk composition and technical covariates; the pseudobulk outer
 union retains all input counts. Shared-gene availability, hypothetical count
 loss under the all-study intersection, and the highest-count excluded gene are
@@ -338,10 +340,18 @@ actually used. Global UMAPs and benchmark AIFI-L2 comparisons belong to the
 separate integration benchmark.
 The merged artifact retains per-study labels in `aifi_l2_majority` for all
 downstream grouping and splitting. Run `make run-integration-benchmark` after
-the core workflow to create a small diagnostic H5AD with global UMAP coordinates
-and CellTypist labels from the Harmony and unintegrated-PCA graphs. It does not
-duplicate the merged raw count matrix. Its `report.html` contains the global
-UMAPs and per-study-versus-benchmark AIFI-L2 concordance matrices.
+the core workflow to create a small diagnostic H5AD with unintegrated PCA and
+scVI, batch-corrected scVI, Harmony, Scanorama, and BBKNN representations,
+their neighbor graphs, and CellTypist labels majority-voted on each graph.
+scVI returns a latent representation; the benchmark calculates neighbors and
+UMAP from it. Its unintegrated run omits the study covariate in the scVI model
+but uses study-aware HVG selection to keep its features comparable with the
+batch-corrected run. The artifact does not duplicate the merged expression
+matrix. The report compares graph edge overlap and per-study versus benchmark
+AIFI-L2 label concordance; these are diagnostic comparisons, not acceptance
+thresholds.
+Its `report.html` has separate embedding-integration and type-calling sections,
+including graph edge overlap and per-study-versus-benchmark AIFI-L2 concordance.
 `output/run_manifest.json` records requested, selected, and skipped studies,
 image references, configuration checksum, and checksums of the merged
 deliverables.
@@ -370,8 +380,12 @@ which validation to run.
 | Rerender reports from existing analysis artifacts | `make render-cell-type-reports[-test]` | Use `make render-cell-type[-test] CELL_TYPE=<slug>` to refresh only one report. |
 | Cell-type splitting or shared analysis | `make run-test`, then `make run-cell-type-analysis-test` | Use `make run-all-test` when the complete ordered test workflow is needed. |
 | Positive pseudobulk DE fitting | `make run-de-synthetic-test` and `make check-synthetic-de-results` | This fixture is independent of the core merge. To check report integration, also run `make run-test` followed by `make run-cell-type-analysis-test` and `make check-synthetic-de-reports`. |
+| Focused gene-by-cell-type profile | `make profile-gene CELL_TYPE=<label-or-slug> GENE=<gene-id>` | Use `make run-gene-profile-synthetic-test` to fit and render a planted synthetic gene and check the report end to end. |
+| Top merged age-DE gene profiles | `make profile-top-age-genes-test` | Uses the synthetic DE fixture and profiles two genes per cell type; included in `make run-all-test`. |
 | DE from an existing test pseudobulk merge | `make run-de-test` | Requires `make run-test` first; the small core fixture may not have enough independent samples for successful fits. Use the synthetic target above for positive fitting coverage. |
+| Focused profiles of top merged age-DE genes | `make profile-top-age-genes` | Runs ten profiles per cell type by adjusted p-value; set `TOP_AGE_GENE_COUNT` to change the number. Requires completed merged DE results and pseudobulk input. |
 | Cross-cell-type trajectory report only | `make render-trajectory-report[-test]` | Reuses existing DE results and reruns only the combined trajectory analysis and notebook. |
+| Combined plus representative per-type trajectory reports | `make render-trajectory-reports-focused-test` | Reuses existing synthetic DE, test split, and analysis artifacts; rerenders the combined report and the `CELL_TYPE` report (default `cd14-monocyte`) without refitting. |
 | End-to-end trajectory path | `make run-trajectory-test` | Reuses an existing test merge, then runs the config-sized synthetic DE fit, both report levels, and artifact checks; skips the integration benchmark. Run `make run-test` first if the merge is missing. |
 | Core workflow for one or a few studies | `make run-test STUDIES=<list>` | Omit `STUDIES` to request all configured studies. |
 | Global integration/annotation diagnostics | `make run-integration-benchmark[-test]` | Run after an existing single-cell merge; `make run-all-test` also exercises its test form. |
@@ -400,8 +414,8 @@ create it only through `make run-all` or when explicitly enabled:
 make run STUDIES=all MERGE_SINGLE_CELL=true
 ```
 
-To benchmark the global Harmony and unintegrated-PCA label/UMAP variants without
-rerunning that merge:
+To benchmark global embedding and type-calling methods without rerunning that
+merge:
 
 ```bash
 make run-integration-benchmark
@@ -513,9 +527,14 @@ This downstream workflow requires an existing merged single-cell H5AD at
 `MERGED_INPUT=/path/to/single_cell_merged.h5ad`.
 
 For a complete production run, `make run-all` executes the core workflow with
-single-cell merging enabled, then runs differential expression and cell-type
-analysis/reporting in order. The workflow is resumable. It uses the configured
-`STUDIES`, `OUTDIR`, and `WORK_DIR` values. For test output, run `make run-test`
+single-cell merging enabled, then runs differential expression, detailed
+profiles for the ten lowest-adjusted-p-value age-DE genes in each cell type,
+and cell-type analysis/reporting in order. The profiles are written under
+`<outdir>/gene_profiles/<cell-type-slug>/<gene-slug>/`. Run
+`make profile-top-age-genes TOP_AGE_GENE_COUNT=5` to change the number or to
+rerun profiling from existing merged DE results and pseudobulk data. The
+workflow is resumable. It uses the configured `STUDIES`, `OUTDIR`, and
+`WORK_DIR` values. For test output, run `make run-test`
 first, then `make run-cell-type-analysis-test` to consume the test merge under
 `output/test/`. All test targets publish only beneath `output/test/`.
 
@@ -663,9 +682,13 @@ contrasts. These views complement rather than replace the per-cell-type DE
 results, and they are not covariate-adjusted estimates of absolute RNA
 abundance. Per-type artifacts are stored under each type's `combined/`
 directory and cross-type artifacts under
-`differential_expression/trajectory_analysis/`. See
+`differential_expression/combined_analysis/`. See
 [IMPLEMENTATION.md](IMPLEMENTATION.md#age-trajectory-settings) for the model,
 support rules, clustering, output tables, and current configurable settings.
+Residual-sample clusters use Leiden on a PC-space neighbor graph as the primary
+labeling. The selected resolution targets at least 10 clusters, with K-means
+and fixed-parameter HDBSCAN results shown as alternatives; marker contrasts are
+limited to the 16 largest clusters.
 
 Each cell type also renders
 one shared-age diagnostic figure: study-site age support, age against raw
@@ -708,6 +731,74 @@ directory. Named Nextflow subworkflows group splitting plus analysis, analysis
 of an existing split, and report rendering while retaining the separate
 single-cell and pseudobulk entry points.
 
+### Focused gene profiling
+
+`make profile-gene CELL_TYPE=<label-or-slug> GENE=<gene-id>` fits the configured
+merged DESeq2 model and a naive normalization linear model for one cell type
+from the pseudobulk H5AD, then renders a focused report for one gene inside
+the Python Docker image. For example:
+
+```bash
+make profile-gene CELL_TYPE=cd14-monocyte GENE=IL7R
+```
+
+The executed notebook and HTML report give each model its own top-level
+heading. The PyDESeq2 section includes the gene's position in the fitted
+mean–dispersion plot, its age coefficient and adjusted p-value, sample-level
+size-factor normalized counts, and Pearson residuals against age and
+`log10(total_counts)`, each faceted by study and colored by study site. The
+mean–dispersion plot marks the selected gene's gene-wise dispersion before
+shrinkage alongside the final dispersion used in the model. Correlated-gene
+scatter plots color points by study. The
+residual section shows a table with the selected gene followed by its ten
+strongest residual correlates, including each gene's mean normalized count and
+final dispersion, and plots the four strongest correlates. A separate Naive
+normalization section documents geometric-mean total-count scaling and the
+`log(normalized count + 1)` transform once, shows the normalized-count
+histogram, and compares naive expression with PyDESeq2 VST. Continuous-age
+models use a geometric mean from their included samples; the age-bin model
+calculates its geometric mean across all samples in that cell type before
+applying model filters, so lower-age samples contribute to its scale. The naive
+linear age model uses the PyDESeq2 design covariates and reports its coefficient
+table and residual plots against age and library depth. The age-bin model uses
+the configured decade width, includes samples below age 20, adjusts for the
+other varying design terms, and plots standardized fitted levels alongside the
+sample expression values, with residual plots against age and library depth.
+
+A further model allows a separate linear age slope and intercept per study,
+adjusting for sex and library depth. `age * study` estimates study-specific
+intercept contrasts and age-by-study slope differences, without pooling; its
+residuals are also plotted against age and library depth. The mixed model keeps
+study intercepts fixed and estimates random age slopes around a shared slope.
+It reports fixed effects, random-slope and residual standard deviations, fit
+convergence, and partially pooled conditional slopes for each study, plus
+residual plots against age and library depth. Treat slope-variation estimates
+as exploratory when only a few studies are available. Sample-level expression
+points use 0.3 opacity so overlapping samples remain visible. The displayed
+geometric means use scientific notation. The HTML table
+of contents includes each implemented model heading, deferred `limma-voom` and
+R DESeq2 headings marked `TODO: implement R execution`, and rendered
+subheadings. The
+target also writes a compressed, full fit-gene-set
+VST matrix and the included sample metadata under
+`<outdir>/gene_profiles/<cell-type-slug>/<gene-slug>/`. VST values are
+transformed data for downstream exploration and modeling; differential
+expression inference should continue to use raw integer counts.
+
+To smoke-test the complete fit and report with planted synthetic expression,
+run `make run-gene-profile-synthetic-test`. It writes the pseudobulk fixture to
+`output/test/gene_profile_synthetic/` and the checked report artifacts to
+`output/test/gene_profiles/cd14-monocyte/synth-age-marker-1/`. This target is
+included in `make run-all-test`; it is separate from pytest because it fits
+DESeq2 and executes a notebook.
+
+`make profile-top-age-genes` applies the same detailed report to the top age-DE
+genes from each cell type's merged model results. Ranking uses finite adjusted
+p-values in `<outdir>/differential_expression/<cell-type>/merged.csv`; it
+profiles up to ten genes per type by default, using the merged pseudobulk H5AD.
+The report paths follow the same `gene_profiles/<cell-type>/<gene>/` layout as
+the single-gene target.
+
 The Nextflow `test` profile used by `make run-de-test` enables a test-only mode
 that bypasses only the minimum-cell cutoff. It keeps the adult-age, metadata, and model-estimability
 checks, so the small fixture can exercise PyDESeq2 without changing the
@@ -727,14 +818,22 @@ real-data results. The fixture design and marker contract are documented in
 upsample real test samples to simulate replication; more cells within a sample
 do not add independent samples.
 
+After `make run-de-synthetic-test`, run `make profile-top-age-genes-test` to
+render two genes per cell type, ranked by merged age-DE adjusted
+p-value. The outputs are written under
+`output/test/top_age_gene_profiles/<cell-type>/<gene>/`; this target is also
+included in `make run-all-test` and `make verify`.
+
 For the focused end-to-end trajectory path, use `make run-trajectory-test`
 after `make run-test`; see [Choosing a Make target](#choosing-a-make-target)
 for the smallest target for other test scenarios.
 
 `make run-all-test` is the complete ordered Docker test. It runs the core and
 integration benchmark on available downsampled real-data fixtures, then fits
-the separate synthetic pseudobulk DE fixture and renders reports from the real
-merge/splits with those DE results. `make verify` runs it after linting, unit
+the separate synthetic pseudobulk DE fixture, profiles its top two merged
+age-DE genes per cell type, runs the focused synthetic gene-profile smoke test,
+and renders reports from the real merge/splits with those DE results.
+`make verify` runs it after linting, unit
 tests, Nextflow lint, and documentation checks. `STUDIES=<list>` narrows only
 the core test inputs.
 

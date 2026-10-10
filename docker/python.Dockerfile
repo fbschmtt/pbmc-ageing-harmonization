@@ -11,7 +11,11 @@ COPY pyproject.toml ./
 COPY requirements.lock ./
 # Resolve the application environment once from the reviewed lock before copying
 # source. Source-only changes then reuse this layer without selecting new wheels.
-RUN python -m pip install --no-cache-dir -r requirements.lock
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential \
+    && python -m pip install --no-cache-dir -r requirements.lock \
+    && apt-get purge -y --auto-remove build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY src ./src
 # Install the project itself without re-resolving locked dependencies.

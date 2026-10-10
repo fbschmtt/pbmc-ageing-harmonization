@@ -6,10 +6,13 @@
 # across cell types using each cell type's own omnibus FDR result.
 
 # %%
+import base64
 import json
 import os
 import warnings
 from dataclasses import fields
+from html import escape
+from io import BytesIO
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -21,11 +24,20 @@ from upsetplot import UpSet, from_indicators
 
 from pbmc_pipeline.config import AgeTrajectorySettings
 from pbmc_pipeline.reporting import plot_trajectory_merge_diagnostic
-from pbmc_pipeline.trajectory_analysis import trajectory_merge_diagnostics
+from pbmc_pipeline.trajectory_analysis import (
+    summarize_residual_clustering,
+    trajectory_merge_diagnostics,
+)
 
 sns.set_theme(style="whitegrid")
 analysis_dir = Path(os.environ["TRAJECTORY_ANALYSIS_DIR"])
 metadata = json.loads((analysis_dir / "analysis_metadata.json").read_text())
+age_trajectory_settings = AgeTrajectorySettings.from_mapping(
+    {
+        field.name: metadata[field.name]
+        for field in fields(AgeTrajectorySettings) if field.init
+    }
+)
 cross_trajectories = pd.read_csv(analysis_dir / "cross_cell_type_trajectory_clusters.csv")
 cluster_means = pd.read_csv(analysis_dir / "cross_cell_type_cluster_means.csv")
 gene_recurrence = pd.read_csv(analysis_dir / "gene_recurrence.csv")
@@ -43,6 +55,8 @@ max_clusters = metadata["max_clusters"]
 residual_support = metadata.get("pearson_residual_clustering", {})
 cross_residual_support = residual_support.get("cross_cell_type", {})
 expression_atlas_support = metadata.get("expression_atlas", {})
+atlas_cpm_pseudocount = expression_atlas_support.get("cpm_pseudocount", 1.0)
+atlas_log_cpm_label = f"log2(CPM + {atlas_cpm_pseudocount:g})"
 expression_matrix_path = analysis_dir / "expression_atlas_matrix.csv"
 expression_gene_umap_path = analysis_dir / "expression_atlas_gene_umap.csv"
 expression_clusters_path = analysis_dir / "expression_atlas_gene_clusters.csv"
@@ -58,7 +72,7 @@ expression_gene_intersection_accounting_path = (
 
 
 def read_optional_csv(path, **kwargs):
-    if not path.is_file() or not path.stat().st_size:
+    if not path.is_file() or not path.read_text().strip():
         return pd.DataFrame()
     return pd.read_csv(path, **kwargs)
 
@@ -310,12 +324,17 @@ if expression_atlas_support.get("status") == "complete" and not expression_matri
                     "gene", "median_log2_cpm_difference_intronic_minus_non_intronic"
                 ]], on="gene", how="left"
             )
-        atlas_pseudocount = expression_atlas_support["cpm_pseudocount"]
         color_columns = [
             ("scaling_sd_log2_cpm", "Cross-L2 SD used for scaling"),
-            ("mean_log2_cpm", f"Mean log2(CPM + {atlas_pseudocount:g})"),
-            ("median_log2_cpm_difference_5_prime_minus_3_prime", "5′ − 3′ contrast"),
-            ("median_log2_cpm_difference_intronic_minus_non_intronic", "Intronic − non-intronic contrast"),
+            ("mean_log2_cpm", f"Mean {atlas_log_cpm_label}"),
+            (
+                "median_log2_cpm_difference_5_prime_minus_3_prime",
+                f"Cross-type median 5′ − 3′ difference\nin {atlas_log_cpm_label}",
+            ),
+            (
+                "median_log2_cpm_difference_intronic_minus_non_intronic",
+                f"Cross-type median intronic − non-intronic difference\nin {atlas_log_cpm_label}",
+            ),
         ]
         figure, axes = plt.subplots(2, 2, figsize=(14, 11), layout="constrained")
         for axis, (column, title) in zip(axes.ravel(), color_columns):
@@ -416,22 +435,24 @@ else:
 
 # %%
 def plot_labeled_expression_effect(table, *, x, y, title, y_label):
-    labels = table.dropna(subset=[x, y]).assign(
+    plotted = table.dropna(subset=[x, y]).copy()
+    labels = plotted.assign(
         absolute_effect=lambda values: values[y].abs()
     ).sort_values("absolute_effect", ascending=False, kind="stable").head(
         20
     )
     figure, axis = plt.subplots(figsize=(9, 6))
-    x_margin = max(0.05, 0.06 * (labels[x].max() - labels[x].min()))
-    y_margin = max(0.03, 0.08 * (labels[y].max() - labels[y].min()))
-    axis.set_xlim(labels[x].min() - x_margin, labels[x].max() + x_margin)
-    axis.set_ylim(labels[y].min() - y_margin, labels[y].max() + y_margin)
+    axis.scatter(plotted[x], plotted[y], s=12, alpha=0.45, color="#4c72b0", linewidths=0)
+    x_margin = max(0.05, 0.06 * (plotted[x].max() - plotted[x].min()))
+    y_margin = max(0.03, 0.08 * (plotted[y].max() - plotted[y].min()))
+    axis.set_xlim(plotted[x].min() - x_margin, plotted[x].max() + x_margin)
+    axis.set_ylim(plotted[y].min() - y_margin, plotted[y].max() + y_margin)
     for _, row in labels.iterrows():
         axis.text(row[x], row[y], str(row["gene"]), fontsize=7, alpha=0.85)
     axis.axhline(0, color="#555555", linestyle="--", linewidth=0.8)
-    axis.set_xlabel("Mean log2(CPM + pseudocount)")
+    axis.set_xlabel(f"Mean {atlas_log_cpm_label}")
     axis.set_ylabel(y_label)
-    axis.set_title(title + f" (top {len(labels)} absolute effects)")
+    axis.set_title(title + f" ({len(plotted):,} genes; top {len(labels)} labeled)")
     figure.tight_layout()
     plt.show()
 
@@ -448,7 +469,7 @@ if not expression_technology_summary.empty and not expression_technology_contras
         x="mean_log2_cpm_across_technologies",
         y="median_log2_cpm_difference_5_prime_minus_3_prime",
         title="Technology-associated expression contrast",
-        y_label="Median 5′ − 3′ log2(CPM + pseudocount)",
+        y_label=f"Cross-type median 5′ − 3′ difference\nin {atlas_log_cpm_label}",
     )
     top_contrast_genes = expression_technology_summary.assign(
         absolute_difference=lambda table: table["median_log2_cpm_difference_5_prime_minus_3_prime"].abs()
@@ -463,11 +484,11 @@ if not expression_technology_summary.empty and not expression_technology_contras
         )
         sns.heatmap(
             contrast_heatmap, cmap="vlag", center=0,
-            cbar_kws={"label": "5′ − 3′ log2(CPM + pseudocount)"}, ax=axis,
+            cbar_kws={"label": f"5′ − 3′ difference in {atlas_log_cpm_label}"}, ax=axis,
         )
         axis.set_xlabel("Cell type")
         axis.set_ylabel("Gene")
-        axis.set_title("Largest technology-associated contrasts")
+        axis.set_title("Top genes by cross-type median 5′ − 3′ contrast")
         figure.tight_layout()
         plt.show()
     display(Markdown(
@@ -496,7 +517,7 @@ else:
 if not expression_intronic_summary.empty and not expression_intronic_contrast.empty:
     display(Markdown(
         "This independent contrast is `intronic − non-intronic` on separately "
-        "study-balanced log2(CPM + pseudocount) matrices. As for 3′/5′, a one-versus-one "
+        f"study-balanced {atlas_log_cpm_label} matrices. As for 3′/5′, a one-versus-one "
         "comparison is estimable but is flagged as unreplicated."
     ))
     plot_labeled_expression_effect(
@@ -504,7 +525,10 @@ if not expression_intronic_summary.empty and not expression_intronic_contrast.em
         x="mean_log2_cpm_across_intronic_status",
         y="median_log2_cpm_difference_intronic_minus_non_intronic",
         title="Intronic-read inclusion expression contrast",
-        y_label="Median intronic − non-intronic log2(CPM + pseudocount)",
+        y_label=(
+            f"Cross-type median intronic − non-intronic difference\n"
+            f"in {atlas_log_cpm_label}"
+        ),
     )
     top_intronic_genes = expression_intronic_summary.assign(
         absolute_difference=lambda table: table[
@@ -524,11 +548,13 @@ if not expression_intronic_summary.empty and not expression_intronic_contrast.em
         )
         sns.heatmap(
             intronic_heatmap, cmap="vlag", center=0,
-            cbar_kws={"label": "Intronic − non-intronic log2(CPM + pseudocount)"}, ax=axis,
+            cbar_kws={
+                "label": f"Intronic − non-intronic difference in {atlas_log_cpm_label}"
+            }, ax=axis,
         )
         axis.set_xlabel("Cell type")
         axis.set_ylabel("Gene")
-        axis.set_title("Largest intronic-read inclusion contrasts")
+        axis.set_title("Top genes by cross-type median intronic-read contrast")
         figure.tight_layout()
         plt.show()
     display(Markdown(
@@ -559,14 +585,35 @@ display(Markdown(
     f"PCA is centered and unscaled (up to {metadata['residual_pca_components']} PCs). "
     f"Residual UMAP uses {metadata['residual_umap_neighbors']} neighbors (capped at samples − 1), "
     f"min_dist={metadata['umap_min_dist']}, Euclidean PC distance, and seed={metadata['random_state']}. "
-    "Clusters are silhouette-selected K-means groups on those UMAP coordinates, with a three-sample minimum. "
+    f"Primary residual clusters use Leiden on the graph of the first up to "
+    f"{metadata['residual_pc_hdbscan_components']} PCs, with "
+    f"{metadata['residual_leiden_neighbors']} neighbors. Per-type and combined analyses "
+    f"select the lowest tested resolution reaching {metadata['residual_leiden_min_clusters']} "
+    "clusters, or the tested resolution with the most clusters if none reach that target. "
     f"Trajectory UMAP separately uses {metadata['umap_neighbors']} neighbors; gene-expression UMAP uses "
     f"{expression_atlas_support.get('umap_neighbors', 'not run')} neighbors after up to "
     f"{expression_atlas_support.get('umap_pca_components', 'not run')} per-gene-standardized PCs."
 ))
 
 # %%
-def plot_residual_covariates(table, title, covariates, *, categorical_covariates):
+def display_collapsible_figure(figure, summary, *, open_by_default=False):
+    image_buffer = BytesIO()
+    figure.savefig(image_buffer, format="png", bbox_inches="tight")
+    plt.close(figure)
+    image_data = base64.b64encode(image_buffer.getvalue()).decode("ascii")
+    display(HTML(
+        '<details class="report-details report-details-figure"'
+        + (" open" if open_by_default else "")
+        + ">"
+        f"<summary>{escape(summary)}</summary>"
+        f'<img alt="{escape(summary, quote=True)}" '
+        f'src="data:image/png;base64,{image_data}"></details>'
+    ))
+
+
+def plot_residual_covariates(
+    table, title, covariates, *, categorical_covariates, open_by_default=False
+):
     figure, axes = plt.subplots(2, 2, figsize=(16.8, 8.64))
     for axis, covariate in zip(axes.flat, covariates):
         if covariate not in table:
@@ -594,9 +641,65 @@ def plot_residual_covariates(table, title, covariates, *, categorical_covariates
         axis.set_axis_off()
     figure.suptitle(title, y=1.01)
     figure.tight_layout()
-    plt.show()
+    display_collapsible_figure(figure, title, open_by_default=open_by_default)
+
+
+def plot_residual_cluster_alternatives(table, settings):
+    summary = summarize_residual_clustering(table, settings)
+    shown = summary[[
+        "method", "n_clusters", "n_assigned", "n_noise", "noise_fraction", "cluster_sizes",
+    ]].copy()
+    shown["noise_fraction"] = shown["noise_fraction"].map(
+        lambda value: f"{value:.1%}" if pd.notna(value) else "—"
+    )
+    display(HTML(
+        '<details class="report-details"><summary>Residual clustering summary</summary>'
+        + shown.to_html(index=False, escape=True, border=0)
+        + "</details>"
+    ))
+    plot_summary = summary.loc[
+        summary["label_column"].isin([
+            "residual_cluster_kmeans",
+            "residual_cluster_hdbscan_umap",
+            "residual_cluster_hdbscan_pcs",
+        ])
+    ]
+    coordinates = table.dropna(subset=["umap_1", "umap_2"])
+    n_rows = max(1, (len(plot_summary) + 1) // 2)
+    figure, axes = plt.subplots(n_rows, 2, figsize=(14, 5.5 * n_rows), squeeze=False)
+    for axis, row in zip(axes.flat, plot_summary.to_dict("records")):
+        column = row["label_column"]
+        values = coordinates.dropna(subset=[column]) if column in coordinates else pd.DataFrame()
+        if values.empty:
+            axis.text(0.5, 0.5, "UMAP or cluster labels unavailable", ha="center", va="center")
+            axis.set_axis_off()
+            continue
+        labels = pd.to_numeric(values[column], errors="coerce")
+        noise = labels.eq(-1)
+        if noise.any():
+            axis.scatter(
+                values.loc[noise, "umap_1"], values.loc[noise, "umap_2"],
+                color="#8a8a8a", s=32, alpha=0.75, linewidths=0,
+            )
+        clusters = sorted(labels.loc[~noise].dropna().astype(int).unique())
+        for index, cluster in enumerate(clusters):
+            selected = labels.eq(cluster)
+            axis.scatter(
+                values.loc[selected, "umap_1"], values.loc[selected, "umap_2"],
+                color=plt.get_cmap("tab20")(index % 20), s=32, alpha=0.82, linewidths=0,
+            )
+        axis.set_title(
+            f"{row['method']}\n{row['n_clusters']} clusters; {row['n_noise']} noise"
+        )
+        axis.set_xlabel("UMAP 1")
+        axis.set_ylabel("UMAP 2")
+    for axis in axes.flat[len(plot_summary):]:
+        axis.set_axis_off()
+    figure.tight_layout()
+    display_collapsible_figure(figure, "Residual cluster method comparison")
 
 cross_residual_path = analysis_dir / "cross_cell_type_residual_clusters.csv"
+cross_residual_pc_scores_path = analysis_dir / "cross_cell_type_residual_pc_scores.csv"
 cross_residual_markers_path = analysis_dir / "cross_cell_type_residual_cluster_markers.csv"
 cross_residual_composition_path = analysis_dir / "cross_cell_type_residual_cluster_feature_composition.csv"
 if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 0):
@@ -634,11 +737,16 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
         f"It has {cross_residual_support['n_genes']:,} cell-type × gene features; PCA used "
         f"{cross_residual_support.get('n_pcs_used', 0)} components. See the [cross-cell-type "
         "cluster assignments](cross_cell_type_residual_clusters.csv) and [wide Pearson "
-        "residual matrix](cross_cell_type_pearson_residuals.npz)."
+        "residual matrix](cross_cell_type_pearson_residuals.npz). "
+        f"Primary labels use Leiden at resolution "
+        f"{cross_residual_support.get('residual_leiden_selected_resolution', '—')}, selected "
+        f"to reach the target of "
+        f"{cross_residual_support.get('residual_leiden_min_clusters', '—')} clusters."
     )
     display(Markdown(residual_scope))
     display(Markdown(
-        "Residual cluster sizes are encoded in the UMAP legend. Marker contrasts use each cluster's "
+        "Residual cluster sizes are encoded in the UMAP legend. Noise samples are excluded from "
+        "marker contrasts, which compare each assigned cluster's "
         "mean residual against the largest cluster; feature-origin fractions summarize the top/bottom "
         "500 residual differences by cell type."
     ))
@@ -648,7 +756,10 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
         residual_cluster_counts = cross_residual_clusters["residual_cluster"].value_counts()
         cross_residual_clusters["residual_cluster_label"] = cross_residual_clusters[
             "residual_cluster"
-        ].map(lambda cluster: f"Cluster {cluster} (n={residual_cluster_counts[cluster]})")
+        ].map(lambda cluster: (
+            f"Noise (n={residual_cluster_counts[cluster]})" if int(cluster) == -1
+            else f"Cluster {cluster} (n={residual_cluster_counts[cluster]})"
+        ))
         figure, axis = plt.subplots(figsize=(6.6, 4.8))
         sns.scatterplot(
             data=cross_residual_clusters, x="umap_1", y="umap_2", hue="residual_cluster_label",
@@ -675,7 +786,55 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
                 [covariate for covariate in ("bmi", "cmv")
                  if covariate in cross_residual_clusters],
                 categorical_covariates={"cmv"},
+                open_by_default=True,
             )
+        cross_residual_pc_scores = read_optional_csv(cross_residual_pc_scores_path)
+        if {"sample_key", "residual_cluster", "PC1", "PC2"}.issubset(
+            cross_residual_pc_scores.columns
+        ):
+            plot_data = cross_residual_clusters.merge(
+                cross_residual_pc_scores[
+                    ["sample_key", "residual_cluster", "PC1", "PC2"]
+                ],
+                on=["sample_key", "residual_cluster"],
+                how="inner",
+                validate="one_to_one",
+            ).dropna(subset=["PC1", "PC2"])
+            if not plot_data.empty:
+                figure, axes = plt.subplots(1, 3, figsize=(18, 5.2))
+                sns.scatterplot(
+                    data=plot_data, x="PC1", y="PC2", hue="residual_cluster",
+                    palette="tab20", s=34, alpha=0.84, linewidth=0, ax=axes[0],
+                )
+                axes[0].set_title("Residual PCA: PC1 vs. PC2")
+                axes[0].legend(title="Residual cluster", bbox_to_anchor=(1.02, 1))
+                for axis, component in zip(axes[1:], ("PC1", "PC2")):
+                    values = plot_data.dropna(subset=["umap_1", "umap_2", component])
+                    points = axis.scatter(
+                        values["umap_1"], values["umap_2"], c=values[component],
+                        cmap="viridis", s=34, alpha=0.84, linewidths=0,
+                    )
+                    axis.set_title(f"Residual UMAP colored by {component}")
+                    axis.set_xlabel("UMAP 1")
+                    axis.set_ylabel("UMAP 2")
+                    figure.colorbar(points, ax=axis, label=f"{component} score")
+                figure.tight_layout()
+                display_collapsible_figure(figure, "Residual PCA and PC scores over UMAP")
+        else:
+            display(Markdown("_Cross-cell-type residual PCA scores are unavailable._"))
+        display(Markdown("### Alternative clusterings"))
+        display(Markdown(
+            "Leiden on the PC graph is the primary clustering. It uses the lowest tested "
+            f"resolution reaching {age_trajectory_settings.residual_leiden_min_clusters} "
+            "clusters, or the tested resolution with the most clusters if none reach that "
+            f"target. The summary table includes the tested resolutions "
+            f"{age_trajectory_settings.residual_leiden_resolutions}; plots compare K-means "
+            "and one configured HDBSCAN result on UMAP and PCs. Marker contrasts use at "
+            f"most the largest {age_trajectory_settings.residual_marker_max_clusters} clusters."
+        ))
+        plot_residual_cluster_alternatives(
+            cross_residual_clusters, age_trajectory_settings
+        )
         display(Markdown("### Cluster-focused residual characterization"))
         if not residual_markers.empty:
             figure, axis = plt.subplots(figsize=(6.6, 4.8))
@@ -725,10 +884,12 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
             axis.legend(title="Cell type", bbox_to_anchor=(1.02, 1), loc="upper left")
             figure.tight_layout()
             plt.show()
-        elif residual_cluster_counts.size == 1:
+        elif cross_residual_clusters.loc[
+            cross_residual_clusters["residual_cluster"] >= 0, "residual_cluster"
+        ].nunique() < 2:
             display(Markdown(
-                "_K-means retained a single cluster after the minimum-size and silhouette checks; "
-                "there is therefore no between-cluster marker or feature-origin contrast to report._"
+                "_Leiden found fewer than two clusters; there is therefore no "
+                "between-cluster marker or feature-origin contrast to report._"
             ))
     else:
         display(Markdown(

@@ -38,6 +38,14 @@ class AgeTrajectorySettings:
     minimum_shared_bins: int
     residual_pca_components: int
     residual_umap_neighbors: int
+    residual_hdbscan_min_cluster_size: int
+    residual_hdbscan_min_samples: int
+    residual_hdbscan_cluster_selection_method: str
+    residual_pc_hdbscan_components: int
+    residual_leiden_neighbors: int
+    residual_leiden_resolutions: list[float]
+    residual_leiden_min_clusters: int
+    residual_marker_max_clusters: int
 
     LINKAGE_METHODS: ClassVar[frozenset[str]] = frozenset({
         "single", "complete", "average", "weighted", "centroid", "median", "ward",
@@ -52,13 +60,18 @@ class AgeTrajectorySettings:
             "max_clusters", "umap_neighbors", "minimum_umap_trajectories",
             "report_top_n_genes", "cross_report_top_n_genes", "minimum_shared_bins",
             "residual_pca_components", "residual_umap_neighbors",
+            "residual_hdbscan_min_cluster_size", "residual_hdbscan_min_samples",
+            "residual_pc_hdbscan_components", "residual_leiden_neighbors",
+            "residual_leiden_min_clusters", "residual_marker_max_clusters",
         )
         for name in positive_ints:
             value = getattr(self, name)
             minimum = 2 if name in {
                 "minimum_samples_per_bin", "minimum_bins", "max_clusters",
                 "umap_neighbors", "residual_umap_neighbors", "minimum_umap_trajectories",
-                "minimum_shared_bins",
+                "minimum_shared_bins", "residual_leiden_neighbors",
+                "residual_hdbscan_min_cluster_size",
+                "residual_leiden_min_clusters",
             } else 1
             if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
                 raise ConfigurationError(
@@ -112,6 +125,29 @@ class AgeTrajectorySettings:
         if self.linkage_method in {"ward", "centroid", "median"} and self.distance_metric != "euclidean":
             raise ConfigurationError(
                 "Ward, centroid, and median linkage require the Euclidean distance metric"
+            )
+        if (
+            not isinstance(self.residual_leiden_resolutions, list)
+            or not self.residual_leiden_resolutions
+            or any(
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or value <= 0
+                for value in self.residual_leiden_resolutions
+            )
+            or len(set(self.residual_leiden_resolutions)) != len(self.residual_leiden_resolutions)
+        ):
+            raise ConfigurationError(
+                "differential_expression.age_trajectory.residual_leiden_resolutions "
+                "must be a non-empty list of unique positive numbers"
+            )
+        if (
+            not isinstance(self.residual_hdbscan_cluster_selection_method, str)
+            or self.residual_hdbscan_cluster_selection_method not in {"eom", "leaf"}
+        ):
+            raise ConfigurationError(
+                "differential_expression.age_trajectory."
+                "residual_hdbscan_cluster_selection_method must be 'eom' or 'leaf'"
             )
         if (
             not isinstance(self.umap_min_dist, (int, float))
@@ -301,9 +337,54 @@ def validate_configuration(
                 raise ConfigurationError(
                     "integration_benchmark unintegrated methods must use basis 'X_pca'"
                 )
+        elif method_type == "scanorama":
+            if method.get("batch_key") != "study" or method.get("basis") != "X_pca":
+                raise ConfigurationError(
+                    "integration_benchmark Scanorama methods must use study batches and basis 'X_pca'"
+                )
+            if method.get("adjusted_basis") != "X_scanorama":
+                raise ConfigurationError(
+                    "integration_benchmark Scanorama methods must use adjusted_basis 'X_scanorama'"
+                )
+        elif method_type == "bbknn":
+            if method.get("batch_key") != "study" or method.get("basis") != "X_pca":
+                raise ConfigurationError(
+                    "integration_benchmark BBKNN methods must use study batches and basis 'X_pca'"
+                )
+            if not isinstance(method.get("neighbors_within_batch"), int) or method[
+                "neighbors_within_batch"
+            ] < 1:
+                raise ConfigurationError(
+                    "integration_benchmark BBKNN neighbors_within_batch must be positive"
+                )
+        elif method_type == "scvi":
+            unintegrated_scvi = method.get("name") == "scvi_unintegrated"
+            expected_basis = "X_scvi_unintegrated" if unintegrated_scvi else "X_scvi"
+            if method.get("adjusted_basis") != expected_basis:
+                raise ConfigurationError(
+                    f"integration_benchmark scVI methods must use adjusted_basis {expected_basis!r}"
+                )
+            if unintegrated_scvi:
+                if method.get("batch_key") is not None or method.get("hvg_batch_key") != "study":
+                    raise ConfigurationError(
+                        "integration_benchmark unintegrated scVI must omit batch_key and use "
+                        "study-aware HVG selection"
+                    )
+            elif method.get("batch_key") != "study":
+                raise ConfigurationError(
+                    "integration_benchmark integrated scVI methods must use batch_key 'study'"
+                )
+            for setting in (
+                "n_top_genes", "hvg_chunksize", "n_latent", "max_epochs", "batch_size",
+            ):
+                value = method.get(setting)
+                if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                    raise ConfigurationError(
+                        f"integration_benchmark scVI {setting} must be a positive integer"
+                    )
         else:
             raise ConfigurationError(
-                "integration_benchmark method must be 'harmony' or 'none'"
+                "integration_benchmark method must be harmony, none, scanorama, bbknn, or scvi"
             )
     if harmony_methods != 1:
         raise ConfigurationError("integration_benchmark.methods must contain exactly one Harmony method")

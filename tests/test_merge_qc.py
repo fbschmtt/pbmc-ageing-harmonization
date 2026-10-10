@@ -16,8 +16,13 @@ def test_merge_qc_runner_uses_a_writable_temporary_matplotlib_cache(tmp_path, mo
 
     def record(command, **kwargs):
         calls.append((command, kwargs))
+        if "--execute" in command:
+            notebook = tmp_path / "output" / "harmonization_qc" / "merged" / "executed.ipynb"
+            notebook.write_text(
+                '{"cells": [], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}'
+            )
         if command[command.index("--to") + 1] == "html":
-            report = tmp_path / "output" / "qc" / "merged" / "report.html"
+            report = tmp_path / "output" / "harmonization_qc" / "merged" / "report.html"
             report.write_text(
                 '<nav><!-- REPORT_TOC_PLACEHOLDER --></nav>'
                 '<h2 id="merge-summary">Merge Summary</h2>'
@@ -28,12 +33,12 @@ def test_merge_qc_runner_uses_a_writable_temporary_matplotlib_cache(tmp_path, mo
         root=tmp_path,
         inputs=[pseudobulk],
         reports=[run_report],
-        output_dir=tmp_path / "output" / "qc" / "merged",
+        output_dir=tmp_path / "output" / "harmonization_qc" / "merged",
         template_path=template,
         studies_config_path=studies_config,
     )
 
-    assert html == tmp_path / "output" / "qc" / "merged" / "report.html"
+    assert html == tmp_path / "output" / "harmonization_qc" / "merged" / "report.html"
     assert len(calls) == 3
     matplotlib_cache = calls[0][1]["env"]["MPLCONFIGDIR"]
     assert matplotlib_cache.startswith("/tmp/pbmc-merge-qc-notebook-")

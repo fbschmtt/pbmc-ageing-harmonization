@@ -1,6 +1,6 @@
 process RENDER_STUDY_QC {
     tag { study_id }
-    publishDir "${params.outdir}/qc", mode: 'copy', overwrite: true
+    publishDir "${params.outdir}/harmonization_qc", mode: 'copy', overwrite: true
 
     input:
     tuple val(study_id), path(expression), path(run_report)
@@ -19,7 +19,7 @@ process RENDER_STUDY_QC {
 
 process RENDER_MERGE_QC {
     tag 'all merge outputs'
-    publishDir "${params.outdir}/qc", mode: 'copy', overwrite: true
+    publishDir "${params.outdir}/harmonization_qc", mode: 'copy', overwrite: true
 
     input:
     path merged_inputs

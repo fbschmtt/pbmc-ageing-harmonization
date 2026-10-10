@@ -140,7 +140,12 @@ def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None
     )
     assert age_bin_counts.eq(12).all()
     synthetic_metadata = first.uns["synthetic_test_data"]
-    assert synthetic_metadata["age_trajectory_settings"] == TRAJECTORY_SETTINGS.to_mapping()
+    stored_trajectory_settings = synthetic_metadata["age_trajectory_settings"].copy()
+    stored_trajectory_settings = {
+        key: value.tolist() if isinstance(value, np.ndarray) else value
+        for key, value in stored_trajectory_settings.items()
+    }
+    assert stored_trajectory_settings == TRAJECTORY_SETTINGS.to_mapping()
     assert synthetic_metadata["count_scale_factor"] == 5
     assert len(synthetic_metadata["expected_age_trajectory_profiles"]) == 5
     assert synthetic_metadata["marker_purposes"]["per_study_age_outside_intersection"] == {

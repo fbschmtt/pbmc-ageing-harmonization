@@ -42,6 +42,7 @@ from pbmc_pipeline.trajectory_analysis import (
     cluster_sample_residuals,
     cluster_trajectory_profiles,
     summarize_residual_cluster_markers,
+    summarize_residual_clustering,
     trajectory_merge_diagnostics,
 )
 
@@ -165,7 +166,7 @@ def load_residual_sample_clusters(de_dir, fit, settings):
     return annotations, pc_scores, n_components, residuals
 
 
-def plot_residual_cluster_markers(residuals, annotations):
+def plot_residual_cluster_markers(residuals, annotations, settings):
     """Show the residual UMAP clusters and their largest mean-residual contrasts."""
     display(Markdown("### Residual Cluster Markers"))
     coordinates = annotations.dropna(subset=["umap_1", "umap_2"]).copy()
@@ -174,7 +175,10 @@ def plot_residual_cluster_markers(residuals, annotations):
     else:
         cluster_counts = annotations["residual_cluster"].value_counts()
         coordinates["residual_cluster_label"] = coordinates["residual_cluster"].map(
-            lambda cluster: f"Cluster {int(cluster)} (n={cluster_counts[cluster]})"
+            lambda cluster: (
+                f"Noise (n={cluster_counts[cluster]})" if int(cluster) == -1
+                else f"Cluster {int(cluster)} (n={cluster_counts[cluster]})"
+            )
         )
         figure, axis = plt.subplots(figsize=(6.6, 4.8))
         sns.scatterplot(
@@ -191,7 +195,7 @@ def plot_residual_cluster_markers(residuals, annotations):
         plt.show()
 
     markers, _, reference_cluster = summarize_residual_cluster_markers(
-        residuals, annotations
+        residuals, annotations, settings.residual_marker_max_clusters
     )
     if markers.empty:
         display(Markdown(
@@ -201,7 +205,8 @@ def plot_residual_cluster_markers(residuals, annotations):
         return
 
     display(Markdown(
-        f"For each cluster, these are the genes with the largest lower and higher mean "
+        f"For up to the {settings.residual_marker_max_clusters} largest clusters, these are "
+        f"the genes with the largest lower and higher mean "
         f"Pearson residuals versus the largest cluster (cluster {reference_cluster}). "
         "The top 10 in each direction are shown. These are descriptive residual contrasts, "
         "not differential-expression significance tests."
@@ -276,6 +281,10 @@ def plot_residual_sample_umaps(table, *, minimum_umap_samples):
     optional_covariates = [
         covariate for covariate in ("bmi", "cmv") if covariate in coordinates
     ]
+    coordinates["residual_cluster"] = coordinates["residual_cluster"].map(
+        lambda cluster: "Noise" if pd.notna(cluster) and int(cluster) == -1
+        else f"Cluster {int(cluster)}" if pd.notna(cluster) else np.nan
+    )
     if optional_covariates or "residual_cluster" in coordinates:
         plot_covariate_grid(
             ["residual_cluster", *optional_covariates],
@@ -290,6 +299,100 @@ def plot_residual_sample_umaps(table, *, minimum_umap_samples):
         categorical_covariates={"sex", "study"},
         figsize=(18, 10.2),
     )
+
+
+def plot_residual_pca_and_pc_umaps(pc_scores, coordinates):
+    """Show residual PCA axes and their scores over the residual UMAP."""
+    if pc_scores is None or not {"PC1", "PC2", "residual_cluster"}.issubset(pc_scores):
+        display(Markdown("_Residual PCA scores are unavailable for these samples._"))
+        return
+    plot_data = coordinates.merge(
+        pc_scores[["sample_key", "residual_cluster", "PC1", "PC2"]],
+        on=["sample_key", "residual_cluster"],
+        how="inner",
+        validate="one_to_one",
+        suffixes=("", "_pc"),
+    ).dropna(subset=["PC1", "PC2"])
+    if plot_data.empty:
+        display(Markdown("_At least two residual PCs are needed for PCA plots._"))
+        return
+
+    figure, axes = plt.subplots(1, 3, figsize=(18, 5.2))
+    sns.scatterplot(
+        data=plot_data, x="PC1", y="PC2", hue="residual_cluster",
+        palette="tab20", s=42, alpha=0.85, linewidth=0, ax=axes[0],
+    )
+    axes[0].set_title("Residual PCA: PC1 vs. PC2")
+    axes[0].legend(title="Residual cluster", bbox_to_anchor=(1.02, 1))
+    for axis, component in zip(axes[1:], ("PC1", "PC2")):
+        values = plot_data.dropna(subset=["umap_1", "umap_2", component])
+        points = axis.scatter(
+            values["umap_1"], values["umap_2"], c=values[component],
+            cmap="viridis", s=42, alpha=0.85, linewidths=0,
+        )
+        axis.set_title(f"Residual UMAP colored by {component}")
+        axis.set_xlabel("UMAP 1")
+        axis.set_ylabel("UMAP 2")
+        figure.colorbar(points, ax=axis, label=f"{component} score")
+    figure.tight_layout()
+    display_collapsible_figure(figure, "Residual PCA and PC scores over UMAP")
+
+
+def plot_residual_alternative_clusterings(annotations, settings):
+    """Compare UMAP and PC-based residual cluster assignments."""
+    summary = summarize_residual_clustering(annotations, settings)
+    shown = summary[[
+        "method", "n_clusters", "n_assigned", "n_noise", "noise_fraction", "cluster_sizes",
+    ]].copy()
+    shown["noise_fraction"] = shown["noise_fraction"].map(
+        lambda value: f"{value:.1%}" if pd.notna(value) else "—"
+    )
+    display_collapsible_table(shown, "Residual clustering summary")
+
+    plot_summary = summary.loc[
+        summary["label_column"].isin([
+            "residual_cluster_kmeans",
+            "residual_cluster_hdbscan_umap",
+            "residual_cluster_hdbscan_pcs",
+        ])
+    ]
+    coordinates = annotations.dropna(subset=["umap_1", "umap_2"])
+    n_rows = max(1, (len(plot_summary) + 1) // 2)
+    figure, axes = plt.subplots(n_rows, 2, figsize=(14, 5.5 * n_rows), squeeze=False)
+    for axis, row in zip(axes.flat, plot_summary.to_dict("records")):
+        column = row["label_column"]
+        if coordinates.empty or column not in coordinates:
+            axis.text(0.5, 0.5, "UMAP or cluster labels unavailable", ha="center", va="center")
+            axis.set_axis_off()
+            continue
+        values = coordinates.dropna(subset=[column]).copy()
+        if values.empty:
+            axis.text(0.5, 0.5, "Cluster labels unavailable", ha="center", va="center")
+            axis.set_axis_off()
+            continue
+        labels = pd.to_numeric(values[column], errors="coerce")
+        noise = labels.eq(-1)
+        if noise.any():
+            axis.scatter(
+                values.loc[noise, "umap_1"], values.loc[noise, "umap_2"],
+                color="#8a8a8a", s=35, alpha=0.75, linewidths=0,
+            )
+        clusters = sorted(labels.loc[~noise].dropna().astype(int).unique())
+        for index, cluster in enumerate(clusters):
+            selected = labels.eq(cluster)
+            axis.scatter(
+                values.loc[selected, "umap_1"], values.loc[selected, "umap_2"],
+                color=plt.get_cmap("tab20")(index % 20), s=35, alpha=0.82, linewidths=0,
+            )
+        axis.set_title(
+            f"{row['method']}\n{row['n_clusters']} clusters; {row['n_noise']} noise"
+        )
+        axis.set_xlabel("UMAP 1")
+        axis.set_ylabel("UMAP 2")
+    for axis in axes.flat[len(plot_summary):]:
+        axis.set_axis_off()
+    figure.tight_layout()
+    display_collapsible_figure(figure, "Residual cluster method comparison")
 
 
 def natural_sort_key(value):
@@ -912,6 +1015,30 @@ def plot_pca_study_technology_and_introns(adata):
     figure.tight_layout(rect=(0, 0, 0.8, 0.96))
     display_collapsible_figure(figure, "Show PCA scores by study and protocol")
 
+
+def plot_pca_scores_on_umap(adata):
+    """Show the first four native PC scores over the Harmony-derived UMAP."""
+    if "X_umap" not in adata.obsm or adata.obsm["X_pca"].shape[1] < 4:
+        display(Markdown("_PC scores on UMAP require UMAP coordinates and at least four PCs._"))
+        return
+    coordinates = np.asarray(adata.obsm["X_umap"])
+    scores = np.asarray(adata.obsm["X_pca"])
+    variance_ratio = np.asarray(adata.uns["pca"]["variance_ratio"])
+    figure, axes = plt.subplots(2, 2, figsize=(12, 10))
+    for component, axis in enumerate(axes.flat[:4]):
+        points = axis.scatter(
+            coordinates[:, 0], coordinates[:, 1], c=scores[:, component],
+            cmap="viridis", s=max(5, 80_000 / adata.n_obs), alpha=0.8,
+            linewidths=0, rasterized=True,
+        )
+        axis.set_title(f"PC {component + 1} ({variance_ratio[component]:.1%} variance)")
+        axis.set_xlabel("UMAP 1")
+        axis.set_ylabel("UMAP 2")
+        figure.colorbar(points, ax=axis, label=f"PC {component + 1} score")
+    figure.suptitle("Native PCA scores over the Harmony-derived UMAP")
+    figure.tight_layout()
+    display_collapsible_figure(figure, "Show PC 1–4 scores on UMAP")
+
 # %% [markdown]
 # <a id="sample-coverage"></a>
 # ## Sample Coverage Among Retained Samples
@@ -1240,8 +1367,9 @@ if report["status"] == "complete":
 if report["status"] == "complete":
     variance_ratio = np.asarray(adata.uns["pca"]["variance_ratio"])
     figure, axis = plt.subplots(figsize=(9, 4.5))
-    components = np.arange(1, len(variance_ratio) + 1)
-    axis.bar(components, variance_ratio * 100, color="#4c72b0")
+    n_components_to_plot = min(20, len(variance_ratio))
+    components = np.arange(1, n_components_to_plot + 1)
+    axis.bar(components, variance_ratio[:n_components_to_plot] * 100, color="#4c72b0")
     axis.set_xlabel("Principal component")
     axis.set_ylabel("Variance explained (%)")
     axis.grid(True, alpha=0.25)
@@ -1251,6 +1379,7 @@ if report["status"] == "complete":
 # %%
 if report["status"] == "complete":
     plot_pca_study_technology_and_introns(adata)
+    plot_pca_scores_on_umap(adata)
 
 # %%
 if report["status"] == "complete":
@@ -1694,6 +1823,13 @@ if de_dir:
                     hue_norm=(0, max_associated_studies), legend="brief",
                     s=16, alpha=0.7, linewidth=0, ax=axis,
                 )
+                # Fix the plotting window from the merged results before adding
+                # per-study markers, so study-specific extremes cannot compress
+                # the merged volcano cloud.
+                merged_xlim = axis.get_xlim()
+                merged_ylim = axis.get_ylim()
+                axis.set_xlim(merged_xlim)
+                axis.set_ylim(merged_ylim)
                 study_count_legend = axis.legend(
                     title="Per-study FDR-significant\nassociations", fontsize=8,
                     bbox_to_anchor=(1.02, 1), loc="upper left", borderaxespad=0,
@@ -1705,18 +1841,46 @@ if de_dir:
                     ))
                     for _, marker in nonintersection_age_markers.iterrows():
                         study = str(marker["study"])
-                        axis.scatter(
-                            marker["log2FoldChange"], marker["minus_log10_padj"],
-                            marker="D", s=72, facecolors="none",
-                            edgecolors=study_colors[study], linewidths=1.8,
-                            label=study, zorder=4,
-                        )
-                        axis.annotate(
-                            f"{marker['gene']} ({study})",
-                            (marker["log2FoldChange"], marker["minus_log10_padj"]),
-                            xytext=(4, -10), textcoords="offset points", fontsize=7,
-                            color=study_colors[study],
-                        )
+                        effect = float(marker["log2FoldChange"])
+                        significance = float(marker["minus_log10_padj"])
+                        in_x = merged_xlim[0] <= effect <= merged_xlim[1]
+                        in_y = merged_ylim[0] <= significance <= merged_ylim[1]
+                        if in_x and in_y:
+                            axis.scatter(
+                                effect, significance, marker="D", s=72,
+                                facecolors="none", edgecolors=study_colors[study],
+                                linewidths=1.8, label=study, zorder=4,
+                            )
+                            axis.annotate(
+                                f"{marker['gene']} ({study})",
+                                (effect, significance), xytext=(4, -10),
+                                textcoords="offset points", fontsize=7,
+                                color=study_colors[study],
+                            )
+                        else:
+                            x_fraction = np.clip(
+                                (effect - merged_xlim[0]) / (merged_xlim[1] - merged_xlim[0]),
+                                0, 1,
+                            )
+                            y_fraction = np.clip(
+                                (significance - merged_ylim[0]) / (merged_ylim[1] - merged_ylim[0]),
+                                0, 1,
+                            )
+                            dx = np.sign(effect - np.clip(effect, *merged_xlim))
+                            dy = np.sign(significance - np.clip(significance, *merged_ylim))
+                            length = np.hypot(dx, dy) or 1
+                            inset = 0.035
+                            axis.annotate(
+                                "", xy=(x_fraction, y_fraction),
+                                xytext=(
+                                    np.clip(x_fraction - inset * dx / length, 0.01, 0.99),
+                                    np.clip(y_fraction - inset * dy / length, 0.01, 0.99),
+                                ), xycoords="axes fraction",
+                                arrowprops={
+                                    "arrowstyle": "-|>", "color": study_colors[study],
+                                    "lw": 1.5, "mutation_scale": 9,
+                                }, zorder=5,
+                            )
                     axis.legend(
                         title="Top FDR-significant\nnon-shared age gene",
                         fontsize=8, bbox_to_anchor=(1.02, 0.46),
@@ -2002,12 +2166,12 @@ if de_dir:
             ))
             if de_dir:
                 cross_type_report = (
-                    Path(de_dir).resolve().parent / "trajectory_analysis" / "report.html"
+                    Path(de_dir).resolve().parent / "combined_analysis" / "report.html"
                 )
                 if cross_type_report.is_file():
                     display(Markdown(
                         "See the [cross-cell-type trajectory report](../../differential_expression/"
-                        "trajectory_analysis/report.html) for "
+                        "combined_analysis/report.html) for "
                         "shared-pattern clusters and gene recurrence across cell types."
                     ))
             width = trajectory_settings.bin_width_years
@@ -2246,7 +2410,7 @@ if de_dir:
             "shown below. Colors overlay sample covariates and residual-cluster labels on "
             "the same UMAP coordinates."
         ))
-        display(Markdown("### Residual UMAP Covariate Overlays"))
+        display(Markdown("### Residual UMAP and PCA plots"))
         if de_dir and age_trajectory_fit:
             (
                 residual_clusters, residual_pc_scores, residual_pcs, residual_matrix,
@@ -2267,16 +2431,32 @@ if de_dir:
             )
             display(Markdown(
                 f"The embedding includes **{len(residual_clusters)} samples** and "
-                f"**{residual_pc_scores.shape[1] - 1:,} genes**, with {residual_pcs} "
-                "principal components retained. When enough samples are available, "
-                "exploratory K-means cluster labels are selected by silhouette score on "
-                "the two-dimensional UMAP."
+                f"**{residual_matrix.shape[1]:,} genes**, with {residual_pcs} "
+                "principal components retained. The primary clusters use Leiden on a "
+                f"{trajectory_settings.residual_leiden_neighbors}-neighbor graph built from "
+                f"up to {trajectory_settings.residual_pc_hdbscan_components} PCs. The "
+                f"selected resolution targets at least "
+                f"{trajectory_settings.residual_leiden_min_clusters} clusters."
             ))
             plot_residual_sample_umaps(
                 residual_clusters,
                 minimum_umap_samples=trajectory_settings.minimum_umap_trajectories,
             )
-            plot_residual_cluster_markers(residual_matrix, residual_clusters)
+            plot_residual_pca_and_pc_umaps(residual_pc_scores, residual_clusters)
+            display(Markdown("### Alternative clusterings"))
+            display(Markdown(
+                "The primary Leiden resolution is selected from the configured candidates "
+                f"{trajectory_settings.residual_leiden_resolutions}: choose the lowest that "
+                f"reaches {trajectory_settings.residual_leiden_min_clusters} clusters, or "
+                "the candidate with the most clusters if none reach the target. The table "
+                "shows candidate cluster counts; plots compare K-means and one configured "
+                "HDBSCAN result on UMAP and PCs. Marker contrasts cover at most the "
+                f"{trajectory_settings.residual_marker_max_clusters} largest clusters."
+            ))
+            plot_residual_alternative_clusterings(residual_clusters, trajectory_settings)
+            plot_residual_cluster_markers(
+                residual_matrix, residual_clusters, trajectory_settings
+            )
             display(Markdown(
                 "Download the [residual cluster assignments](residual_sample_clusters.csv) "
                 "or [sample PCA scores](residual_sample_pc_scores.csv)."

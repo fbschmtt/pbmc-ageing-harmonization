@@ -74,12 +74,12 @@ process RENDER_CROSS_CELL_TYPE_TRAJECTORY_REPORT {
     path report_template
 
     output:
-    path 'trajectory_analysis', emit: report
+    path 'combined_analysis', emit: report
 
     script:
     """
     pbmc-trajectory-report --differential-expression-dir ${differential_expression} \
-      --pseudobulk-input ${pseudobulk_input} --output-dir trajectory_analysis --config ${pipeline_config} \
+      --pseudobulk-input ${pseudobulk_input} --output-dir combined_analysis --config ${pipeline_config} \
       --template ${report_template} --project-root .
     """
 }

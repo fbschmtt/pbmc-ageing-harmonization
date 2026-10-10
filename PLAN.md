@@ -89,8 +89,12 @@ whole-dataset single-cell merge.
   merge QC notebook into the integration-benchmark report.
 - [x] Include the integration benchmark and report artifact check in the
   ordered test workflow after the fresh core merge.
-- [ ] Extend the integration benchmark beyond Harmony and unintegrated PCA once
-  comparison methods and quantitative acceptance criteria are specified.
+- [x] Extend the optional integration benchmark with Scanorama, BBKNN, and
+  scVI with and without the study covariate. Keep each method's graph for UMAP
+  and CellTypist majority voting, and publish a thin artifact with method
+  representations, UMAPs, graphs, and diagnostic labels. The report compares
+  graph overlap and per-study AIFI-L2 concordance without applying acceptance
+  thresholds.
 - [ ] Add one shared cross-study design report, rather than duplicating
   donor-level covariate/confounding plots in every AIFI-L2 report. It should
   cover age, sex, BMI, and CMV support and correlation across studies, plus
@@ -134,15 +138,21 @@ whole-dataset single-cell merge.
 - [x] Add the all-study 10-year age-bin trajectory fit, seven-bin support
   requirement, per-type hierarchical clusters and UMAP, and shared-bin
   cross-cell-type trajectory report with recurrence and pattern summaries.
+- [x] Add focused gene-by-cell-type profiling with a fresh PyDESeq2 fit,
+  naive normalization and linear, age-bin, study-specific slope, and mixed
+  random-slope models; include model-specific residual diagnostics and a
+  synthetic report smoke target. Add a workflow profiling the top merged
+  age-DE genes per cell type.
 
 ## Current implementation state
 
 - The ignored `.venv` supplies local checks; revision-tagged Python and R
   images supply workflows.
-- The ordered test workflow runs a fresh real-fixture core merge, integration
-  benchmark and report check, synthetic positive DE fit, and cell-type reports.
-  Fixtures live under ignored `test_data/`; Nextflow intermediates live in
-  ignored `work/`.
+- `make run-all-test` runs a fresh real-fixture core merge, integration
+  benchmark and report check, synthetic positive DE fit, two top merged age-DE
+  profiles per cell type, the focused synthetic gene-profile smoke test, and
+  cell-type reports. Fixtures live under ignored `test_data/`; Nextflow
+  intermediates live in ignored `work/`.
 - The core single-cell merge preserves only raw counts, canonical metadata, and
   harmonization-stage QC fields. Global normalization, Harmony, graphs, UMAP,
   and benchmark labels are computed only by the optional integration workflow.
@@ -162,6 +172,8 @@ make workflow-lint
 make docs-check
 make run-test STUDIES=wang25
 make run-de-synthetic-test
+make profile-top-age-genes-test
+make run-gene-profile-synthetic-test
 make run-all-test
 make verify
 make run STUDIES=all MERGE_SINGLE_CELL=true

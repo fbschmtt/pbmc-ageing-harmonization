@@ -12,23 +12,29 @@
 #     name: python3
 # ---
 
-# %% [markdown]
-# # Study harmonization QC report
-#
-# This notebook is executed automatically. It summarizes the harmonized output without modifying it.
-
 # %%
 import json
 import os
+import warnings
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import scanpy as sc
 import seaborn as sns
-from IPython.display import Markdown, display
+from IPython.display import HTML, Markdown, display
 from scipy import sparse
+
+from pbmc_pipeline.report_theme import render_report_header
+
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message=r"Importing read_.* from `anndata` is deprecated",
+        category=FutureWarning,
+        module=r"anndata\.utils",
+    )
+    import scanpy as sc
 
 sns.set_theme(style="whitegrid")
 sc.settings.verbosity = 1
@@ -36,7 +42,17 @@ input_path = Path(os.environ["QC_INPUT_H5AD"])
 run_report_path = Path(os.environ["QC_RUN_REPORT"])
 study = os.environ["QC_STUDY"]
 run_report = json.loads(run_report_path.read_text())
-display(Markdown(f"## {study}\n\nInput: `{input_path}`"))
+display(HTML(render_report_header(
+    title=study,
+    eyebrow="PBMC ageing · per-study QC",
+    subtitle="Harmonized single-cell metadata, labels, and expression diagnostics.",
+    metrics=[
+        ("Status", str(run_report.get("status", "unknown"))),
+        ("Cells", f"{run_report.get('n_cells', 0):,}"),
+        ("Genes", f"{run_report.get('n_genes', 0):,}"),
+        ("Excluded input cells", f"{run_report.get('excluded_input_cells', 0):,}"),
+    ],
+)))
 
 # %% [markdown]
 # ## Run provenance and dimensions

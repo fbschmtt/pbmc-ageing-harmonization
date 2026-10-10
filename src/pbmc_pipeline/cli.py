@@ -71,7 +71,7 @@ def main() -> None:
                 root=root,
                 input_path=output_path,
                 run_report_path=report_path,
-                output_dir=root / "output" / "qc" / f"{study_id}{suffix}",
+                           output_dir=root / "output" / "harmonization_qc" / f"{study_id}{suffix}",
                 study=study_id,
             )
             print(json.dumps({"study": study_id, "qc_html": str(html)}))
