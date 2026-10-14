@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import warnings
 from pathlib import Path
 
@@ -55,14 +57,146 @@ def _residual_sd(residuals) -> float | None:
     return float(np.std(residuals, ddof=1)) if len(residuals) > 1 else None
 
 
+def _finite_or_none(value) -> float | None:
+    """Convert finite estimates to JSON-safe floats."""
+    number = float(value)
+    return number if np.isfinite(number) else None
+
+
+def _exploratory_infant_adult_contrast(
+    metadata: pd.DataFrame,
+    design: str,
+    observed_age_bins: list[str],
+    fit,
+    *,
+    bin_width: int,
+) -> dict | None:
+    """Contrast the age-bin groups centered near ages 5 and 25, if supported."""
+    age_5_start = (5 // bin_width) * bin_width
+    age_25_start = (25 // bin_width) * bin_width
+    if age_5_start == age_25_start:
+        return None
+    age_5_bin = f"{age_5_start}-{age_5_start + bin_width}"
+    age_25_bin = f"{age_25_start}-{age_25_start + bin_width}"
+    if age_5_bin not in observed_age_bins or age_25_bin not in observed_age_bins:
+        return None
+
+    from formulaic_contrasts import FormulaicContrasts
+
+    reference = metadata.iloc[[0]].copy()
+    design_rows = []
+    for age_bin in (age_5_bin, age_25_bin):
+        row = reference.copy()
+        row["age_bin"] = pd.Categorical(
+            [age_bin], categories=observed_age_bins, ordered=True,
+        )
+        design_rows.append(
+            FormulaicContrasts(row, design).design_matrix.to_numpy(dtype=float)[0]
+        )
+    contrast = design_rows[1] - design_rows[0]
+    test = fit.t_test(contrast[None, :])
+    confidence_interval = np.asarray(test.conf_int(), dtype=float)[0]
+    scale = float(np.log(2.0))
+    return {
+        "comparison": f"{age_25_bin} versus {age_5_bin} (approximate ages 25 versus 5)",
+        "age_5_bin": age_5_bin,
+        "age_25_bin": age_25_bin,
+        "age_bin_effect_log2_count_plus_1": float(np.asarray(test.effect).reshape(-1)[0]) / scale,
+        "age_bin_standard_error_log2_count_plus_1": float(np.asarray(test.sd).reshape(-1)[0]) / scale,
+        "age_bin_ci_lower_log2_count_plus_1": float(confidence_interval[0]) / scale,
+        "age_bin_ci_upper_log2_count_plus_1": float(confidence_interval[1]) / scale,
+        "age_bin_p_value": float(np.asarray(test.pvalue).reshape(-1)[0]),
+    }
+
+
+def _load_or_fit_deseq2_model(
+    *, input_path: Path, config_path: Path, cache_parent: Path, cell_type: str,
+    genes: pd.Index, counts_df: pd.DataFrame, metadata: pd.DataFrame,
+    design_matrix: pd.DataFrame, alpha: float, cpus: int,
+):
+    """Fit once per exact cell-type input/design and reuse serialized model arrays."""
+    import anndata as ad
+    from pydeseq2.dds import DeseqDataSet
+    from pydeseq2.ds import DeseqStats
+
+    digest = hashlib.sha256()
+    digest.update(str(input_path.resolve()).encode())
+    for path in (input_path, config_path):
+        stat = path.stat()
+        digest.update(f"{stat.st_size}:{stat.st_mtime_ns}".encode())
+    digest.update(cell_type.encode())
+    digest.update(design_matrix.to_csv(index=True).encode())
+    digest.update("\0".join(map(str, genes)).encode())
+    digest.update("\0".join(map(str, metadata.index)).encode())
+    digest.update(counts_df.to_numpy(dtype=np.int64, copy=False).tobytes())
+    try:
+        from importlib.metadata import version
+
+        digest.update(version("pydeseq2").encode())
+    except Exception:  # noqa: BLE001 - cache misses safely if package metadata is unavailable
+        digest.update(b"pydeseq2-version-unknown")
+    cache_key = digest.hexdigest()
+    cache_dir = cache_parent / cache_key
+    model_path = cache_dir / "fitted_model.h5ad"
+    results_path = cache_dir / "age_results.csv"
+    manifest_path = cache_dir / "manifest.json"
+
+    if all(path.is_file() for path in (model_path, results_path, manifest_path)):
+        manifest = json.loads(manifest_path.read_text())
+        if manifest.get("cache_key") == cache_key:
+            return ad.read_h5ad(model_path), pd.read_csv(
+                results_path, index_col="gene"
+            ), cache_key, True
+
+    dds = DeseqDataSet(
+        counts=counts_df,
+        metadata=metadata,
+        design=design_matrix,
+        n_cpus=cpus,
+        quiet=True,
+    )
+    dds.deseq2()
+    if "age" not in dds.obsm["design_matrix"].columns:
+        raise ValueError("The configured merged model did not produce an age coefficient")
+    age_contrast = np.zeros(dds.obsm["design_matrix"].shape[1], dtype=float)
+    age_contrast[list(dds.obsm["design_matrix"].columns).index("age")] = 1.0
+    age_stats = DeseqStats(
+        dds, contrast=age_contrast, alpha=alpha, n_cpus=cpus, quiet=True,
+    )
+    age_stats.summary()
+    age_results = age_stats.results_df.copy()
+    age_results.index = age_results.index.astype(str)
+    age_results.index.name = "gene"
+    dds.vst()
+
+    cache_parent.mkdir(parents=True, exist_ok=True)
+    temporary_dir = cache_parent / f".{cache_key}.tmp-{os.getpid()}"
+    temporary_dir.mkdir(parents=True, exist_ok=True)
+    dds.write_h5ad(temporary_dir / "fitted_model.h5ad")
+    age_results.to_csv(temporary_dir / "age_results.csv", index_label="gene")
+    (temporary_dir / "manifest.json").write_text(json.dumps({
+        "cache_key": cache_key,
+        "cell_type": cell_type,
+        "n_samples": len(metadata),
+        "n_genes": len(genes),
+        "design": [str(column) for column in design_matrix.columns],
+    }, indent=2) + "\n")
+    try:
+        temporary_dir.rename(cache_dir)
+    except FileExistsError:
+        # Another worker completed the same deterministic fit first.
+        for path in temporary_dir.iterdir():
+            path.unlink()
+        temporary_dir.rmdir()
+    return dds, age_results, cache_key, False
+
+
 def _fit_profile(
     *, input_path: Path, config_path: Path, cell_type: str, gene: str,
     output_dir: Path, cpus: int,
 ) -> Path:
     import statsmodels.api as sm
     from formulaic_contrasts import FormulaicContrasts
-    from pydeseq2.dds import DeseqDataSet
-    from pydeseq2.ds import DeseqStats
 
     pipeline = read_json(config_path)
     fit_diagnostics_rows = []
@@ -77,6 +211,7 @@ def _fit_profile(
     if gene not in adata.var_names:
         raise ValueError(f"Gene {gene!r} is not present in {input_path}")
 
+    profile_output_root = output_dir
     type_positions = np.flatnonzero(labels.astype(str).to_numpy() == cell_type)
     output_dir = output_dir / slugify(cell_type) / slugify(gene)
     type_adata = adata[type_positions, :]
@@ -296,6 +431,66 @@ def _fit_profile(
     age_bin_log_expression = np.log(age_bin_normalized_counts + 1.0)
     age_bin_fit = sm.OLS(age_bin_log_expression, age_bin_numeric_design).fit()
     age_bin_residuals = np.asarray(age_bin_fit.resid, dtype=float)
+    # Exploratory gene-to-gene residual correlations under the categorical
+    # age-bin model. Refit the same design to each gene on the same normalized
+    # log-count scale, then compare residuals across the included samples.
+    age_bin_log_matrix = np.log(
+        age_bin_counts.astype(float) / age_bin_size_factors[:, None] + 1.0
+    )
+    age_bin_coefficients = np.linalg.lstsq(
+        age_bin_numeric_design, age_bin_log_matrix, rcond=None
+    )[0]
+    age_bin_residual_matrix = (
+        age_bin_log_matrix - age_bin_numeric_design @ age_bin_coefficients
+    )
+    age_bin_target_position = age_bin_genes.get_loc(gene)
+    centered_bin_residuals = age_bin_residual_matrix - age_bin_residual_matrix.mean(
+        axis=0
+    )
+    centered_bin_target = centered_bin_residuals[:, age_bin_target_position]
+    bin_correlation_denominators = np.sqrt(
+        np.sum(np.square(centered_bin_target))
+        * np.sum(np.square(centered_bin_residuals), axis=0)
+    )
+    age_bin_correlations = np.full(len(age_bin_genes), np.nan, dtype=float)
+    np.divide(
+        centered_bin_target @ centered_bin_residuals,
+        bin_correlation_denominators,
+        out=age_bin_correlations,
+        where=bin_correlation_denominators > 0,
+    )
+    age_bin_correlations[age_bin_target_position] = np.nan
+    age_bin_correlation_table = pd.DataFrame({
+        "gene": age_bin_genes.astype(str),
+        "pearson_r": age_bin_correlations,
+    }).dropna(subset=["pearson_r"])
+    age_bin_top_positive = age_bin_correlation_table.loc[
+        age_bin_correlation_table["pearson_r"] > 0
+    ].nlargest(5, "pearson_r")
+    age_bin_top_negative = age_bin_correlation_table.loc[
+        age_bin_correlation_table["pearson_r"] < 0
+    ].nsmallest(5, "pearson_r")
+    age_bin_top_correlations = pd.concat(
+        [age_bin_top_positive, age_bin_top_negative], ignore_index=True
+    )
+    age_bin_top_correlations["correlation_direction"] = np.where(
+        age_bin_top_correlations["pearson_r"] > 0, "positive", "negative"
+    )
+    age_bin_correlated_residuals = []
+    for correlated in age_bin_top_correlations.itertuples(index=False):
+        correlated_position = age_bin_genes.get_loc(correlated.gene)
+        rows = age_bin_model_metadata.copy()
+        rows.insert(0, "pseudobulk_id", rows.index.astype(str))
+        rows["target_gene"] = gene
+        rows["target_gene_residual"] = age_bin_residual_matrix[:, age_bin_target_position]
+        rows["correlated_gene"] = correlated.gene
+        rows["correlated_gene_residual"] = age_bin_residual_matrix[:, correlated_position]
+        rows["pearson_r"] = correlated.pearson_r
+        age_bin_correlated_residuals.append(rows)
+    age_bin_correlated_residuals = (
+        pd.concat(age_bin_correlated_residuals, ignore_index=True)
+        if age_bin_correlated_residuals else pd.DataFrame()
+    )
     fit_diagnostics_rows.append({
         "model": "Naive age-bin model",
         "n_samples": len(age_bin_log_expression),
@@ -484,11 +679,28 @@ def _fit_profile(
     mixed_statistics = mixed_fit.tvalues.loc[mixed_fixed.index].copy()
     mixed_p_values = mixed_fit.pvalues.loc[mixed_fixed.index].copy()
     mixed_uncertainty_note = "MixedLM Wald intervals"
+    mixed_prediction_model = mixed_fit
     random_slope_variance = float(mixed_fit.cov_re.iloc[0, 0])
-    if random_slope_variance <= 1e-10 or not np.isfinite(mixed_standard_errors).all():
+    if random_slope_variance <= 1e-10:
         # At a zero-variance boundary MixedLM's Hessian can be singular even
         # though the fixed-effect estimates are identifiable. Use the
-        # equivalent fixed-effects OLS covariance for those mean parameters.
+        # equivalent fixed-effects OLS fit for estimates, uncertainty, and
+        # predictions so values from the two fits are not mixed together.
+        boundary_fixed_fit = smf.ols(
+            mixed_formula, data=mixed_model_metadata,
+        ).fit()
+        mixed_fixed = boundary_fixed_fit.params.loc[mixed_fixed.index]
+        mixed_standard_errors = boundary_fixed_fit.bse.loc[mixed_fixed.index]
+        mixed_statistics = boundary_fixed_fit.tvalues.loc[mixed_fixed.index]
+        mixed_p_values = boundary_fixed_fit.pvalues.loc[mixed_fixed.index]
+        mixed_confidence = boundary_fixed_fit.conf_int().loc[mixed_fixed.index]
+        mixed_prediction_model = boundary_fixed_fit
+        mixed_uncertainty_note = (
+            "Fixed-effects OLS because the random-slope variance is at its boundary"
+        )
+    elif not np.isfinite(mixed_standard_errors).all():
+        # Preserve the converged mixed-model estimates and random effects;
+        # use fixed-effects OLS only to provide finite uncertainty estimates.
         boundary_fixed_fit = smf.ols(
             mixed_formula, data=mixed_model_metadata,
         ).fit()
@@ -497,7 +709,7 @@ def _fit_profile(
         mixed_p_values = boundary_fixed_fit.pvalues.loc[mixed_fixed.index]
         mixed_confidence = boundary_fixed_fit.conf_int().loc[mixed_fixed.index]
         mixed_uncertainty_note = (
-            "Fixed-effect OLS uncertainty because the random-slope variance is at its boundary"
+            "Fixed-effects OLS uncertainty because mixed-model uncertainty was not finite"
         )
     mixed_model_result = pd.DataFrame({
         "term": mixed_fixed.index.astype(str),
@@ -547,7 +759,7 @@ def _fit_profile(
                 line_metadata[term] = float(mixed_model_metadata[term].mean())
             else:
                 line_metadata[term] = mixed_model_metadata[term].iloc[0]
-        fixed_prediction = np.asarray(mixed_fit.predict(line_metadata), dtype=float)
+        fixed_prediction = np.asarray(mixed_prediction_model.predict(line_metadata), dtype=float)
         mixed_slope_lines.append(pd.DataFrame({
             "study": study,
             "age": age_grid,
@@ -556,7 +768,7 @@ def _fit_profile(
     mixed_study_slopes = pd.DataFrame(mixed_slope_rows)
     mixed_study_predictions = pd.concat(mixed_slope_lines, ignore_index=True)
     mixed_fixed_sample_fitted = np.asarray(
-        mixed_fit.predict(mixed_model_metadata), dtype=float,
+        mixed_prediction_model.predict(mixed_model_metadata), dtype=float,
     )
     mixed_sample_slope_deviation = mixed_model_metadata["study"].astype(str).map(
         random_slope_deviations,
@@ -600,22 +812,49 @@ def _fit_profile(
     }
 
     counts_df = pd.DataFrame(counts, index=metadata.index, columns=fit_genes)
-    dds = DeseqDataSet(
-        counts=counts_df, metadata=model_metadata, design=design_matrix,
-        n_cpus=cpus, quiet=True,
+    dds, age_results, model_cache_key, model_cache_reused = _load_or_fit_deseq2_model(
+        input_path=input_path,
+        config_path=config_path,
+        cache_parent=profile_output_root / slugify(cell_type) / ".model_fit_cache",
+        cell_type=cell_type,
+        genes=fit_genes,
+        counts_df=counts_df,
+        metadata=model_metadata,
+        design_matrix=design_matrix,
+        alpha=float(spec["alpha"]),
+        cpus=cpus,
     )
-    dds.deseq2()
-    fitted_design = dds.obsm["design_matrix"]
-    if "age" not in fitted_design.columns:
-        raise ValueError("The configured merged model did not produce an age coefficient")
-    age_contrast = np.zeros(fitted_design.shape[1], dtype=float)
-    age_contrast[list(fitted_design.columns).index("age")] = 1.0
-    age_stats = DeseqStats(
-        dds, contrast=age_contrast, alpha=float(spec["alpha"]),
-        n_cpus=cpus, quiet=True,
+    gene_result = age_results.loc[[gene]].reset_index(names="gene")
+    exploratory_age_comparison = _exploratory_infant_adult_contrast(
+        age_bin_model_metadata,
+        age_bin_design,
+        observed_age_bins,
+        age_bin_fit,
+        bin_width=bin_width,
     )
-    age_stats.summary()
-    gene_result = age_stats.results_df.loc[[gene]].reset_index(names="gene")
+    if exploratory_age_comparison is not None:
+        adult_age_log2_fold_change = _finite_or_none(
+            gene_result["log2FoldChange"].iloc[0]
+        )
+        exploratory_age_comparison.update({
+            "adult_age_log2_fold_change_per_year": adult_age_log2_fold_change,
+            "adult_age_log2_fold_change_20_year_projection": (
+                adult_age_log2_fold_change * 20.0
+                if adult_age_log2_fold_change is not None else None
+            ),
+            "adult_age_p_value": _finite_or_none(gene_result["pvalue"].iloc[0]),
+            "adult_age_adjusted_p_value": _finite_or_none(gene_result["padj"].iloc[0]),
+        })
+    age_result_columns = [
+        column for column in ("log2FoldChange", "pvalue", "padj")
+        if column in age_results.columns
+    ]
+    age_result_by_gene = age_results[age_result_columns].copy()
+    age_result_by_gene.index = age_result_by_gene.index.astype(str)
+    age_result_by_gene.index.name = "gene"
+    age_bin_top_correlations = age_bin_top_correlations.merge(
+        age_result_by_gene.reset_index(), on="gene", how="left", validate="one_to_one"
+    )
 
     # Capture final-model diagnostics before adding the VST layer for downstream use.
     variance = dds.var.copy()
@@ -633,8 +872,8 @@ def _fit_profile(
         "n_samples": len(gene_pearson_residuals),
         "residual_sd": _residual_sd(gene_pearson_residuals),
         "residual_sd_scale": "Pearson residuals",
-        "r_squared": _in_sample_r_squared(counts[:, gene_position], gene_mean),
-        "r_squared_label": "Raw-count in-sample R²",
+        "r_squared": np.nan,
+        "r_squared_label": "Not reported for negative-binomial GLM",
         "fixed_effects_r_squared": np.nan,
     })
     all_dispersions = pd.to_numeric(
@@ -675,7 +914,16 @@ def _fit_profile(
     correlation_table = correlation_table.sort_values(
         "absolute_pearson_r", ascending=False,
     ).reset_index(drop=True)
-    top_correlated = correlation_table.head(4)
+    top_positive = correlation_table.loc[correlation_table["pearson_r"] > 0].nlargest(
+        5, "pearson_r"
+    )
+    top_negative = correlation_table.loc[correlation_table["pearson_r"] < 0].nsmallest(
+        5, "pearson_r"
+    )
+    top_correlated = pd.concat([top_positive, top_negative], ignore_index=True)
+    top_correlated["correlation_direction"] = np.where(
+        top_correlated["pearson_r"] > 0, "positive", "negative"
+    )
     top_residual_tables = []
     for correlated in top_correlated.itertuples(index=False):
         correlated_position = residual_gene_names.get_loc(correlated.gene)
@@ -692,13 +940,14 @@ def _fit_profile(
         pd.concat(top_residual_tables, ignore_index=True)
         if top_residual_tables else pd.DataFrame()
     )
-    dds.vst()
     normalized = np.asarray(dds.layers["normed_counts"])
     vst_counts = np.asarray(dds.layers["vst_counts"])
     gene_samples = model_metadata.copy()
     gene_samples.insert(0, "pseudobulk_id", gene_samples.index.astype(str))
     gene_samples["raw_count"] = counts[:, gene_position]
     gene_samples["fitted_mean"] = gene_mean
+    gene_samples["size_factor"] = np.asarray(dds.obs["size_factors"], dtype=float)
+    gene_samples["fitted_normalized_mean"] = gene_mean / gene_samples["size_factor"]
     gene_samples["pearson_residual"] = gene_pearson_residuals
     gene_samples["normalized_count"] = normalized[:, gene_position]
     gene_samples["vst_count"] = vst_counts[:, gene_position]
@@ -713,10 +962,32 @@ def _fit_profile(
     output_dir.mkdir(parents=True, exist_ok=True)
     gene_samples.to_csv(output_dir / "gene_sample_counts.csv", index=False)
     gene_result.to_csv(output_dir / "gene_age_result.csv", index=False)
+    infant_adult_comparison = (
+        pd.DataFrame([exploratory_age_comparison])
+        if exploratory_age_comparison is not None else pd.DataFrame(columns=[
+            "comparison", "age_5_bin", "age_25_bin",
+            "age_bin_effect_log2_count_plus_1",
+            "age_bin_standard_error_log2_count_plus_1",
+            "age_bin_ci_lower_log2_count_plus_1",
+            "age_bin_ci_upper_log2_count_plus_1", "age_bin_p_value",
+            "adult_age_log2_fold_change_per_year",
+            "adult_age_log2_fold_change_20_year_projection",
+            "adult_age_p_value", "adult_age_adjusted_p_value",
+        ])
+    )
+    infant_adult_comparison.to_csv(
+        output_dir / "exploratory_infant_adult_comparison.csv", index=False,
+    )
     naive_model_result.to_csv(output_dir / "naive_linear_model_result.csv", index=False)
     age_bin_samples.to_csv(output_dir / "naive_age_bin_samples.csv", index=False)
     age_bin_model_result.to_csv(output_dir / "naive_age_bin_model_result.csv", index=False)
     age_bin_predictions.to_csv(output_dir / "naive_age_bin_predictions.csv", index=False)
+    age_bin_top_correlations.to_csv(
+        output_dir / "age_bin_residual_correlations.csv", index=False,
+    )
+    age_bin_correlated_residuals.to_csv(
+        output_dir / "age_bin_correlated_gene_residuals.csv", index=False,
+    )
     study_slope_model_result.to_csv(
         output_dir / "naive_study_slope_model_result.csv", index=False,
     )
@@ -750,7 +1021,7 @@ def _fit_profile(
     variance_table["is_target_gene"] = variance_table["gene"] == gene
     variance_table.to_csv(output_dir / "mean_variance.csv", index=False)
 
-    top_gene_correlations = correlation_table.head(10).merge(
+    top_gene_correlations = top_correlated.merge(
         variance_table[["gene", "mean_normalized_count", "dispersions"]].reset_index(
             drop=True,
         ),
@@ -764,6 +1035,7 @@ def _fit_profile(
         "gene": gene,
         "pearson_r": 1.0,
         "absolute_pearson_r": 1.0,
+        "correlation_direction": "self",
         "mean_normalized_count": target_variance["mean_normalized_count"],
         "dispersions": target_variance["dispersions"],
     }])
@@ -801,16 +1073,23 @@ def _fit_profile(
         "n_studies": len(studies),
         "studies": studies,
         "n_genes_fit": len(fit_genes),
+        "model_fit_cache": {
+            "key": model_cache_key,
+            "reused": model_cache_reused,
+        },
         "metadata_exclusions": exclusions,
         "age_result": {
             key: (None if pd.isna(value) else float(value) if isinstance(value, np.number) else str(value))
             for key, value in result.items()
         },
+        "exploratory_infant_adult_comparison": exploratory_age_comparison,
         "outputs": [
             "gene_sample_counts.csv", "gene_age_result.csv", "mean_variance.csv",
+            "exploratory_infant_adult_comparison.csv",
             "model_fit_diagnostics.csv",
             "naive_linear_model_result.csv", "naive_age_bin_samples.csv",
             "naive_age_bin_model_result.csv", "naive_age_bin_predictions.csv",
+            "age_bin_residual_correlations.csv", "age_bin_correlated_gene_residuals.csv",
             "naive_study_slope_model_result.csv", "naive_study_slopes.csv",
             "naive_study_slope_predictions.csv",
             "naive_mixed_model_fixed_effects.csv", "naive_mixed_model_study_slopes.csv",
@@ -838,9 +1117,9 @@ def main() -> None:
         "--cell-type", required=True, help="Configured cell-type label or unique slug"
     )
     parser.add_argument("--gene", required=True, help="Exact gene identifier in the pseudobulk object")
-    parser.add_argument("--input", type=Path, default=Path("output/merged/pseudobulk_merged.h5ad"))
+    parser.add_argument("--input", type=Path, default=Path("output/harmonization/merged/pseudobulk_merged.h5ad"))
     parser.add_argument("--config", type=Path, default=Path("config/pipeline.json"))
-    parser.add_argument("--output-dir", type=Path, default=Path("output/gene_profiles"))
+    parser.add_argument("--output-dir", type=Path, default=Path("output/analysis/per_gene"))
     parser.add_argument("--cpus", type=int, default=1)
     args = parser.parse_args()
     report = _fit_profile(

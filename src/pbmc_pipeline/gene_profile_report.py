@@ -7,7 +7,25 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pandas as pd
+
 from .report_toc import populate_html_toc, set_notebook_title
+
+
+def format_model_results(table, *, digits: int = 4):
+    """Round coefficient output and preserve small p-values in scientific notation."""
+    formatted = table.copy()
+    numeric = formatted.select_dtypes(include=["number"]).columns
+    significance_columns = ["p_value", "pvalue", "padj"]
+    formatted[numeric.difference(significance_columns)] = formatted[
+        numeric.difference(significance_columns)
+    ].round(digits)
+    for column in significance_columns:
+        if column in formatted:
+            formatted[column] = pd.to_numeric(
+                formatted[column], errors="coerce"
+            ).map(lambda value: f"{value:.2e}" if pd.notna(value) else "—")
+    return formatted
 
 
 def generate_gene_profile_report(

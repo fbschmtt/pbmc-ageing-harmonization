@@ -1,7 +1,11 @@
 process SPLIT_CELL_TYPES {
     tag 'split merged single-cell H5AD'
-    publishDir "${params.outdir}/cell_type_splits", mode: 'copy', overwrite: true,
-        saveAs: { filename -> filename.endsWith('.h5ad') ? filename.tokenize('/').last() : null }
+    publishDir "${params.outdir}/analysis/per_type", mode: 'copy', overwrite: true,
+        saveAs: { filename ->
+            filename.endsWith('.h5ad')
+                ? "${filename.tokenize('/').last().replace('.h5ad', '')}/split.h5ad"
+                : null
+        }
 
     input:
     path merged_input
@@ -90,7 +94,8 @@ workflow RENDER_CELL_TYPE_REPORTS {
 
 process RENDER_CELL_TYPE_REPORT {
     tag { slug }
-    publishDir "${params.outdir}/cell_type_analysis", mode: 'copy', overwrite: true
+    publishDir "${params.outdir}/analysis/per_type", mode: 'copy', overwrite: true,
+        saveAs: { filename -> "${filename}/analysis" }
 
     input:
     tuple val(slug), path(primitive), path(analysis_dir, stageAs: 'analysis_result'),
@@ -114,7 +119,7 @@ process RENDER_CELL_TYPE_REPORT {
 
 process WRITE_CELL_TYPE_MANIFEST {
     tag 'cell-type analysis manifest'
-    publishDir "${params.outdir}/cell_type_analysis", mode: 'copy', overwrite: true
+    publishDir "${params.outdir}/analysis/per_type", mode: 'copy', overwrite: true
 
     input:
     path report_dirs

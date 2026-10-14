@@ -7,6 +7,7 @@ import pytest
 from pbmc_pipeline.config import (
     AgeTrajectorySettings,
     ConfigurationError,
+    ResidualWGCNASettings,
     load_configuration,
     read_json,
     validate_configuration,
@@ -41,6 +42,10 @@ def test_age_trajectory_report_and_clustering_choices_are_explicit_and_validated
     assert age_trajectory["report_top_n_genes"] == 30
     assert age_trajectory["cross_report_top_n_genes"] == 100
     assert pipeline["differential_expression"]["expression_atlas"]["minimum_study_cell_type_total_counts"] == 1_000_000
+    wgcna = pipeline["cell_type_analysis"]["residual_wgcna"]
+    assert ResidualWGCNASettings.from_mapping(wgcna).to_mapping() == wgcna
+    assert wgcna["maximum_genes"] == 2000
+    assert wgcna["minimum_module_size"] == 20
 
     input_sources = read_json(ROOT / pipeline["input_sources"])
     invalid = copy.deepcopy(pipeline)

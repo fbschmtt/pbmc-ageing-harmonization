@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,7 @@ def generate_cell_type_report(
         "residual_sample_pc_scores.csv",
     ):
         (output_dir / name).unlink(missing_ok=True)
+    shutil.rmtree(output_dir / "residual_wgcna", ignore_errors=True)
     executed, html = output_dir / "executed.ipynb", output_dir / "report.html"
     env = os.environ.copy()
     env.update({

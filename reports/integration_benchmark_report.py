@@ -32,7 +32,7 @@ display(HTML(render_report_header(
     title="Global integration benchmark",
     eyebrow="PBMC ageing · integration and type calling",
     subtitle=(
-        "Compare unintegrated PCA and scVI, Harmony, Scanorama, and BBKNN embeddings, "
+        "Compare unintegrated PCA, Harmony, Scanorama, and BBKNN embeddings, "
         "then assess CellTypist calls made from each method's own neighbor graph."
     ),
     metrics=[
@@ -54,11 +54,9 @@ reference_column = "aifi_l2_study_majority"
 methods = run_report["methods"]
 method_order = {
     "unintegrated_pca": 0,
-    "scvi_unintegrated": 1,
     "harmony": 2,
     "scanorama": 3,
     "bbknn": 4,
-    "scvi": 5,
 }
 embedding_methods = sorted(
     methods,
@@ -67,10 +65,11 @@ embedding_methods = sorted(
 display(Markdown(
     "Each method's graph is used for both its UMAP and CellTypist majority "
     "voting. The artifact retains both embeddings and neighbor graphs, but "
-    "omits the merged expression matrix. scVI produces a latent representation; "
-    "the benchmark builds neighbors and UMAP from that representation. The "
-    "unintegrated scVI model omits the study covariate, while both scVI runs "
-    "use the same study-aware HVG selection."
+    "omits the merged expression matrix. **scVI was not included** because the "
+    "expected input is around six million cells; model training at that scale "
+    "would be highly resource intensive and may exceed available GPU memory. "
+    "This exploratory benchmark therefore reports PCA, Harmony, Scanorama, "
+    "and BBKNN only."
 ))
 display(pd.DataFrame([
     {
@@ -88,8 +87,6 @@ for method in embedding_methods:
         "harmony": "Harmony integrated",
         "scanorama": "Scanorama integrated",
         "bbknn": "BBKNN integrated neighbors",
-        "scvi_unintegrated": "Unintegrated scVI latent",
-        "scvi": "scVI integrated latent",
     }.get(method["name"], method["name"].replace("_", " ").title())
     display(Markdown(f"### {heading}"))
     key = method["embedding_key"]

@@ -1,6 +1,6 @@
 process PREPARE_CELLS {
     tag { study_id }
-    publishDir "${params.outdir}/prepared", mode: 'copy', overwrite: true,
+    publishDir "${params.outdir}/harmonization/prepared", mode: 'copy', overwrite: true,
         saveAs: { name -> name.endsWith('.cells.csv.gz') || name.endsWith('.source_obs.csv.gz') || name.endsWith('.prepare.json') ? name : null }
 
     input:

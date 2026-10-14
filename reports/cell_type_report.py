@@ -13,6 +13,7 @@ from pathlib import Path
 # relevant.
 warnings.filterwarnings("ignore", message="IProgress not found.*")
 
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -26,7 +27,8 @@ from pbmc_pipeline.report_theme import render_report_header
 
 sns.set_theme(style="whitegrid")
 plt.rcParams.update({"figure.dpi": 110, "savefig.dpi": 110})
-from pbmc_pipeline.config import AgeTrajectorySettings, read_json
+from pbmc_pipeline.config import AgeTrajectorySettings, ResidualWGCNASettings, read_json
+from pbmc_pipeline.cell_type import add_unintegrated_umap
 from pbmc_pipeline.covariates import (
     categorical_contrast_label,
     categorical_levels,
@@ -45,6 +47,7 @@ from pbmc_pipeline.trajectory_analysis import (
     summarize_residual_clustering,
     trajectory_merge_diagnostics,
 )
+from pbmc_pipeline.residual_wgcna import run_residual_wgcna
 
 primitive = sc.read_h5ad(Path(os.environ["CELL_TYPE_H5AD"]))
 analysis_path = Path(os.environ["CELL_TYPE_ANALYSIS_H5AD"])
@@ -166,6 +169,105 @@ def load_residual_sample_clusters(de_dir, fit, settings):
     return annotations, pc_scores, n_components, residuals
 
 
+def load_merged_cmv_results(de_dir):
+    """Load the per-cell-type merged CMV model when it completed."""
+    if not de_dir:
+        return None
+    path = Path(de_dir) / "combined" / "cmv.csv"
+    if not path.is_file():
+        return None
+    return pd.read_csv(path)
+
+
+def publish_residual_wgcna(result):
+    """Publish residual-network artifacts beside the per-type report."""
+    wgcna_dir = output_dir / "residual_wgcna"
+    wgcna_dir.mkdir(parents=True, exist_ok=True)
+    (wgcna_dir / "metadata.json").write_text(json.dumps(result.metadata, indent=2) + "\n")
+    result.soft_threshold.to_csv(wgcna_dir / "soft_threshold.csv", index=False)
+    result.module_assignments.to_csv(wgcna_dir / "module_assignments.csv", index=False)
+    result.eigengenes.to_csv(wgcna_dir / "eigengenes.csv", index=False)
+    result.module_summary.to_csv(wgcna_dir / "module_summary.csv", index=False)
+    return wgcna_dir
+
+
+def plot_residual_wgcna(result):
+    """Show PyWGCNA diagnostics and CMV checks for residual modules."""
+    if result.metadata["status"] != "complete":
+        display(Markdown(
+            "_Residual WGCNA was not run: " + result.metadata.get("reason", "unknown reason") + "._"
+        ))
+        return
+    soft_threshold = result.soft_threshold
+    if not soft_threshold.empty and {"Power", "SFT.R.sq", "mean(k)"}.issubset(soft_threshold):
+        figure, axes = plt.subplots(1, 2, figsize=(12, 4.3))
+        signed_fit = -np.sign(soft_threshold["slope"]) * soft_threshold["SFT.R.sq"]
+        axes[0].plot(soft_threshold["Power"], signed_fit, marker="o", color="#4c72b0")
+        axes[0].axhline(
+            result.metadata["settings"]["scale_free_fit_threshold"], color="#c44e52",
+            linestyle="--", linewidth=1,
+        )
+        axes[0].axvline(result.metadata["selected_soft_threshold_power"], color="#555555", linewidth=1)
+        axes[0].set(xlabel="Soft-threshold power", ylabel="Signed scale-free topology fit", title="Soft-threshold diagnostic")
+        axes[1].plot(soft_threshold["Power"], soft_threshold["mean(k)"], marker="o", color="#55a868")
+        axes[1].axvline(result.metadata["selected_soft_threshold_power"], color="#555555", linewidth=1)
+        axes[1].set(xlabel="Soft-threshold power", ylabel="Mean connectivity", title="Network connectivity")
+        figure.tight_layout()
+        display_collapsible_figure(figure, "Residual WGCNA soft-threshold diagnostics")
+
+    summary = result.module_summary.copy()
+    if summary.empty:
+        display(Markdown("_PyWGCNA did not retain any non-grey modules._"))
+        return
+    display_collapsible_table(summary, "Show residual WGCNA module summary")
+    shown = summary.sort_values("n_genes", ascending=True)
+    figure, axes = plt.subplots(1, 2, figsize=(14, max(4.5, 0.42 * len(shown))))
+    colors = [module if module in mcolors.get_named_colors_mapping() else "#4c72b0" for module in shown["module"]]
+    axes[0].barh(shown["module"], shown["n_genes"], color=colors)
+    axes[0].set(xlabel="Genes", title="Residual WGCNA module sizes")
+    trait_data = summary.dropna(subset=["cmv_eigengene_correlation"]).copy()
+    if trait_data.empty:
+        axes[1].text(0.5, 0.5, "CMV status is not available in both groups", ha="center", va="center")
+        axes[1].set_axis_off()
+    else:
+        trait_data["cmv_overlap_score"] = -np.log10(
+            trait_data["cmv_gene_overlap_fdr"].clip(lower=1e-300)
+        )
+        points = axes[1].scatter(
+            trait_data["cmv_eigengene_correlation"], trait_data["cmv_overlap_score"],
+            s=np.maximum(30, trait_data["n_genes"] * 3), c=trait_data["cmv_eigengene_fdr"],
+            cmap="viridis_r", vmin=0, vmax=1, alpha=0.85, linewidths=0,
+        )
+        for row in trait_data.itertuples(index=False):
+            axes[1].annotate(row.module, (row.cmv_eigengene_correlation, row.cmv_overlap_score),
+                             xytext=(3, 3), textcoords="offset points", fontsize=8)
+        axes[1].axvline(0, color="#666666", linewidth=0.8)
+        axes[1].set(
+            xlabel="CMV-status vs eigengene correlation", ylabel="−log10(CMV-DE overlap FDR)",
+            title="CMV checks of residual modules",
+        )
+        figure.colorbar(points, ax=axes[1], label="Eigengene–CMV FDR")
+    figure.tight_layout()
+    display_collapsible_figure(figure, "Residual WGCNA modules and CMV diagnostics")
+
+
+def annotate_cluster_centroids(axis, table, label_column):
+    labels = pd.to_numeric(table[label_column], errors="coerce")
+    points = table.assign(_cluster=labels).dropna(
+        subset=["_cluster", "umap_1", "umap_2"]
+    )
+    for cluster, group in points.loc[points["_cluster"] >= 0].groupby("_cluster"):
+        axis.annotate(
+            str(int(cluster)),
+            (group["umap_1"].mean(), group["umap_2"].mean()),
+            ha="center", va="center", fontsize=9, fontweight="bold",
+            color="#111111",
+            bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "alpha": 0.8,
+                  "edgecolor": "none"},
+            zorder=6,
+        )
+
+
 def plot_residual_cluster_markers(residuals, annotations, settings):
     """Show the residual UMAP clusters and their largest mean-residual contrasts."""
     display(Markdown("### Residual Cluster Markers"))
@@ -185,6 +287,7 @@ def plot_residual_cluster_markers(residuals, annotations, settings):
             data=coordinates, x="umap_1", y="umap_2", hue="residual_cluster_label",
             palette="tab20", s=40, alpha=0.84, linewidth=0, ax=axis,
         )
+        annotate_cluster_centroids(axis, coordinates, "residual_cluster")
         axis.set_title("Residual UMAP: sample clusters")
         axis.set_xlabel("UMAP 1")
         axis.set_ylabel("UMAP 2")
@@ -247,7 +350,12 @@ def plot_residual_sample_umaps(table, *, minimum_umap_samples):
     def plot_covariate_grid(
         covariates, title, *, categorical_covariates, figsize, open_by_default=False
     ):
-        figure, axes = plt.subplots(2, 2, figsize=figsize)
+        n_columns = 2
+        n_rows = max(1, int(np.ceil(len(covariates) / n_columns)))
+        figure_size = (figsize[0], max(figsize[1], figsize[1] * n_rows / 2))
+        figure, axes = plt.subplots(
+            n_rows, n_columns, figsize=figure_size, squeeze=False
+        )
         for axis, covariate in zip(axes.flat, covariates):
             if covariate not in coordinates:
                 axis.text(0.5, 0.5, "Not recorded", ha="center", va="center")
@@ -279,7 +387,9 @@ def plot_residual_sample_umaps(table, *, minimum_umap_samples):
         )
 
     optional_covariates = [
-        covariate for covariate in ("bmi", "cmv") if covariate in coordinates
+        covariate for covariate in (
+            "bmi", "cmv", "ethnicity", "technology", "batch_single_cell"
+        ) if covariate in coordinates
     ]
     coordinates["residual_cluster"] = coordinates["residual_cluster"].map(
         lambda cluster: "Noise" if pd.notna(cluster) and int(cluster) == -1
@@ -289,7 +399,9 @@ def plot_residual_sample_umaps(table, *, minimum_umap_samples):
         plot_covariate_grid(
             ["residual_cluster", *optional_covariates],
             "Residual clusters and non-model covariates over residual UMAP",
-            categorical_covariates={"residual_cluster", "cmv"},
+            categorical_covariates={
+                "residual_cluster", "cmv", "ethnicity", "technology", "batch_single_cell"
+            },
             figsize=(18, 10.2),
             open_by_default=True,
         )
@@ -384,6 +496,7 @@ def plot_residual_alternative_clusterings(annotations, settings):
                 values.loc[selected, "umap_1"], values.loc[selected, "umap_2"],
                 color=plt.get_cmap("tab20")(index % 20), s=35, alpha=0.82, linewidths=0,
             )
+        annotate_cluster_centroids(axis, values, column)
         axis.set_title(
             f"{row['method']}\n{row['n_clusters']} clusters; {row['n_noise']} noise"
         )
@@ -403,14 +516,17 @@ def natural_sort_key(value):
     )
 
 
-def plot_umap(adata, *, color, title=None, label_clusters=False, marker_area_scale=1.0):
+def plot_umap(
+    adata, *, color, title=None, label_clusters=False, marker_area_scale=1.0,
+    basis="umap",
+):
     """Render comparable low-resolution, equal-aspect UMAP panels."""
     # Scanpy's size controls marker area, so 4x area gives about 2x diameter.
     point_size = max(2, 100_000 / adata.n_obs) * marker_area_scale
     plot_kwargs = {"color": color, "size": point_size, "show": False}
     if label_clusters:
         plot_kwargs["legend_loc"] = "on data"
-    sc.pl.umap(adata, **plot_kwargs)
+    sc.pl.embedding(adata, basis=basis, **plot_kwargs)
     figure = plt.gcf()
     figure.set_size_inches(9.5, 6.75)
     figure.set_dpi(110)
@@ -421,6 +537,48 @@ def plot_umap(adata, *, color, title=None, label_clusters=False, marker_area_sca
         figure.axes[0].set_title(title)
     figure.tight_layout()
     plt.show()
+
+
+def plot_umap_split_by_study(adata):
+    """Show study subsets in their shared local UMAP coordinate system."""
+    if "study" not in adata.obs or "X_umap" not in adata.obsm:
+        display(Markdown("_Study-split UMAP requires study labels and UMAP coordinates._"))
+        return
+    coordinates = np.asarray(adata.obsm["X_umap"])
+    studies = adata.obs["study"].astype(str)
+    study_order = sorted(studies.unique())
+    n_columns = min(4, len(study_order))
+    n_rows = int(np.ceil(len(study_order) / n_columns))
+    figure, axes = plt.subplots(
+        n_rows, n_columns, figsize=(4.3 * n_columns, 3.8 * n_rows), squeeze=False
+    )
+    point_size = max(2, 100_000 / max(adata.n_obs, 1)) * 4.0
+    x_padding = max(np.ptp(coordinates[:, 0]) * 0.03, 0.1)
+    y_padding = max(np.ptp(coordinates[:, 1]) * 0.03, 0.1)
+    for axis, study in zip(axes.flat, study_order):
+        selected = studies.to_numpy() == study
+        axis.scatter(
+            coordinates[selected, 0], coordinates[selected, 1],
+            s=point_size, color="#4c72b0", alpha=0.55, linewidths=0,
+            rasterized=True,
+        )
+        axis.set_title(f"{study} (n={int(selected.sum()):,})")
+        axis.set_xlim(
+            float(coordinates[:, 0].min() - x_padding),
+            float(coordinates[:, 0].max() + x_padding),
+        )
+        axis.set_ylim(
+            float(coordinates[:, 1].min() - y_padding),
+            float(coordinates[:, 1].max() + y_padding),
+        )
+        axis.set_aspect("equal", adjustable="box")
+        axis.set_xlabel("UMAP 1")
+        axis.set_ylabel("UMAP 2")
+    for axis in axes.flat[len(study_order):]:
+        axis.set_axis_off()
+    figure.suptitle("Local UMAP split by study")
+    figure.tight_layout()
+    display_collapsible_figure(figure, "Show local UMAP split by study")
 
 
 def has_age_span(data, *, min_samples=2):
@@ -1281,7 +1439,14 @@ plot_study_fraction_curves(
 if report["status"] != "complete":
     display(Markdown("_Too few cells for a type-specific embedding and clustering._"))
 else:
+    unintegrated_basis = add_unintegrated_umap(adata, pipeline)
+    plot_umap(
+        adata, color="study", basis=unintegrated_basis.removeprefix("X_"),
+        title="Local UMAP without study integration",
+        marker_area_scale=4.0,
+    )
     plot_umap(adata, color="cluster", title="Local UMAP: cluster IDs", label_clusters=True)
+    plot_umap_split_by_study(adata)
     colors = ["study", "age"]
     if "aifi_l3_majority" in adata.obs:
         colors.append("aifi_l3_majority")
@@ -1718,6 +1883,7 @@ if de_dir:
             )
             for contrast, contrast_results in combined_results.groupby("contrast", sort=True):
                 volcano = contrast_results.copy()
+                merged_gene_universe = set(volcano["gene"].astype(str))
                 volcano["padj"] = pd.to_numeric(volcano["padj"], errors="coerce")
                 volcano["log2FoldChange"] = pd.to_numeric(
                     volcano["log2FoldChange"], errors="coerce"
@@ -1787,16 +1953,12 @@ if de_dir:
                     marker_results = marker_results.dropna(
                         subset=["gene", "padj", "log2FoldChange"]
                     )
-                    study_gene_sets = [
-                        set(group["gene"].astype(str))
-                        for _, group in marker_results.groupby("study", observed=True)
-                    ]
-                    shared_age_genes = (
-                        set.intersection(*study_gene_sets) if study_gene_sets else set()
-                    )
+                    # Compare study-only hits to the actual combined-model
+                    # result universe. The intersection of per-study outputs
+                    # can differ from the combined fit's availability mask.
                     nonintersection_age_markers = marker_results.loc[
                         (marker_results["padj"] < de_alpha)
-                        & ~marker_results["gene"].astype(str).isin(shared_age_genes)
+                        & ~marker_results["gene"].astype(str).isin(merged_gene_universe)
                     ].copy()
                     if not nonintersection_age_markers.empty:
                         nonintersection_age_markers["minus_log10_padj"] = -np.log10(
@@ -1881,8 +2043,20 @@ if de_dir:
                                     "lw": 1.5, "mutation_scale": 9,
                                 }, zorder=5,
                             )
+                    marker_studies = sorted(
+                        nonintersection_age_markers["study"].astype(str).unique()
+                    )
+                    marker_handles = [
+                        plt.Line2D(
+                            [], [], marker="D", linestyle="", markersize=7,
+                            markerfacecolor="none", markeredgecolor=study_colors[study],
+                            label=study,
+                        )
+                        for study in marker_studies
+                    ]
                     axis.legend(
-                        title="Top FDR-significant\nnon-shared age gene",
+                        handles=marker_handles,
+                        title="Top FDR-significant\nstudy-only age gene",
                         fontsize=8, bbox_to_anchor=(1.02, 0.46),
                         loc="upper left", borderaxespad=0,
                     )
@@ -1936,7 +2110,7 @@ if de_dir:
                     display(Markdown(
                         "Outlined diamonds use each study's own age-model estimate and adjusted "
                         "p-value. They select the smallest adjusted p-value among FDR-significant "
-                        "genes outside the shared per-study gene universe."
+                        "genes outside the combined model's gene universe."
                     ))
                     display(nonintersection_age_markers[[
                         "study", "gene", "log2FoldChange", "padj",
@@ -2027,7 +2201,7 @@ if de_dir:
             "from the combined fit. The log10(total_counts) volcano also has a companion colored "
             "by combined-fit log10(baseMean). "
             "For age, outlined diamonds mark the smallest per-study adjusted p-value among "
-            "FDR-significant genes outside the shared per-study gene universe; their position instead uses that study's "
+            "FDR-significant genes outside the combined model's gene universe; their position instead uses that study's "
             "own effect and adjusted p-value, so they are a visibility check rather than combined-fit points. "
             "The site term is omitted when only one site remains estimable. Combined fits do not "
             "by themselves establish replication across studies._"
@@ -2099,6 +2273,15 @@ if de_dir:
             )
 
         if has_age_per_study:
+            display(Markdown(
+                "### Per-Study Age-Association Recurrence in the Common Tested-Gene Set"
+            ))
+            display(Markdown(
+                "These plots and the list below include genes tested by every available "
+                "per-study age fit and FDR-significant in at least one study. They summarize "
+                "overlap among per-study fits; they do not show the combined-model volcano "
+                "gene universe."
+            ))
             figure, axes = plt.subplots(1, 2, figsize=(14.5, 5.8))
             if recurrence.empty:
                 empty_message = (
@@ -2138,7 +2321,7 @@ if de_dir:
                 ))
                 display_collapsible_table(
                     recurrence.head(50),
-                    "Show top 50 recurring age-associated genes and per-study estimates",
+                    "Show top 50 recurrent per-study age genes in the common tested-gene set",
                     max_height=480,
                 )
 
@@ -2165,15 +2348,11 @@ if de_dir:
                 "<a id=\"age-bin-trajectories\"></a>\n## Age-Bin Trajectories"
             ))
             if de_dir:
-                cross_type_report = (
-                    Path(de_dir).resolve().parent / "combined_analysis" / "report.html"
-                )
-                if cross_type_report.is_file():
-                    display(Markdown(
-                        "See the [cross-cell-type trajectory report](../../differential_expression/"
-                        "combined_analysis/report.html) for "
-                        "shared-pattern clusters and gene recurrence across cell types."
-                    ))
+                display(Markdown(
+                    "See the [cross-cell-type trajectory report](../../../combined/trajectory/"
+                    "report.html) for "
+                    "shared-pattern clusters and gene recurrence across cell types."
+                ))
             width = trajectory_settings.bin_width_years
             minimum_bin_samples = trajectory_settings.minimum_samples_per_bin
             minimum_bins = trajectory_settings.minimum_bins
@@ -2461,3 +2640,33 @@ if de_dir:
                 "Download the [residual cluster assignments](residual_sample_clusters.csv) "
                 "or [sample PCA scores](residual_sample_pc_scores.csv)."
             ))
+            display(Markdown("### Residual WGCNA modules"))
+            wgcna_settings = ResidualWGCNASettings.from_mapping(
+                pipeline["cell_type_analysis"]["residual_wgcna"]
+            )
+            residual_wgcna = run_residual_wgcna(
+                residual_matrix,
+                residual_clusters,
+                settings=wgcna_settings,
+                cmv_results=load_merged_cmv_results(de_dir),
+            )
+            publish_residual_wgcna(residual_wgcna)
+            display(Markdown(
+                "PyWGCNA fits a signed correlation network to the age-bin-model Pearson "
+                "residuals, after retaining the configured most variable genes. The residual "
+                "model already accounts for age bins, sex, study site, and pseudobulk depth. "
+                "CMV was omitted from that model, so the diagnostics below test whether CMV "
+                "is detectable in the residual modules. The module-level gene-set test uses "
+                "FDR-significant genes from the merged CMV model, with the selected network "
+                "genes as its background; the eigengene check is a point-biserial correlation "
+                "with observed yes/no CMV status. Both are descriptive checks."
+            ))
+            display(Markdown(
+                f"The network used **{residual_wgcna.metadata['n_samples']:,} samples** and "
+                f"**{residual_wgcna.metadata['n_genes_selected']:,} genes**. "
+                "Download its [module assignments](residual_wgcna/module_assignments.csv), "
+                "[eigengenes](residual_wgcna/eigengenes.csv), [module summary]"
+                "(residual_wgcna/module_summary.csv), and [soft-threshold diagnostics]"
+                "(residual_wgcna/soft_threshold.csv)."
+            ))
+            plot_residual_wgcna(residual_wgcna)

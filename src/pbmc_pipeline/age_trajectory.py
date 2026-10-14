@@ -135,6 +135,7 @@ def prepare_age_trajectory_metadata(
             "age_bin_counts": {},
             "retained_bins": [],
             "dropped_bins": [],
+            "n_samples_retained": 0,
         }
 
     maximum_start = int(observed_starts.max())

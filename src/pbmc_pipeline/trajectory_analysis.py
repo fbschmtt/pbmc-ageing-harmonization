@@ -407,7 +407,7 @@ def _read_cell_type_residuals(
     residuals_by_type: dict[str, pd.DataFrame] = {}
     metadata_by_type: dict[str, pd.DataFrame] = {}
     support_by_type: dict[str, dict] = {}
-    for metadata_path in sorted(differential_expression_dir.glob("*/run_metadata.json")):
+    for metadata_path in sorted(differential_expression_dir.rglob("run_metadata.json")):
         metadata = json.loads(metadata_path.read_text())
         fit = next((model for model in metadata.get("models", [])
                     if model.get("purpose") == "age_trajectory"), None)
@@ -575,7 +575,7 @@ def _read_cell_type_trajectory_results(
 ) -> tuple[dict[str, pd.DataFrame], dict[str, dict]]:
     results: dict[str, pd.DataFrame] = {}
     metadata_by_type: dict[str, dict] = {}
-    for metadata_path in sorted(differential_expression_dir.glob("*/run_metadata.json")):
+    for metadata_path in sorted(differential_expression_dir.rglob("run_metadata.json")):
         metadata = json.loads(metadata_path.read_text())
         fit = next(
             (model for model in metadata.get("models", [])
@@ -589,6 +589,105 @@ def _read_cell_type_trajectory_results(
         if fit.get("status") == "complete" and result_path.is_file():
             results[str(metadata["cell_type"])] = pd.read_csv(result_path)
     return results, metadata_by_type
+
+
+def build_developmental_adult_effect_comparison(
+    differential_expression_dir: Path,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Join shrunken developmental and adult age coefficients by gene and cell type."""
+    comparisons = []
+    support = []
+    required_columns = {
+        "gene", "log2FoldChange", "log2FoldChange_shrunk", "lfc_shrink_converged", "padj",
+    }
+    for metadata_path in sorted(differential_expression_dir.rglob("run_metadata.json")):
+        metadata = json.loads(metadata_path.read_text())
+        cell_type = str(metadata["cell_type"])
+        models = metadata.get("models", [])
+        developmental = next(
+            (model for model in models
+             if model.get("purpose") == "developmental_adult_effect_comparison"),
+            None,
+        )
+        adult = next(
+            (model for model in models
+             if model.get("model") == "merged" and model.get("study") is None),
+            None,
+        )
+        row = {"cell_type": cell_type}
+        if developmental is None:
+            row.update({"status": "skipped", "reason": "developmental fit is not recorded"})
+            support.append(row)
+            continue
+        row.update(developmental.get("developmental_age_range", {}))
+        if developmental.get("status") != "complete":
+            row.update({"status": "skipped", "reason": developmental.get("reason", "fit did not complete")})
+            support.append(row)
+            continue
+        if adult is None or adult.get("status") != "complete":
+            row.update({"status": "skipped", "reason": "adult merged age fit did not complete"})
+            support.append(row)
+            continue
+        developmental_path = developmental.get("results_by_covariate", {}).get("age")
+        adult_path = adult.get("results_by_covariate", {}).get("age")
+        if not developmental_path or not adult_path:
+            row.update({"status": "skipped", "reason": "one age-coefficient result is missing"})
+            support.append(row)
+            continue
+        developmental_path = metadata_path.parent / developmental_path
+        adult_path = metadata_path.parent / adult_path
+        if not developmental_path.is_file() or not adult_path.is_file():
+            row.update({"status": "skipped", "reason": "one age-coefficient CSV is missing"})
+            support.append(row)
+            continue
+        developmental_results = pd.read_csv(developmental_path)
+        adult_results = pd.read_csv(adult_path)
+        if not (
+            required_columns.issubset(developmental_results)
+            and required_columns.issubset(adult_results)
+        ):
+            row.update({"status": "skipped", "reason": "one age-coefficient CSV lacks shrinkage columns"})
+            support.append(row)
+            continue
+        developmental_table = developmental_results[[
+            "gene", "log2FoldChange", "log2FoldChange_shrunk", "lfc_shrink_converged", "padj",
+        ]].rename(columns={
+            "log2FoldChange": "developmental_log2_fold_change_per_year",
+            "log2FoldChange_shrunk": "developmental_log2_fold_change_per_year_shrunk",
+            "lfc_shrink_converged": "developmental_lfc_shrink_converged",
+            "padj": "developmental_padj",
+        })
+        adult_table = adult_results[[
+            "gene", "log2FoldChange", "log2FoldChange_shrunk", "lfc_shrink_converged", "padj",
+        ]].rename(columns={
+            "log2FoldChange": "adult_log2_fold_change_per_year",
+            "log2FoldChange_shrunk": "adult_log2_fold_change_per_year_shrunk",
+            "lfc_shrink_converged": "adult_lfc_shrink_converged",
+            "padj": "adult_padj",
+        })
+        joined = developmental_table.merge(adult_table, on="gene", how="inner", validate="one_to_one")
+        joined.insert(0, "cell_type", cell_type)
+        comparisons.append(joined)
+        row.update({
+            "status": "complete",
+            "reason": "",
+            "n_genes_joined": len(joined),
+            "n_genes_with_finite_shrunk_effects": int(np.isfinite(
+                joined[[
+                    "developmental_log2_fold_change_per_year_shrunk",
+                    "adult_log2_fold_change_per_year_shrunk",
+                ]].to_numpy(dtype=float)
+            ).all(axis=1).sum()),
+        })
+        support.append(row)
+    columns = [
+        "cell_type", "gene", "developmental_log2_fold_change_per_year",
+        "developmental_log2_fold_change_per_year_shrunk", "developmental_lfc_shrink_converged",
+        "developmental_padj", "adult_log2_fold_change_per_year",
+        "adult_log2_fold_change_per_year_shrunk", "adult_lfc_shrink_converged", "adult_padj",
+    ]
+    comparison = pd.concat(comparisons, ignore_index=True) if comparisons else pd.DataFrame(columns=columns)
+    return comparison, pd.DataFrame(support)
 
 
 def build_cross_cell_type_trajectories(
@@ -759,6 +858,9 @@ def analyze_age_trajectories(
     results_by_type, metadata_by_type = _read_cell_type_trajectory_results(
         differential_expression_dir
     )
+    developmental_adult_effects, developmental_adult_support = (
+        build_developmental_adult_effect_comparison(differential_expression_dir)
+    )
     cell_type_support = []
     for cell_type, metadata in metadata_by_type.items():
         support = metadata.get("age_trajectory", {})
@@ -859,6 +961,8 @@ def analyze_age_trajectories(
         "gene_cell_type_significance.csv": significance,
         "gene_recurrence.csv": recurrence,
         "gene_pattern_concordance.csv": pattern_summary,
+        "developmental_adult_age_effects.csv": developmental_adult_effects,
+        "developmental_adult_age_effect_support.csv": developmental_adult_support,
     }
     for name, table in outputs.items():
         table.to_csv(output_dir / name, index=False)
@@ -875,6 +979,12 @@ def analyze_age_trajectories(
         if not significance.empty else 0,
         "pearson_residual_clustering": residual_support,
         "expression_atlas": expression_atlas,
+        "developmental_adult_effect_comparison": {
+            "n_cell_types_complete": int(
+                (developmental_adult_support.get("status", pd.Series(dtype=str)) == "complete").sum()
+            ),
+            "n_gene_cell_type_pairs": len(developmental_adult_effects),
+        },
     }
     (output_dir / "analysis_metadata.json").write_text(
         json.dumps(analysis_metadata, indent=2) + "\n"

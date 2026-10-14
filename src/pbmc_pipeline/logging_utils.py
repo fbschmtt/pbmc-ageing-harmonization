@@ -7,14 +7,14 @@ import sys
 import time
 
 
-def configure_logging(level: str = "INFO") -> None:
-    """Write timestamped pipeline progress messages to standard error."""
+def configure_logging(level: str = "INFO", *, stream=None) -> None:
+    """Write timestamped pipeline progress messages to the selected stream."""
     formatter = logging.Formatter(
         "%(asctime)sZ %(levelname)s %(name)s: %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S",
     )
     formatter.converter = time.gmtime
-    handler = logging.StreamHandler(sys.stderr)
+    handler = logging.StreamHandler(sys.stderr if stream is None else stream)
     handler.setFormatter(formatter)
 
     logger = logging.getLogger("pbmc_pipeline")

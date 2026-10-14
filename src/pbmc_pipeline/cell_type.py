@@ -16,6 +16,51 @@ from .harmonize import _harmony_integrate, _normalize_nullable_strings_for_h5ad
 from .utils import slugify
 
 
+def add_unintegrated_umap(adata, pipeline: dict) -> str:
+    """Add an unintegrated UMAP from the retained native PCA scores.
+
+    A separate neighbor graph key keeps the analysis artifact's Harmony graph
+    and its existing integrated UMAP unchanged. The temporary graph is removed
+    after coordinates are computed; only the additional embedding is retained.
+    """
+    import scanpy as sc
+
+    if "X_pca" not in adata.obsm:
+        raise ValueError("An unintegrated UMAP requires native PCA scores in obsm['X_pca']")
+    if adata.n_obs < 3:
+        raise ValueError("An unintegrated UMAP requires at least three cells")
+
+    neighbors_key = "unintegrated_neighbors"
+    embedding_key = "X_umap_unintegrated"
+    neighbors = pipeline["processing"]["neighbors"]
+    n_pcs = min(int(neighbors["n_pcs"]), adata.obsm["X_pca"].shape[1])
+    if n_pcs < 2:
+        raise ValueError("An unintegrated UMAP requires at least two native PCA components")
+
+    sc.pp.neighbors(
+        adata,
+        n_neighbors=min(int(neighbors["n_neighbors"]), adata.n_obs - 1),
+        n_pcs=n_pcs,
+        use_rep="X_pca",
+        random_state=pipeline["processing"]["random_seed"],
+        key_added=neighbors_key,
+    )
+    sc.tl.umap(
+        adata,
+        random_state=pipeline["processing"]["random_seed"],
+        neighbors_key=neighbors_key,
+        key_added=embedding_key,
+    )
+
+    graph_metadata = adata.uns.pop(neighbors_key)
+    for graph_field in ("distances_key", "connectivities_key"):
+        graph_key = graph_metadata.get(graph_field)
+        if graph_key in adata.obsp:
+            del adata.obsp[graph_key]
+    adata.uns.pop(embedding_key, None)
+    return embedding_key
+
+
 def split_cell_types(input_path: Path, output_dir: Path, manifest_path: Path, pipeline: dict) -> dict:
     """Load the global merge once and write one raw-count H5AD per AIFI L2 type."""
     import scanpy as sc

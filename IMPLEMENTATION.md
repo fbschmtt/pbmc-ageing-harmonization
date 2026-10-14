@@ -100,6 +100,9 @@ The core merge writes no global normalization, embedding, graph, or prediction.
   cross-type report data.
 - `reports/trajectory_analysis_report.py`: source notebook for the combined
   age-trajectory report.
+- `scripts/render_report_index.py`: builds the lightweight HTML index from
+  harmonization QC, integration benchmark, combined trajectory, and per-type
+  HTML reports currently present.
 - `src/pbmc_pipeline/synthetic_de.py`: deterministic on-demand positive-fit
   pseudobulk fixture generation (28 samples per study, balanced across seven
   age decades below 90); the generated H5AD is ignored output, not a checked-in fixture.
@@ -135,39 +138,43 @@ The core merge writes no global normalization, embedding, graph, or prediction.
 
 For `--outdir <outdir>`, the normal outputs are:
 
-- `<outdir>/harmonized/<study>.h5ad`
-- `<outdir>/prepared/<study>.cells.csv.gz`
-- `<outdir>/prepared/<study>.source_obs.csv.gz` (retained source metadata audit sidecar)
-- `<outdir>/prepared/<study>.prepare.json`
-- `<outdir>/pseudobulk/<study>.pseudobulk.h5ad`
-- `<outdir>/merged/pseudobulk_merged.h5ad`
-- `<outdir>/merged/single_cell_merged.h5ad` (optional raw-count joined matrix)
-- `<outdir>/provenance/*.json` (preparation, harmonization, and merge run summaries)
-- `<outdir>/harmonization_qc/<study>/report.html`
-- `<outdir>/harmonization_qc/merged/report.html` (one report for both merge branches)
-- `<outdir>/integration_benchmark/integration_benchmark.h5ad` (optional thin
+- `<outdir>/harmonization/harmonized/<study>.h5ad`
+- `<outdir>/harmonization/prepared/<study>.cells.csv.gz`
+- `<outdir>/harmonization/prepared/<study>.source_obs.csv.gz` (retained source metadata audit sidecar)
+- `<outdir>/harmonization/prepared/<study>.prepare.json`
+- `<outdir>/harmonization/pseudobulk/<study>.pseudobulk.h5ad`
+- `<outdir>/harmonization/merged/pseudobulk_merged.h5ad`
+- `<outdir>/harmonization/merged/single_cell_merged.h5ad` (optional raw-count joined matrix)
+- `<outdir>/harmonization/provenance/*.json` (preparation, harmonization, and merge run summaries)
+- `<outdir>/harmonization/harmonization_qc/<study>/report.html`
+- `<outdir>/harmonization/harmonization_qc/merged/report.html` (one report for both merge branches)
+- `<outdir>/harmonization/integration_benchmark/integration_benchmark.h5ad` (optional thin
   diagnostic artifact with labels, method embeddings, and neighbor graphs)
-- `<outdir>/integration_benchmark/integration_benchmark.json` (optional method
+- `<outdir>/harmonization/integration_benchmark/integration_benchmark.json` (optional method
   and input provenance)
-- `<outdir>/integration_benchmark/{executed.ipynb,report.html}` (optional
+- `<outdir>/harmonization/integration_benchmark/{executed.ipynb,report.html}` (optional
   benchmark report)
-- `<outdir>/cell_type_analysis/<aifi-l2-type>/analysis.h5ad` (optional derived embeddings and clusters)
-- `<outdir>/cell_type_analysis/<aifi-l2-type>/report.html` (optional self-contained static, reader-facing downstream report without implementation-cell inputs)
-- `<outdir>/cell_type_analysis/<aifi-l2-type>/executed.ipynb` (optional executed technical/audit report)
-- `<outdir>/cell_type_analysis/<aifi-l2-type>/age_trajectory_{clusters,cluster_means}.csv` (optional per-gene labels, standardized profiles, UMAP coordinates, and cluster means)
-- `<outdir>/cell_type_analysis/<aifi-l2-type>/fraction_model_diagnostics.tsv` (optional per-study fraction-model covariates, residual SD, and binomial-sampling reference)
-- `<outdir>/cell_type_analysis/cell_type_manifest.json` (optional downstream provenance and completeness contract)
-- `<outdir>/differential_expression/<cell-type-slug>/...csv` (per-study and combined covariate results)
-- `<outdir>/differential_expression/<cell-type-slug>/combined/age_bin_pearson_residuals.npz` and `age_bin_pearson_residuals_samples.csv` (sample × gene residuals and sample metadata from the age-bin model)
-- `<outdir>/differential_expression/<cell-type-slug>/age_model_diagnostics.csv` (sample support and raw-count inputs for the shared age-model diagnostic figure)
-- `<outdir>/differential_expression/<cell-type-slug>/cell_type_result.json` (per-task fit record collected into the root manifest)
-- `<outdir>/differential_expression/differential_expression.json` (DE status and cell-type result index)
-- `<outdir>/differential_expression/combined_analysis/{report.html,executed.ipynb}` (combined trajectory report)
-- `<outdir>/differential_expression/combined_analysis/*.csv` (shared-bin cross-type clusters and means, gene-level DE recurrence, and cross-type pattern concordance)
-- `<outdir>/differential_expression/combined_analysis/expression_atlas_*.csv` (study-balanced common-gene expression matrix, gene UMAP, depth support, and independent 3′/5′ and intronic-read sensitivity summaries)
-- `<outdir>/differential_expression/combined_analysis/*_residual_{clusters,pc_scores}.csv` (per-cell-type sample cluster assignments and PCA scores)
-- `<outdir>/differential_expression/combined_analysis/cross_cell_type_pearson_residuals.npz` and residual metadata/cluster CSVs (wide matrix, Leiden-primary assignments, K-means/HDBSCAN alternatives, marker contrasts, and cell-type feature composition for shared samples across full-trajectory-supported cell types)
-- `<outdir>/gene_profiles/<cell-type-slug>/<gene-slug>/` (focused gene-profile HTML and executed notebook, model coefficient and residual tables, mean–dispersion diagnostics, normalized sample counts, and compressed VST matrix)
+- `<outdir>/analysis/per_type/<cell-type-slug>/split.h5ad` (reusable raw-count split)
+- `<outdir>/analysis/per_type/<cell-type-slug>/analysis/{analysis.h5ad,report.html,executed.ipynb}` (optional cell-type analysis and reports)
+- `<outdir>/analysis/per_type/<cell-type-slug>/analysis/age_trajectory_{clusters,cluster_means}.csv` (optional per-gene labels, standardized profiles, UMAP coordinates, and cluster means)
+- `<outdir>/analysis/per_type/<cell-type-slug>/analysis/residual_wgcna/` (when residuals are available: `metadata.json`, `soft_threshold.csv`, `module_assignments.csv`, `eigengenes.csv`, and `module_summary.csv`)
+- `<outdir>/index.html` (links to harmonization QC, integration benchmark, combined trajectory, and all currently published per-type HTML reports)
+- `<outdir>/analysis/per_type/<cell-type-slug>/analysis/fraction_model_diagnostics.tsv` (optional per-study fraction-model covariates, residual SD, and binomial-sampling reference)
+- `<outdir>/analysis/per_type/cell_type_manifest.json` (optional downstream provenance and completeness contract)
+- `<outdir>/analysis/combined/differential_expression/*.csv` (combined cross-cell-type DE results and manifest)
+- `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/...csv` (per-study and per-type combined covariate results)
+- `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/combined/age_bin_pearson_residuals.npz` and `age_bin_pearson_residuals_samples.csv` (sample × gene residuals and sample metadata from the age-bin model)
+- `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/age_model_diagnostics.csv` (sample support and raw-count inputs for the shared age-model diagnostic figure)
+- `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/cell_type_result.json` (per-task fit record collected into the root manifest)
+- `<outdir>/analysis/combined/differential_expression/differential_expression.json` (DE status and cell-type result index)
+- `<outdir>/analysis/combined/trajectory/{report.html,executed.ipynb}` (combined trajectory report)
+- `<outdir>/analysis/combined/trajectory/*.csv` (shared-bin cross-type clusters and means, gene-level DE recurrence, and cross-type pattern concordance)
+- `<outdir>/analysis/combined/trajectory/developmental_adult_age_effects.csv` (per-cell-type paired shrunken continuous-age coefficients for the 0–30 developmental and ≥20 adult fits)
+- `<outdir>/analysis/combined/trajectory/developmental_adult_age_effect_support.csv` (sample and gene support for that comparison)
+- `<outdir>/analysis/combined/trajectory/expression_atlas_*.csv` (study-balanced common-gene expression matrix, gene UMAP, depth support, and independent 3′/5′ and intronic-read sensitivity summaries)
+- `<outdir>/analysis/combined/trajectory/*_residual_{clusters,pc_scores}.csv` (per-cell-type sample cluster assignments and PCA scores)
+- `<outdir>/analysis/combined/trajectory/cross_cell_type_pearson_residuals.npz` and residual metadata/cluster CSVs (wide matrix, Leiden-primary assignments, K-means/HDBSCAN alternatives, marker contrasts, and cell-type feature composition for shared samples across full-trajectory-supported cell types)
+- `<outdir>/analysis/per_gene/<cell-type-slug>/<gene-slug>/` (focused gene-profile HTML and executed notebook, model coefficient and residual tables, mean–dispersion diagnostics, normalized sample counts, and compressed VST matrix)
 - `<outdir>/run_manifest.json` (requested, selected, and skipped studies;
   hashes of selected source inputs, metadata dependencies, and annotation models;
   selected studies are the complete requested set for explicit study lists)
@@ -194,28 +201,29 @@ H5AD, then writes the raw joined counts and metadata. Per-cell QC fields
 harmonization and carried through the join. The merge does not normalize the
 
 `make run-integration-benchmark` is a separate optional workflow over that
-merged H5AD. It loads the expression matrix once. Batch-corrected and
-unintegrated scVI are trained from the same count-based, batch-aware HVG subset
-before the matrix is normalized; the unintegrated model omits the study
-covariate. scVI returns a latent representation, from which the benchmark
-computes neighbors and UMAP. The other methods share the normalized HVG/PCA
-workspace. Harmony and Scanorama adjust
-embeddings, BBKNN balances the neighbor graph, and the unintegrated PCA graph is
-the baseline. Every method's graph supplies both CellTypist majority voting
-and its UMAP. The integration report places unintegrated PCA and scVI before
-Harmony, Scanorama, BBKNN, and batch-corrected scVI; it compares graph edge
-overlap with unintegrated PCA and AIFI-L2 label concordance without applying
-acceptance thresholds. The published benchmark H5AD contains metadata, diagnostic
+merged H5AD. It loads the expression matrix once. The benchmark compares an
+unintegrated PCA baseline with Harmony, Scanorama, and BBKNN using a shared
+normalized HVG/PCA workspace. Harmony and Scanorama adjust embeddings, BBKNN
+balances the neighbor graph, and the unintegrated PCA graph is the baseline.
+Every method's graph supplies both CellTypist majority voting
+and its UMAP. The integration report compares graph edge overlap with
+unintegrated PCA and AIFI-L2 label concordance without applying acceptance
+thresholds. The published benchmark H5AD contains metadata, diagnostic
 labels, method embeddings, and neighbor graphs, but no expression matrix. Its
 `benchmark_*_aifi_l2_majority` columns are diagnostic; the retained per-study
 `obs['aifi_l2_majority']` remains the downstream label. The notebook separates
 embedding integration from type calling and reports graph edge overlap and
 AIFI-L2 concordance.
+The benchmark emits timestamped stage progress to the task's captured stdout
+and stderr files in its Nextflow `work/` directory. Production and test
+targets use the standard Python image. Use
+`INTEGRATION_BENCHMARK_LOG_LEVEL=DEBUG make run-integration-benchmark` for
+additional diagnostics.
 
 ### Cell-type analysis contract
 
 `make run-cell-type-analysis` consumes the existing
-`<outdir>/merged/single_cell_merged.h5ad`; it does not trigger the core merge.
+`<outdir>/harmonization/merged/single_cell_merged.h5ad`; it does not trigger the core merge.
 The internal split task retains raw counts and canonical metadata. It computes
 `n_cells_in_sample` and
 `n_cells_in_sample_l1_parent` before splitting, so the reports need no auxiliary
@@ -233,7 +241,8 @@ The report visualizes native local PC1-versus-PC2 and PC3-versus-PC4 scores
 with the standard study palette as colour and `technology` as marker shape.
 These are descriptive, uncorrected-PC diagnostics; the Harmony-corrected PC
 representation remains reserved for the local neighbour graph, UMAP, and
-Leiden clustering.
+Leiden clustering. Per-type reports show one study-coloured UMAP from native
+PCs before the existing Harmony-integrated UMAP plots.
 
 The 50-cell local-analysis threshold does not guarantee enough cells per study
 for reliable Harmony correction. The fixed 50-neighbour graph is also dense for
@@ -252,6 +261,7 @@ independent producer: it lists labels, then each task loads the small merged
 pseudobulk H5AD and subsets its assigned type in memory (without materializing
 per-type pseudobulk inputs). A final collector writes the
 `differential_expression.json` manifest that indexes per-study and combined
+covariate results by cell-type slug. It publishes only each type's
 covariate results by cell-type slug. Each cell type also receives a separate
 all-study age-bin trajectory model. It uses configured decade bins, a 20–30
 reference, minimum sample support per bin, and a minimum of seven retained
@@ -266,10 +276,13 @@ seven-decade support threshold are omitted from trajectory figures, clustering, 
 recurrence. A subsequent report process uses only bins shared by every
 eligible type (at least five shared bins), clusters significant gene-by-type
 trajectories, and summarizes per-gene recurrence and pattern agreement.
-A single report-render process receives either the
-matching result directory or a no-DE flag and publishes only beneath
-`cell_type_analysis/`. DE results publish only beneath
-`differential_expression/`.
+A single report-render process receives either the matching result directory or
+a no-DE flag. Cell-type analysis and reports publish under
+`analysis/per_type/<cell-type-slug>/analysis/`; per-type DE results publish
+under `analysis/per_type/<cell-type-slug>/differential_expression/`. The
+collector writes the shared manifest under
+`analysis/combined/differential_expression/`, and the cross-type report is
+under `analysis/combined/trajectory/`.
 
 Each study is fitted once with its maximal available design: age and sex plus
 each optional covariate with at least two observed values, plus `study_site`
@@ -285,14 +298,9 @@ record the formula, included studies and sites, complete-case sample count, and
 exclusions for missing design values.
 
 The explicit depth covariate is used in addition to PyDESeq2's size-factor
-normalization. It was added after the production Naive CD8 T-cell age volcano
-showed a strong age-associated abundance/depth shift, and sample-level residual
-diagnostics showed patterns across pseudobulk depth after fitting. The observed
-age–depth relationship could confound the age coefficient despite size-factor
-normalization, so `log10(total_counts)` is included as a technical adjustment
-in every per-study and combined fit, including the age-bin trajectory model.
-This adjustment is motivated by those diagnostics; it is not evidence that
-depth alone caused or fully explains the original pattern.
+normalization. It adjusts for the age-associated pseudobulk-depth pattern
+observed in Naive CD8 T cells and is included as a technical covariate in every
+per-study and combined fit, including the age-bin trajectory model.
 
 The configured `l2_parent_l1` mapping is an inferred taxonomy with recorded
 provenance, rather than the independent `aifi_l1_majority` predictions. It is
@@ -371,7 +379,9 @@ and on up to the configured number of leading PCs. The HDBSCAN comparisons
 both use the same `min_cluster_size`, `min_samples`, and selection method;
 those parameters are not swept. Marker and feature-origin contrasts include at most the
 `residual_marker_max_clusters` largest clusters; all labels remain in the
-exported assignments. Each per-type report
+exported assignments. The per-type report keeps the primary UMAP/PCA, these
+alternative-clustering comparisons, and cluster-marker contrasts together
+before a separate WGCNA section. Each per-type report
 shows a 2 × 2 UMAP grid for sex, age, log10(total counts), and study, plus a
 second 2 × 2 grid for residual clusters, BMI, and CMV; BMI and CMV panels show
 recorded-value counts. The model-covariate grid is collapsed by default, while
@@ -393,6 +403,55 @@ overlays for the K-means and two HDBSCAN alternatives; the table includes the
 tested Leiden resolution counts. Wide columns are labeled
 `cell type::gene`. Per-type and cross-type cluster assignments, PC scores,
 matrices, and sample metadata are materialized for downstream analysis.
+
+### Per-type residual WGCNA
+
+Each per-type report runs PyWGCNA on the Pearson residuals saved by its
+age-bin model. These residuals have already adjusted for age-bin, sex, study
+site when estimable, and log10 pseudobulk total counts. The signed network is
+limited to `residual_wgcna.maximum_genes` genes with the largest residual
+variance, after removing non-finite and zero-variance genes. PyWGCNA selects a
+soft-threshold power from `soft_threshold_powers`, constructs a signed TOM,
+uses dynamic tree cutting, and merges eigengenes at the configured
+dissimilarity threshold. The WGCNA section contains its own soft-threshold
+diagnostics, module-size and CMV summary plots, and downloadable output tables;
+PyWGCNA's internal figures are closed so they cannot appear in the neighboring
+cluster-marker section. The report exports its exact settings, selected power,
+and every input/output count.
+
+The initial settings in `config/pipeline.json` are:
+
+| Setting | Value | Use |
+| --- | ---: | --- |
+| `minimum_samples` | 20 | Skip network fitting below this residual-sample count. |
+| `maximum_genes` | 2,000 | Keep the highest-variance residual genes before building the dense network. |
+| `minimum_module_size` | 20 | Minimum genes in a detected module. |
+| `soft_threshold_powers` | 1–10, 12, 14, 16, 18, 20 | Candidate powers to inspect. |
+| `scale_free_fit_threshold` | 0.9 | Target fit index for power selection. |
+| `mean_connectivity_threshold` | 100 | Maximum mean connectivity used for power selection. |
+| `module_eigengene_dissimilarity_threshold` | 0.2 | Merge modules whose eigengenes are this similar or closer. |
+| `dynamic_tree_deep_split` | 2 | Medium sensitivity for dynamic tree cutting. |
+| `cmv_fdr_threshold` | 0.05 | CMV DE adjusted-p-value cutoff for overlap summaries. |
+
+PyWGCNA chooses the lowest candidate whose scale-free fit is greater than 0.9
+and whose mean connectivity is at most 100. If no candidate satisfies both,
+it chooses the candidate with the highest fit. The diagnostic plot and
+`soft_threshold.csv` show whether the thresholds were met, and `metadata.json`
+records the chosen power and thresholds. These values are an initial exploratory
+configuration, not a parameter sweep or evidence of module stability. The
+20-sample floor follows the WGCNA authors' recommendation to use at least 20
+samples when possible; it does not guarantee stable modules. See the
+[WGCNA FAQ](https://edo98811.github.io/WGCNA_official_documentation/faq.html)
+and [network-construction tutorial](https://edo98811.github.io/WGCNA_official_documentation/FemaleLiver-02-networkConstr-auto.pdf)
+for the reference guidance and example settings.
+
+When the merged CMV model is available, module summaries use its
+FDR-significant CMV genes at `cmv_fdr_threshold` for a hypergeometric overlap
+test with the selected network genes as background. They also report
+point-biserial correlations between eigengenes and observed yes/no CMV status,
+with FDR correction across modules. CMV was not included in the residual
+model, so these checks describe residual CMV structure and do not provide an
+independent association test.
 
 ### Expression-atlas settings
 
@@ -477,6 +536,12 @@ documentation-tool dependency.
 `make render-trajectory-report[-test]` reruns the cross-cell-type analysis and
 notebook from an existing DE manifest; it does not refit any model or rerender
 the per-cell-type reports.
+Core, integration-benchmark, DE, and cell-type report targets update
+`<outdir>/index.html` after publishing. `make render-report-index OUTDIR=<outdir>`
+rebuilds the index using the cell-type manifest when available, or scanning
+published per-type reports otherwise, which keeps its links synchronized when
+cell types change. Harmonization and benchmark reports are linked when their
+published files are present.
 `make render-trajectory-reports-focused-test` rerenders the combined synthetic
 trajectory report plus one representative per-type report (defaulting to
 `cd14-monocyte`) from existing pseudobulk, split, and analysis artifacts. It

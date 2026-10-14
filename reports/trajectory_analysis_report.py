@@ -77,6 +77,12 @@ def read_optional_csv(path, **kwargs):
     return pd.read_csv(path, **kwargs)
 
 
+developmental_adult_effects = read_optional_csv(
+    analysis_dir / "developmental_adult_age_effects.csv"
+)
+developmental_adult_support = read_optional_csv(
+    analysis_dir / "developmental_adult_age_effect_support.csv"
+)
 expression_matrix = read_optional_csv(expression_matrix_path, index_col="gene")
 expression_gene_umap = read_optional_csv(expression_gene_umap_path)
 expression_clusters = read_optional_csv(expression_clusters_path)
@@ -159,6 +165,7 @@ html { scroll-behavior: smooth; scroll-padding-top: 1.25rem; }
       <li><a href="#Sample-clustering-from-bins-model-Pearson-residuals">Residual clustering</a>
         <ul><li><a href="#Cluster-focused-residual-characterization">Cluster characterization</a></li></ul>
       </li>
+      <li><a href="#Developmental-versus-adult-age-effects">Developmental versus adult effects</a></li>
       <li><a href="#Age-bin-DE-genes-recurring-in-multiple-cell-types">Recurring age-bin DE genes</a></li>
       <li><a href="#Cross-cell-type-trajectory-clusters">Trajectory clusters</a></li>
       <li><a href="#Do-recurring-genes-share-trajectory-shapes?">Trajectory-shape concordance</a></li>
@@ -614,7 +621,11 @@ def display_collapsible_figure(figure, summary, *, open_by_default=False):
 def plot_residual_covariates(
     table, title, covariates, *, categorical_covariates, open_by_default=False
 ):
-    figure, axes = plt.subplots(2, 2, figsize=(16.8, 8.64))
+    n_columns = 2
+    n_rows = max(1, int(np.ceil(len(covariates) / n_columns)))
+    figure, axes = plt.subplots(
+        n_rows, n_columns, figsize=(16.8, 4.32 * n_rows), squeeze=False
+    )
     for axis, covariate in zip(axes.flat, covariates):
         if covariate not in table:
             axis.text(0.5, 0.5, "Not recorded", ha="center", va="center")
@@ -642,6 +653,23 @@ def plot_residual_covariates(
     figure.suptitle(title, y=1.01)
     figure.tight_layout()
     display_collapsible_figure(figure, title, open_by_default=open_by_default)
+
+
+def annotate_residual_cluster_centroids(axis, table, label_column):
+    labels = pd.to_numeric(table[label_column], errors="coerce")
+    points = table.assign(_cluster=labels).dropna(
+        subset=["_cluster", "umap_1", "umap_2"]
+    )
+    for cluster, group in points.loc[points["_cluster"] >= 0].groupby("_cluster"):
+        axis.annotate(
+            str(int(cluster)),
+            (group["umap_1"].mean(), group["umap_2"].mean()),
+            ha="center", va="center", fontsize=9, fontweight="bold",
+            color="#111111",
+            bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "alpha": 0.8,
+                  "edgecolor": "none"},
+            zorder=6,
+        )
 
 
 def plot_residual_cluster_alternatives(table, settings):
@@ -688,6 +716,7 @@ def plot_residual_cluster_alternatives(table, settings):
                 values.loc[selected, "umap_1"], values.loc[selected, "umap_2"],
                 color=plt.get_cmap("tab20")(index % 20), s=32, alpha=0.82, linewidths=0,
             )
+        annotate_residual_cluster_centroids(axis, values, column)
         axis.set_title(
             f"{row['method']}\n{row['n_clusters']} clusters; {row['n_noise']} noise"
         )
@@ -765,6 +794,9 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
             data=cross_residual_clusters, x="umap_1", y="umap_2", hue="residual_cluster_label",
             palette="tab20", s=32, alpha=0.84, linewidth=0, ax=axis,
         )
+        annotate_residual_cluster_centroids(
+            axis, cross_residual_clusters, "residual_cluster"
+        )
         axis.set_title("Cross-cell-type residual UMAP: residual clusters")
         axis.set_xlabel("UMAP 1")
         axis.set_ylabel("UMAP 2")
@@ -772,12 +804,20 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
             axis.legend_.set_title("Residual cluster")
             axis.legend_.set_bbox_to_anchor((1.02, 1))
         figure.tight_layout()
-        plt.show()
+        display_collapsible_figure(
+            figure, "Cross-cell-type residual UMAP: residual clusters"
+        )
         plot_residual_covariates(
             cross_residual_clusters,
             "Cross-cell-type residual UMAPs: model covariates",
-            ["sex", "age", "log10_total_counts", "study"],
-            categorical_covariates={"sex", "study"},
+            [
+                "sex", "age", "log10_total_counts", "study", "study_site",
+                "ethnicity", "technology", "batch_single_cell",
+            ],
+            categorical_covariates={
+                "sex", "study", "study_site", "ethnicity", "technology",
+                "batch_single_cell",
+            },
         )
         if any(covariate in cross_residual_clusters for covariate in ("bmi", "cmv")):
             plot_residual_covariates(
@@ -842,6 +882,9 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
                 data=cross_residual_clusters, x="umap_1", y="umap_2", hue="residual_cluster_label",
                 palette="tab20", s=32, alpha=0.84, linewidth=0, ax=axis,
             )
+            annotate_residual_cluster_centroids(
+                axis, cross_residual_clusters, "residual_cluster"
+            )
             axis.set_title("Residual clusters characterized below")
             axis.set_xlabel("UMAP 1")
             axis.set_ylabel("UMAP 2")
@@ -849,7 +892,9 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
                 axis.legend_.set_title("Residual cluster")
                 axis.legend_.set_bbox_to_anchor((1.02, 1))
             figure.tight_layout()
-            plt.show()
+            display_collapsible_figure(
+                figure, "Cross-cell-type residual clusters characterized below"
+            )
             marker_clusters = sorted(residual_markers["residual_cluster"].unique())
             figure, axes = plt.subplots(
                 len(marker_clusters), 2, figsize=(13, 3.4 * len(marker_clusters))
@@ -900,6 +945,83 @@ else:
     display(Markdown(
         "_No residual-bearing cell types are available for cross-cell-type clustering._"
     ))
+
+# %% [markdown]
+# ## Developmental versus adult age effects
+#
+# Each panel compares every gene with a finite shrunken coefficient in both
+# adjusted negative-binomial models for one cell type. The developmental model
+# uses ages 0–30; the established adult model uses ages 20 years and above.
+# Both include study site, sex, and log10 pseudobulk total counts when
+# estimable. apeGLM shrinkage stabilizes displayed log2 fold changes, especially
+# for low-information genes; Wald p-values remain those from the unshrunk fit.
+# Points are not selected by p-value or FDR. The age ranges overlap from 20–30,
+# so this is descriptive rather than an independent-cohort comparison.
+
+# %%
+if developmental_adult_effects.empty:
+    display(Markdown(
+        "_No cell type produced both developmental and adult age-coefficient tables with "
+        "shrinkage estimates._"
+    ))
+else:
+    developmental_adult_effects = developmental_adult_effects.copy()
+    effect_columns = [
+        "developmental_log2_fold_change_per_year_shrunk",
+        "adult_log2_fold_change_per_year_shrunk",
+    ]
+    for column in effect_columns:
+        developmental_adult_effects[column] = pd.to_numeric(
+            developmental_adult_effects[column], errors="coerce"
+        )
+    plot_data = developmental_adult_effects.replace([np.inf, -np.inf], np.nan).dropna(
+        subset=effect_columns
+    )
+    display(Markdown(
+        f"{len(plot_data):,} gene × cell-type pairs have finite shrunken estimates on both axes. "
+        "No significance or expression threshold was applied to select these points."
+    ))
+    if plot_data.empty:
+        display(Markdown("_No paired finite shrunken coefficients are available to plot._"))
+    else:
+        limit = float(np.nanmax(np.abs(plot_data[effect_columns].to_numpy(dtype=float))))
+        limit = max(limit * 1.05, 0.01)
+        cell_types = sorted(plot_data["cell_type"].astype(str).unique())
+        n_columns = min(3, len(cell_types))
+        n_rows = int(np.ceil(len(cell_types) / n_columns))
+        figure, axes = plt.subplots(
+            n_rows, n_columns, figsize=(5.2 * n_columns, 4.8 * n_rows), squeeze=False,
+        )
+        for axis, cell_type in zip(axes.ravel(), cell_types):
+            subset = plot_data.loc[plot_data["cell_type"].astype(str) == cell_type]
+            axis.scatter(
+                subset[effect_columns[0]], subset[effect_columns[1]],
+                s=9, alpha=0.35, linewidths=0, color="#176b87",
+            )
+            axis.axhline(0, color="#666666", linewidth=0.8)
+            axis.axvline(0, color="#666666", linewidth=0.8)
+            axis.plot([-limit, limit], [-limit, limit], color="#c44e52", linewidth=0.9,
+                      linestyle="--", label="equal slope")
+            correlation = subset[effect_columns[0]].corr(subset[effect_columns[1]], method="spearman")
+            axis.set_xlim(-limit, limit)
+            axis.set_ylim(-limit, limit)
+            axis.set_aspect("equal", adjustable="box")
+            axis.set_title(f"{cell_type} (n={len(subset):,}; Spearman ρ={correlation:.2f})")
+            axis.set_xlabel("Developmental age effect, ages 0–30\n(shrunken log2 fold change per year)")
+            axis.set_ylabel("Adult age effect, ages ≥20\n(shrunken log2 fold change per year)")
+        for axis in axes.ravel()[len(cell_types):]:
+            axis.set_axis_off()
+        figure.suptitle("Developmental versus adult age slopes", y=1.01)
+        figure.tight_layout()
+        plt.show()
+        display(Markdown(
+            "Download paired effects in [developmental_adult_age_effects.csv]"
+            "(developmental_adult_age_effects.csv) and fit support in "
+            "[developmental_adult_age_effect_support.csv]"
+            "(developmental_adult_age_effect_support.csv)."
+        ))
+if not developmental_adult_support.empty:
+    display(developmental_adult_support)
 
 # %% [markdown]
 # ## Age-bin DE genes recurring in multiple cell types

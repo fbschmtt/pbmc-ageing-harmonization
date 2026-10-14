@@ -10,7 +10,7 @@ include {
 workflow {
     def root = file(params.project_dir)
     if (!params.pseudobulk_input) {
-        error 'Provide --pseudobulk_input, for example output/merged/pseudobulk_merged.h5ad'
+        error 'Provide --pseudobulk_input, for example output/harmonization/merged/pseudobulk_merged.h5ad'
     }
     def pseudobulk_input = channel.value(file(params.pseudobulk_input, checkIfExists: true))
     def pipeline_config = channel.value(file(root.resolve('config/pipeline.json'), checkIfExists: true))
@@ -44,7 +44,7 @@ workflow {
         synthetic_test_data,
     )
     RENDER_CROSS_CELL_TYPE_TRAJECTORY_REPORT(
-        WRITE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION_MANIFEST.out.results,
+        WRITE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION_MANIFEST.out.per_type,
         pseudobulk_input,
         pipeline_config,
         trajectory_report_template,

@@ -15,12 +15,12 @@ def test_qc_runner_materializes_executes_and_exports_report(tmp_path, monkeypatc
     def record(command, **kwargs):
         calls.append((command, kwargs))
         if "--execute" in command:
-            output_dir = root / "output" / "harmonization_qc" / "study"
+            output_dir = root / "output" / "harmonization" / "harmonization_qc" / "study"
             (output_dir / "executed.ipynb").write_text(
                 '{"cells": [], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}'
             )
         if "html" in command:
-            output_dir = root / "output" / "harmonization_qc" / "study"
+            output_dir = root / "output" / "harmonization" / "harmonization_qc" / "study"
             (output_dir / "report.html").write_text(
                 '<nav><ul><!-- REPORT_TOC_PLACEHOLDER --></ul></nav>'
                 '<h2 id="run-provenance">Run provenance and dimensions</h2>'
@@ -31,11 +31,11 @@ def test_qc_runner_materializes_executes_and_exports_report(tmp_path, monkeypatc
         root=root,
         input_path=input_path,
         run_report_path=run_report,
-        output_dir=root / "output" / "harmonization_qc" / "study",
+        output_dir=root / "output" / "harmonization" / "harmonization_qc" / "study",
         study="study",
     )
 
-    assert html == root / "output" / "harmonization_qc" / "study" / "report.html"
+    assert html == root / "output" / "harmonization" / "harmonization_qc" / "study" / "report.html"
     assert len(calls) == 3
     assert "jupytext" in calls[0][0]
     assert "--execute" in calls[1][0]

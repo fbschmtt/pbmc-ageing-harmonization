@@ -1,8 +1,8 @@
 process HARMONIZE {
     tag { study_id }
-    publishDir "${params.outdir}/harmonized", mode: 'copy', overwrite: true,
+    publishDir "${params.outdir}/harmonization/harmonized", mode: 'copy', overwrite: true,
         saveAs: { name -> name.endsWith('.h5ad') ? name : null }
-    publishDir "${params.outdir}/provenance", mode: 'copy', overwrite: true,
+    publishDir "${params.outdir}/harmonization/provenance", mode: 'copy', overwrite: true,
         saveAs: { name -> name.endsWith('.json') ? name : null }
 
     input:

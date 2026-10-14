@@ -1,6 +1,6 @@
 process RUN_INTEGRATION_BENCHMARK {
     tag 'global integration benchmark'
-    publishDir "${params.outdir}/integration_benchmark", mode: 'copy', overwrite: true
+    publishDir "${params.outdir}/harmonization/integration_benchmark", mode: 'copy', overwrite: true
 
     input:
     path merged_input
@@ -15,13 +15,14 @@ process RUN_INTEGRATION_BENCHMARK {
     """
     pbmc-integration-benchmark --project-root . --config ${pipeline_config} \\
       --input ${merged_input} --aifi-l2-model ${aifi_l2_model} \\
-      --output integration_benchmark.h5ad --report-output integration_benchmark.json
+      --output integration_benchmark.h5ad --report-output integration_benchmark.json \\
+      --log-level ${params.log_level}
     """
 }
 
 process RENDER_INTEGRATION_BENCHMARK_REPORT {
     tag 'global integration benchmark report'
-    publishDir "${params.outdir}/integration_benchmark", mode: 'copy', overwrite: true
+    publishDir "${params.outdir}/harmonization/integration_benchmark", mode: 'copy', overwrite: true
 
     input:
     path artifact

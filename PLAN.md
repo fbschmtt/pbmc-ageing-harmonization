@@ -89,12 +89,11 @@ whole-dataset single-cell merge.
   merge QC notebook into the integration-benchmark report.
 - [x] Include the integration benchmark and report artifact check in the
   ordered test workflow after the fresh core merge.
-- [x] Extend the optional integration benchmark with Scanorama, BBKNN, and
-  scVI with and without the study covariate. Keep each method's graph for UMAP
-  and CellTypist majority voting, and publish a thin artifact with method
-  representations, UMAPs, graphs, and diagnostic labels. The report compares
-  graph overlap and per-study AIFI-L2 concordance without applying acceptance
-  thresholds.
+- [x] Extend the optional integration benchmark with Scanorama and BBKNN.
+  Keep each included method's graph for UMAP and CellTypist majority voting,
+  and publish a thin artifact with method representations, UMAPs, graphs, and
+  diagnostic labels. The report compares graph overlap and per-study AIFI-L2
+  concordance without applying acceptance thresholds.
 - [ ] Add one shared cross-study design report, rather than duplicating
   donor-level covariate/confounding plots in every AIFI-L2 report. It should
   cover age, sex, BMI, and CMV support and correlation across studies, plus
@@ -143,6 +142,12 @@ whole-dataset single-cell merge.
   random-slope models; include model-specific residual diagnostics and a
   synthetic report smoke target. Add a workflow profiling the top merged
   age-DE genes per cell type.
+- [x] Add per-type residual WGCNA using the age-bin model Pearson residuals,
+  including network diagnostics, module outputs, and exploratory CMV overlap
+  and eigengene association plots.
+- [x] Add an output-root HTML report index linking harmonization QC, the
+  integration benchmark, combined trajectory, and currently published
+  per-type reports; refresh it from the corresponding Make workflow targets.
 
 ## Current implementation state
 
@@ -240,12 +245,8 @@ then runs one task per type; each task loads and subsets the same small merged
 pseudobulk H5AD in memory, without materializing a per-type pseudobulk input.
 The final collector writes the standard result layout and root manifest.
 This explicit depth term is in addition to DESeq2's size-factor normalization.
-It was added because the production Naive CD8 T-cell age volcano coincided with
-a strong age-related decline in cell-type abundance and pseudobulk depth, while
-sample residuals retained depth-dependent patterns after fitting. The depth
-term is intended to adjust this observed age–depth confounding; its inclusion
-does not by itself demonstrate that depth caused or fully accounts for the
-unusual volcano shape.
+It addresses the age-associated pseudobulk-depth pattern observed in Naive
+CD8 T cells and is included in the per-study and combined models.
 Per-study fits use genes available in that study; the merged fit uses the
 intersection of genes available in all studies contributing samples to that
 fit, avoiding synthetic outer-join zeros. Each parallel type task is configured
@@ -255,8 +256,12 @@ The DE workflow remains independent of per-celltype analysis; celltype reports
 consume matching DE result directories through the root manifest's explicit
 cell-type result index. The single-cell and pseudobulk workflows stay separate;
 named Nextflow subworkflows group split/analyse/render stages, and one report
-renderer accepts an optional matching DE result. Their output products remain
-separate under `cell_type_analysis/` and `differential_expression/`.
+renderer accepts an optional matching DE result. Core preparation, harmonized
+data, pseudobulk, merged inputs, QC reports, and integration benchmarks publish
+beneath `harmonization/`. Analysis outputs publish beneath `analysis/`: shared
+outputs and the cross-type trajectory report are in `combined/`, per-cell-type
+reports and DE results are in `per_type/<cell-type-slug>/`, and focused gene
+profiles are in `per_gene/<cell-type-slug>/<gene-slug>/`.
 
 The test profile bypasses only the minimum-cell cutoff so the small real-data
 fixture can exercise filtering and graceful skip behavior while retaining the
@@ -303,36 +308,6 @@ their shapes, and counts how many eligible types show omnibus-significant DE
 decision. R DESeq2, edgeR quasi-likelihood, and limma-voom comparisons are
 outside this
 implementation.
-
-### Priority investigation: unusual Naive CD8 T-cell age signal
-
-The production age volcano for Naive CD8 T cells has an unusually strong,
-asymmetric pattern. Its cell-type abundance declines strongly with age, and
-sample residuals showed depth-dependent patterns after fitting. The explicit
-`log10(total_counts)` adjustment was added in response, alongside DESeq2's
-size-factor normalization. Continue assessing whether it sufficiently
-addresses the pattern before treating the association as biological:
-
-- Reproduce the fit and inspect its sample-level age, study-site, technology,
-  sex, and pseudobulk cell-count distributions. Compare the pooled age
-  coefficient with within-study and within-site fits, study/site-specific age
-  slopes, and leave-one-study/site-out fits. Check count normalization,
-  size-factor behavior, filtering, and the result-to-plot mapping as part of
-  the reproduction.
-- Assess whether conditioning on the minimum 10 cells per sample × cell-type
-  pseudobulk induces selection/collider bias, especially for cell types whose
-  abundance falls with age. Compare inclusion against age, site, abundance,
-  and expression-related measurements, and run prespecified threshold
-  sensitivity analyses before deciding whether the cutoff contributes to the
-  signal.
-- Evaluate the experimental `study_site` batch adjustment against the current
-  study-level design before adopting it in production. This uses source labels
-  for AIDA sites/countries, Fachrul26 villages, and Nehar-Belaid26 collection
-  sites, while studies with one site retain one level. Check label uniqueness,
-  site-level sample sizes and age support, design rank, and changes in
-  estimability. In Nehar-Belaid26, the adult metadata include 32 UCHC and 9
-  HSNRI samples before cell-type cell-count filtering, so site-specific support
-  may be limited.
 
 ## Exploratory analysis: residual structure after pseudobulk DE
 
@@ -432,23 +407,17 @@ cell-type-by-gene features.
 
 ## Recommended next sequence
 
-1. Reproduce and diagnose the unusual Naive CD8 T-cell age result, including
-   study/site-specific fits and sensitivity to the 10-cell inclusion cutoff.
-2. Compare the experimental `study_site` DE models with the study-adjusted
-   baseline, checking site support, design estimability, and changes in which
-   cell types and covariates can be fitted.
-3. Complete the final manual metadata review for every study against its paper
+1. Complete the final manual metadata review for every study against its paper
    and supplements, keeping unresolved assumptions explicitly labelled.
-4. If the site-adjusted fits are supported by the diagnostics, rerun production
+2. If the metadata review or model diagnostics require changes, rerun production
    so published outputs match the reviewed inputs and model specification.
-5. Add random-seed and immutable image-digest provenance to the production run
+3. Add random-seed and immutable image-digest provenance to the production run
    record; input, metadata, model, artifact, and report checksums are already
    included.
-6. Add opt-in Nextflow execution reports and traces, then record per-task RAM,
+4. Add opt-in Nextflow execution reports and traces, then record per-task RAM,
    CPU, and elapsed-time baselines from production.
-7. Add targeted synthetic tests for metadata joins, rare labels, and conversion
+5. Add targeted synthetic tests for metadata joins, rare labels, and conversion
    edge cases that random smoke-test subsets may omit.
-8. Extend the implemented residual sample clustering with residual correlation
-   modules, cross-study replication checks, and prespecified signature scores.
-9. Add a static manifest-driven report index before considering a custom
-   project-level web frontend.
+6. Assess whether residual WGCNA modules replicate across studies and compare
+   them with prespecified biological signatures. Keep these exploratory and
+   distinguish module discovery from independent validation.

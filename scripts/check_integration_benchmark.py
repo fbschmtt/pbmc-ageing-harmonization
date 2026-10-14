@@ -12,7 +12,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Validate integration benchmark test outputs")
     parser.add_argument("--outdir", type=Path, default=Path("output/test"))
     args = parser.parse_args()
-    directory = args.outdir / "integration_benchmark"
+    directory = args.outdir / "harmonization" / "integration_benchmark"
     artifact_path = directory / "integration_benchmark.h5ad"
     report_path = directory / "integration_benchmark.json"
     html_path = directory / "report.html"
@@ -22,7 +22,7 @@ def main() -> None:
 
     artifact = ad.read_h5ad(artifact_path)
     expected_methods = {
-        "harmony", "unintegrated_pca", "scanorama", "bbknn", "scvi", "scvi_unintegrated",
+        "harmony", "unintegrated_pca", "scanorama", "bbknn",
     }
     report = json.loads(report_path.read_text())
     method_records = report.get("methods", [])
@@ -67,6 +67,8 @@ def main() -> None:
         raise SystemExit("Integration benchmark report has an uninformative browser title")
     if "Embedding integration" not in html or "Type calling" not in html:
         raise SystemExit("Integration benchmark report lacks embedding or type-calling sections")
+    if "scVI was not included" not in html:
+        raise SystemExit("Integration benchmark report does not explain why scVI was omitted")
     print(f"Validated integration benchmark: {artifact.n_obs:,} cells, {len(methods)} methods")
 
 

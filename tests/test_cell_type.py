@@ -5,7 +5,12 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
-from pbmc_pipeline.cell_type import _marker_table, analyse_cell_type, split_cell_types
+from pbmc_pipeline.cell_type import (
+    _marker_table,
+    add_unintegrated_umap,
+    analyse_cell_type,
+    split_cell_types,
+)
 
 PIPELINE = {
     "processing": {"output_compression": "gzip"},
@@ -82,6 +87,39 @@ def test_marker_table_adds_group_when_scanpy_returns_a_single_cluster_without_on
     result = _marker_table(markers, pd.Series(["0", "0"]))
 
     assert result["group"].tolist() == ["0", "0"]
+
+
+def test_unintegrated_umap_uses_native_pcs_and_keeps_integrated_graph_and_embedding():
+    rng = np.random.default_rng(23)
+    adata = ad.AnnData(
+        X=sparse.csr_matrix((24, 0)),
+        obs=pd.DataFrame(
+            {"study": ["one"] * 12 + ["two"] * 12},
+            index=[f"cell-{index}" for index in range(24)],
+        ),
+    )
+    adata.obsm["X_pca"] = rng.normal(size=(24, 5))
+    adata.obsm["X_pca_harmony"] = rng.normal(size=(24, 5))
+    existing_umap = rng.normal(size=(24, 2))
+    adata.obsm["X_umap"] = existing_umap.copy()
+    adata.uns["neighbors"] = {"connectivities_key": "connectivities"}
+    adata.obsp["connectivities"] = sparse.eye(24, format="csr")
+    pipeline = {
+        "processing": {
+            "neighbors": {"n_neighbors": 5, "n_pcs": 4},
+            "random_seed": 42,
+        }
+    }
+
+    embedding_key = add_unintegrated_umap(adata, pipeline)
+
+    assert embedding_key == "X_umap_unintegrated"
+    assert adata.obsm[embedding_key].shape == (24, 2)
+    assert np.array_equal(adata.obsm["X_umap"], existing_umap)
+    assert "neighbors" in adata.uns
+    assert "connectivities" in adata.obsp
+    assert "unintegrated_neighbors" not in adata.uns
+    assert "unintegrated_neighbors_connectivities" not in adata.obsp
 
 
 def test_analysis_uses_harmony_for_local_neighbors_but_keeps_native_pcs(tmp_path, monkeypatch):

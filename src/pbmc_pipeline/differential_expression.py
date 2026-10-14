@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import logging
 from datetime import datetime, timezone
@@ -50,10 +51,13 @@ def _matrix_to_counts(matrix, *, context: str) -> np.ndarray:
 def _prepare_metadata(
     obs: pd.DataFrame, inclusion: dict, *, test_mode: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, int], list[dict]]:
-    optional_covariates = [column for column in ("bmi", "cmv") if column in obs]
+    residual_metadata_columns = [
+        column for column in ("bmi", "cmv", "ethnicity", "technology", "batch_single_cell")
+        if column in obs
+    ]
     metadata = obs[[
         "study", "study_site", "sample", "age", "sex", "n_cells", "total_counts",
-        *optional_covariates,
+        *residual_metadata_columns,
     ]].copy()
     metadata["study"] = metadata["study"].astype("string").str.strip()
     metadata["study_site"] = metadata["study_site"].astype("string").str.strip()
@@ -188,6 +192,7 @@ def _fit_covariate_model(
     alpha: float,
     cpus: int,
     pearson_residuals_path: Path | None = None,
+    shrink_covariates: frozenset[str] = frozenset(),
 ) -> dict[str, pd.DataFrame]:
     from formulaic_contrasts import FormulaicContrasts
     from pydeseq2.dds import DeseqDataSet
@@ -249,7 +254,11 @@ def _fit_covariate_model(
         )
         residual_metadata_columns = [
             "study", "sample", "age", "sex", "total_counts", "log10_total_counts",
-            *[covariate for covariate in ("bmi", "cmv") if covariate in metadata],
+            *[
+                covariate for covariate in (
+                    "bmi", "cmv", "ethnicity", "technology", "batch_single_cell"
+                ) if covariate in metadata
+            ],
         ]
         sample_metadata = metadata[residual_metadata_columns].copy()
         sample_metadata.insert(0, "pseudobulk_id", metadata.index.astype(str))
@@ -286,6 +295,26 @@ def _fit_covariate_model(
             )
             stats.summary()
             result = stats.results_df.copy()
+            if covariate in shrink_covariates:
+                # Keep the Wald estimate used for inference and add apeGLM's
+                # stabilized estimate for descriptive effect-size displays.
+                result["log2FoldChange_unshrunk"] = result["log2FoldChange"]
+                result["lfcSE_unshrunk"] = result["lfcSE"]
+                try:
+                    stats.lfc_shrink(term)
+                except Exception as exc:  # noqa: BLE001 - preserve the fitted Wald result
+                    result["log2FoldChange_shrunk"] = np.nan
+                    result["lfcSE_shrunk"] = np.nan
+                    result["lfc_shrink_converged"] = False
+                    result["lfc_shrink_error"] = f"{type(exc).__name__}: {exc}"
+                else:
+                    shrunk = stats.results_df
+                    result["log2FoldChange_shrunk"] = shrunk["log2FoldChange"]
+                    result["lfcSE_shrunk"] = shrunk["lfcSE"]
+                    result["lfc_shrink_converged"] = (
+                        stats._LFC_shrink_converged.reindex(result.index).fillna(False)
+                    ).astype(bool)
+                    result["lfc_shrink_error"] = ""
             if covariate in {"age", "bmi", "log10_total_counts"}:
                 contrast_label = {
                     "age": "per year",
@@ -323,6 +352,7 @@ def _run_model(
     test_mode: bool,
     synthetic_test_data: bool,
     save_pearson_residuals: bool = False,
+    shrink_covariates: frozenset[str] = frozenset(),
 ) -> dict:
     details: dict = {
         "model": model_name,
@@ -456,6 +486,7 @@ def _run_model(
             alpha=alpha,
             cpus=cpus,
             pearson_residuals_path=residuals_path,
+            shrink_covariates=shrink_covariates,
         )
     except _NonEstimableModel as exc:
         details.update({"status": "skipped", "reason": str(exc)})
@@ -496,15 +527,9 @@ def _run_model(
         result["n_samples_model"] = len(metadata)
         result["n_samples_before_complete_case_filter"] = n_samples_before_complete_case_filter
         result["n_samples_excluded_missing_design_covariates"] = int((~valid).sum())
-        if model_name == "per_study":
-            if covariate == "age":
-                destination = cell_type_dir / "per_study" / f"{slugify(study or 'unknown-study')}.csv"
-            else:
-                destination = cell_type_dir / "per_study" / covariate / f"{slugify(study or 'unknown-study')}.csv"
-        elif covariate == "age":
-            destination = cell_type_dir / "merged.csv"
-        else:
-            destination = cell_type_dir / "combined" / f"{covariate}.csv"
+        destination = _model_result_path(
+            cell_type_dir, model_name=model_name, covariate=covariate, study=study
+        )
         destination.parent.mkdir(parents=True, exist_ok=True)
         result.to_csv(destination, index=False)
         paths[covariate] = str(destination.relative_to(output_dir))
@@ -536,6 +561,32 @@ def _run_model(
     return details
 
 
+def _model_result_path(
+    cell_type_dir: Path,
+    *,
+    model_name: str,
+    covariate: str,
+    study: str | None = None,
+) -> Path:
+    """Return a model-specific path so parallel fits cannot overwrite results."""
+    if model_name == "per_study":
+        study_slug = slugify(study or "unknown-study")
+        if covariate == "age":
+            return cell_type_dir / "per_study" / f"{study_slug}.csv"
+        return cell_type_dir / "per_study" / covariate / f"{study_slug}.csv"
+    if model_name == "merged":
+        if covariate == "age":
+            return cell_type_dir / "merged.csv"
+        return cell_type_dir / "combined" / f"{covariate}.csv"
+    if model_name == "developmental":
+        if covariate == "age":
+            return cell_type_dir / "developmental.csv"
+        return cell_type_dir / "developmental" / f"{covariate}.csv"
+    if covariate == "age":
+        return cell_type_dir / f"{model_name}.csv"
+    return cell_type_dir / "combined" / f"{covariate}.csv"
+
+
 def _write_age_model_diagnostics(
     *, adata, obs: pd.DataFrame, metadata: pd.DataFrame, cell_type: str, output_dir: Path
 ) -> Path | None:
@@ -552,10 +603,16 @@ def _write_age_model_diagnostics(
     counts = _matrix_to_counts(
         adata.X[row_positions, :][:, col_positions], context=f"{cell_type}/merged diagnostics"
     )
-    diagnostics = metadata[[
+    diagnostic_columns = [
         "study", "study_site", "sample", "age", "sex", "n_cells", "total_counts",
         "log10_total_counts",
-    ]].copy()
+        *[
+            covariate for covariate in (
+                "bmi", "cmv", "ethnicity", "technology", "batch_single_cell"
+            ) if covariate in metadata
+        ],
+    ]
+    diagnostics = metadata[diagnostic_columns].copy()
     diagnostics.insert(0, "pseudobulk_id", diagnostics.index.astype(str))
     diagnostics["counts_in_age_gene_intersection"] = counts.sum(axis=1, dtype=np.int64)
     diagnostics["genes_in_age_intersection"] = len(genes)
@@ -563,6 +620,33 @@ def _write_age_model_diagnostics(
     destination.parent.mkdir(parents=True, exist_ok=True)
     diagnostics.to_csv(destination, index=False)
     return destination
+
+
+def _prepare_developmental_metadata(
+    obs: pd.DataFrame,
+    inclusion: dict,
+    comparison: dict,
+    *,
+    test_mode: bool,
+) -> tuple[pd.DataFrame, dict, dict[str, int], list[dict]]:
+    """Apply ordinary DE eligibility to the configured developmental age range."""
+    developmental_inclusion = {
+        **inclusion,
+        "minimum_age_years_inclusive": comparison["minimum_age_years_inclusive"],
+    }
+    metadata, exclusions, excluded = _prepare_metadata(
+        obs, developmental_inclusion, test_mode=test_mode
+    )
+    maximum_age = comparison["maximum_age_years_inclusive"]
+    above_maximum = metadata["age"] > maximum_age
+    support = {
+        "minimum_age_years_inclusive": comparison["minimum_age_years_inclusive"],
+        "maximum_age_years_inclusive": maximum_age,
+        "n_samples_before_maximum_age_filter": len(metadata),
+        "n_samples_excluded_above_maximum_age": int(above_maximum.sum()),
+        "n_samples_retained": int((~above_maximum).sum()),
+    }
+    return metadata.loc[~above_maximum].copy(), support, exclusions, excluded
 
 
 def _load_pseudobulk(input_path: Path, pipeline: dict):
@@ -689,8 +773,41 @@ def _run_cell_type_differential_expression(
             output_dir=output_dir,
             test_mode=test_mode,
             synthetic_test_data=synthetic_test_data,
+            shrink_covariates=frozenset({"age"}),
         )
     )
+    comparison = spec["developmental_adult_comparison"]
+    developmental_metadata, developmental_support, _, _ = _prepare_developmental_metadata(
+        type_obs,
+        spec["sample_inclusion"],
+        comparison,
+        test_mode=test_mode,
+    )
+    developmental_covariates = [
+        covariate for covariate in ("age", "sex", "log10_total_counts")
+        if _has_covariate_variation(developmental_metadata, covariate)
+    ] or ["age"]
+    developmental_fit = _run_model(
+        adata=type_adata,
+        obs=type_obs,
+        metadata=developmental_metadata,
+        cell_type=cell_type,
+        model_name="developmental",
+        study=None,
+        design=spec["merged_design"],
+        covariates=developmental_covariates,
+        alpha=spec["alpha"],
+        cpus=cpus,
+        output_dir=output_dir,
+        test_mode=test_mode,
+        synthetic_test_data=synthetic_test_data,
+        shrink_covariates=frozenset({"age"}),
+    )
+    developmental_fit.update({
+        "purpose": "developmental_adult_effect_comparison",
+        "developmental_age_range": developmental_support,
+    })
+    item["models"].append(developmental_fit)
     for covariate in optional_covariates:
         if covariate not in metadata:
             continue
@@ -817,12 +934,37 @@ def _write_differential_expression_manifest(
     *,
     test_mode: bool,
     synthetic_test_data: bool,
+    per_type_output_dir: Path | None = None,
 ) -> dict:
     """Write the stable top-level DE index after all cell-type tasks finish."""
     spec = pipeline["differential_expression"]
     split_by = spec["split_by"]
     output_dir.mkdir(parents=True, exist_ok=True)
     records = sorted(records, key=lambda item: item["cell_type"])
+    if per_type_output_dir is not None:
+        def published_path(slug: str, value: str) -> str:
+            relative = Path(value)
+            try:
+                relative = relative.relative_to(slug)
+            except ValueError:
+                pass
+            return (Path("../../per_type") / slug / "differential_expression" / relative).as_posix()
+
+        published_records = copy.deepcopy(records)
+        for item in published_records:
+            slug = item["slug"]
+            for model in item.get("models", []):
+                for key in ("results_by_covariate",):
+                    model[key] = {
+                        covariate: published_path(slug, value)
+                        for covariate, value in model.get(key, {}).items()
+                    }
+                if model.get("results"):
+                    model["results"] = published_path(slug, model["results"])
+                for key in ("pearson_residuals", "pearson_residual_sample_metadata", "age_model_diagnostics"):
+                    if model.get(key):
+                        model[key] = published_path(slug, model[key])
+        records = published_records
 
     report = {
         "schema_version": 1,
@@ -880,6 +1022,8 @@ def _write_differential_expression_manifest(
         "results_by_cell_type": {
             item["slug"]: {
                 "cell_type": item["cell_type"],
+                **({"directory": f"../../per_type/{item['slug']}/differential_expression"}
+                   if per_type_output_dir is not None else {}),
                 "analysis_mode": "test_only" if test_mode or synthetic_test_data else "standard",
                 "test_mode": test_mode,
                 "synthetic_test_data": synthetic_test_data,
@@ -1017,6 +1161,7 @@ def combine_cell_type_differential_expression(
     *,
     test_mode: bool = False,
     synthetic_test_data: bool = False,
+    per_type_output_dir: Path | None = None,
 ) -> dict:
     """Collect parallel task results into the established DE output contract."""
     import shutil
@@ -1025,6 +1170,8 @@ def combine_cell_type_differential_expression(
     records = []
     seen_slugs = set()
     output_dir.mkdir(parents=True, exist_ok=True)
+    if per_type_output_dir is not None:
+        per_type_output_dir.mkdir(parents=True, exist_ok=True)
     for result_dir in result_dirs:
         record_path = result_dir / "cell_type_result.json"
         if not record_path.is_file():
@@ -1037,7 +1184,12 @@ def combine_cell_type_differential_expression(
         if slug in seen_slugs:
             raise ValueError(f"Duplicate cell-type result for {slug!r}")
         seen_slugs.add(slug)
-        shutil.copytree(result_dir, output_dir / slug)
+        destination = (
+            per_type_output_dir / slug / "differential_expression"
+            if per_type_output_dir is not None else output_dir / slug
+        )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(result_dir, destination)
         records.append(item)
     missing = sorted(set(expected) - seen_slugs)
     if missing:
@@ -1046,6 +1198,7 @@ def combine_cell_type_differential_expression(
         input_path, output_dir, pipeline, records,
         test_mode=test_mode,
         synthetic_test_data=synthetic_test_data,
+        per_type_output_dir=per_type_output_dir,
     )
 
 
@@ -1055,6 +1208,10 @@ def main() -> None:
     )
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument(
+        "--per-type-output-dir", type=Path,
+        help="destination for collected per-cell-type DE artifacts when combining task results",
+    )
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--cpus", type=int, default=1)
     mode = parser.add_mutually_exclusive_group()
@@ -1115,6 +1272,7 @@ def main() -> None:
             args.combine_cell_type_results,
             test_mode=args.test_mode,
             synthetic_test_data=args.synthetic_test_data,
+            per_type_output_dir=args.per_type_output_dir,
         )
     elif args.cell_type:
         run_cell_type_differential_expression(

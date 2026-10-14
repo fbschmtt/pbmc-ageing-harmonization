@@ -1,8 +1,8 @@
 process PSEUDOBULK {
     tag { study_id }
-    publishDir "${params.outdir}/pseudobulk", mode: 'copy', overwrite: true,
+    publishDir "${params.outdir}/harmonization/pseudobulk", mode: 'copy', overwrite: true,
         saveAs: { name -> name.endsWith('.h5ad') ? name : null }
-    publishDir "${params.outdir}/provenance", mode: 'copy', overwrite: true,
+    publishDir "${params.outdir}/harmonization/provenance", mode: 'copy', overwrite: true,
         saveAs: { name -> name.endsWith('.json') ? name : null }
 
     input:
@@ -21,9 +21,9 @@ process PSEUDOBULK {
 
 process MERGE_PSEUDOBULKS {
     tag 'all studies pseudobulk'
-    publishDir "${params.outdir}/merged", mode: 'copy', overwrite: true,
+    publishDir "${params.outdir}/harmonization/merged", mode: 'copy', overwrite: true,
         saveAs: { name -> name.endsWith('.h5ad') ? name : null }
-    publishDir "${params.outdir}/provenance", mode: 'copy', overwrite: true,
+    publishDir "${params.outdir}/harmonization/provenance", mode: 'copy', overwrite: true,
         saveAs: { name -> name.endsWith('.json') ? name : null }
 
     input:
@@ -42,9 +42,9 @@ process MERGE_PSEUDOBULKS {
 
 process MERGE_SINGLE_CELLS {
     tag 'all studies single cell'
-    publishDir "${params.outdir}/merged", mode: 'copy', overwrite: true,
+    publishDir "${params.outdir}/harmonization/merged", mode: 'copy', overwrite: true,
         saveAs: { name -> name.endsWith('.h5ad') ? name : null }
-    publishDir "${params.outdir}/provenance", mode: 'copy', overwrite: true,
+    publishDir "${params.outdir}/harmonization/provenance", mode: 'copy', overwrite: true,
         saveAs: { name -> name.endsWith('.json') ? name : null }
 
     input:

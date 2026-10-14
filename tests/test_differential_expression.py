@@ -13,6 +13,8 @@ from pbmc_pipeline.config import AgeTrajectorySettings, read_json
 from pbmc_pipeline.differential_expression import (
     _design_with_covariates,
     _maximal_per_study_covariates,
+    _model_result_path,
+    _prepare_developmental_metadata,
     _prepare_metadata,
     _run_model,
     _write_age_model_diagnostics,
@@ -28,6 +30,25 @@ ROOT = Path(__file__).resolve().parents[1]
 TRAJECTORY_SETTINGS = AgeTrajectorySettings.from_mapping(
     read_json(ROOT / "config/pipeline.json")["differential_expression"]["age_trajectory"]
 )
+
+
+def test_developmental_covariate_results_do_not_overwrite_merged_results(tmp_path: Path) -> None:
+    cell_type_dir = tmp_path / "cd14-monocyte"
+
+    merged_sex = _model_result_path(
+        cell_type_dir, model_name="merged", covariate="sex"
+    )
+    developmental_sex = _model_result_path(
+        cell_type_dir, model_name="developmental", covariate="sex"
+    )
+    developmental_age = _model_result_path(
+        cell_type_dir, model_name="developmental", covariate="age"
+    )
+
+    assert merged_sex == cell_type_dir / "combined" / "sex.csv"
+    assert developmental_sex == cell_type_dir / "developmental" / "sex.csv"
+    assert developmental_age == cell_type_dir / "developmental.csv"
+    assert merged_sex != developmental_sex
 
 
 def test_age_trajectory_requires_seven_supported_bins_and_excludes_age_90_plus() -> None:
@@ -67,6 +88,16 @@ def test_age_trajectory_requires_reference_bin_and_minimum_bin_count() -> None:
     assert "reference age bin '20-30'" in support["reason"]
 
 
+def test_age_trajectory_empty_valid_age_set_reports_zero_retained_samples() -> None:
+    metadata = pd.DataFrame({"age": [np.nan, np.nan], "study": ["s", "s"]})
+
+    retained, support = prepare_age_trajectory_metadata(metadata, TRAJECTORY_SETTINGS)
+
+    assert retained is None
+    assert support["status"] == "skipped"
+    assert support["n_samples_retained"] == 0
+
+
 def test_test_mode_bypasses_cell_count_cutoff_but_keeps_adult_filter() -> None:
     obs = pd.DataFrame(
         {
@@ -77,6 +108,9 @@ def test_test_mode_bypasses_cell_count_cutoff_but_keeps_adult_filter() -> None:
             "sex": ["female", "male", "female"],
             "n_cells": [2, 12, 2],
             "total_counts": [200, 300, 150],
+            "ethnicity": ["group_a", "group_b", "group_c"],
+            "technology": ["10X3'v3", "10X5'v2", "10X3'v2"],
+            "batch_single_cell": ["run_1", "run_2", "run_3"],
         },
         index=["pb_1", "pb_2", "pb_3"],
     )
@@ -90,6 +124,9 @@ def test_test_mode_bypasses_cell_count_cutoff_but_keeps_adult_filter() -> None:
 
     assert standard["sample"].tolist() == ["adult_enough_cells"]
     assert standard["log10_total_counts"].tolist() == [np.log10(300)]
+    assert standard[["ethnicity", "technology", "batch_single_cell"]].iloc[0].tolist() == [
+        "group_b", "10X5'v2", "run_2",
+    ]
     assert standard_counts["n_cells_filter_bypassed"] == 0
     assert standard_excluded[-1]["reasons"] == ["age_below_minimum", "n_cells_below_minimum"]
     assert test["sample"].tolist() == ["adult_low_cells", "adult_enough_cells"]
@@ -98,6 +135,40 @@ def test_test_mode_bypasses_cell_count_cutoff_but_keeps_adult_filter() -> None:
     assert test_counts["eligible_before_duplicate_check"] == 2
     assert [item["pseudobulk_id"] for item in excluded] == ["pb_3"]
     assert excluded[0]["reasons"] == ["age_below_minimum"]
+
+
+def test_developmental_metadata_uses_the_configured_zero_to_thirty_range() -> None:
+    obs = pd.DataFrame(
+        {
+            "study": ["study_a"] * 4,
+            "study_site": ["site_1"] * 4,
+            "sample": ["infant", "young", "overlap", "adult"],
+            "age": [0, 12, 30, 31],
+            "sex": ["female", "male", "female", "male"],
+            "n_cells": [12] * 4,
+            "total_counts": [200] * 4,
+        },
+        index=["pb_0", "pb_12", "pb_30", "pb_31"],
+    )
+    metadata, support, exclusions, _ = _prepare_developmental_metadata(
+        obs,
+        {
+            "minimum_age_years_inclusive": 20,
+            "minimum_cells_per_pseudobulk_inclusive": 10,
+        },
+        {"minimum_age_years_inclusive": 0, "maximum_age_years_inclusive": 30},
+        test_mode=False,
+    )
+
+    assert metadata["age"].tolist() == [0, 12, 30]
+    assert support == {
+        "minimum_age_years_inclusive": 0,
+        "maximum_age_years_inclusive": 30,
+        "n_samples_before_maximum_age_filter": 4,
+        "n_samples_excluded_above_maximum_age": 1,
+        "n_samples_retained": 3,
+    }
+    assert exclusions["age_below_minimum"] == 0
 
 
 def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None:
@@ -283,6 +354,9 @@ def test_age_model_diagnostics_record_the_shared_gene_universe_and_raw_counts(tm
             "n_cells": [20, 25],
             "total_counts": [10, 31],
             "log10_total_counts": np.log10([10, 31]),
+            "ethnicity": ["group_a", "group_b"],
+            "technology": ["10X3'v3", "10X5'v2"],
+            "batch_single_cell": ["run_1", "run_2"],
         },
         index=["one::one_sample::T", "two::two_sample::T"],
     )
@@ -308,6 +382,9 @@ def test_age_model_diagnostics_record_the_shared_gene_universe_and_raw_counts(tm
     assert diagnostics["genes_in_age_intersection"].tolist() == [1, 1]
     assert diagnostics["counts_in_age_gene_intersection"].tolist() == [2, 7]
     assert diagnostics["total_counts"].tolist() == [10, 31]
+    assert diagnostics["ethnicity"].tolist() == ["group_a", "group_b"]
+    assert diagnostics["technology"].tolist() == ["10X3'v3", "10X5'v2"]
+    assert diagnostics["batch_single_cell"].tolist() == ["run_1", "run_2"]
 
 
 def test_synthetic_fixture_requires_production_cell_cutoff(tmp_path) -> None:
@@ -345,10 +422,21 @@ def test_parallel_cell_type_results_rebuild_the_standard_de_manifest(tmp_path) -
         task_results.append(result_dir)
 
     report = combine_cell_type_differential_expression(
-        input_path, tmp_path / "differential_expression", pipeline, task_results,
+        input_path,
+        tmp_path / "analysis" / "combined" / "differential_expression",
+        pipeline,
+        task_results,
         synthetic_test_data=True,
+        per_type_output_dir=tmp_path / "analysis" / "per_type",
     )
 
     assert report["status"] == "no_estimable_models"
     assert list(report["results_by_cell_type"]) == [slug for slug, _ in cell_types]
-    assert (tmp_path / "differential_expression" / cell_types[0][0] / "cell_type_result.json").is_file()
+    result_dir = (
+        tmp_path / "analysis" / "per_type" / cell_types[0][0] / "differential_expression"
+    )
+    assert (result_dir / "cell_type_result.json").is_file()
+    index_record = report["results_by_cell_type"][cell_types[0][0]]
+    assert index_record["directory"] == f"../../per_type/{cell_types[0][0]}/differential_expression"
+    manifest_parent = tmp_path / "analysis" / "combined" / "differential_expression"
+    assert (manifest_parent / index_record["directory"]).resolve() == result_dir.resolve()

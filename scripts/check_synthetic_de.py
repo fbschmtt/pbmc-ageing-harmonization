@@ -21,7 +21,7 @@ def _load_fixture(
     list[str], dict[str, list[str]], dict[str, list[str]], int, dict[str, list[float]],
     dict[str, list[str]],
 ]:
-    fixture_path = outdir / "synthetic_de" / "pseudobulk_merged.h5ad"
+    fixture_path = outdir / "analysis" / "combined" / "synthetic_de" / "pseudobulk_merged.h5ad"
     if not fixture_path.is_file():
         raise SystemExit(f"Missing generated synthetic fixture: {fixture_path}")
     fixture = ad.read_h5ad(fixture_path, backed="r")
@@ -59,14 +59,14 @@ def check_results(outdir: Path) -> None:
         cell_types, expected_genes, covariate_studies, samples_per_study,
         trajectory_profiles, per_study_age_genes,
     ) = _load_fixture(outdir)
-    de_dir = outdir / "differential_expression"
+    de_dir = outdir / "analysis" / "combined" / "differential_expression"
     manifest_path = de_dir / "differential_expression.json"
     if not manifest_path.is_file():
         raise SystemExit(f"Missing DE manifest: {manifest_path}")
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("status") != "complete":
         raise SystemExit(f"Expected complete synthetic DE run; got {manifest.get('status')!r}")
-    expected_per_cell_type = 3 + 1 + len(covariate_studies) + 1
+    expected_per_cell_type = 3 + 1 + 1 + len(covariate_studies) + 1
     expected_completed = expected_per_cell_type * len(cell_types)
     if manifest.get("models_completed") != expected_completed or manifest.get("models_failed") != 0:
         raise SystemExit(
@@ -104,6 +104,16 @@ def check_results(outdir: Path) -> None:
             raise SystemExit(f"Missing merged-model result for {cell_type!r}")
         if "log10_total_counts" not in merged.get("results_by_covariate", {}):
             raise SystemExit(f"Missing combined depth coefficient for {cell_type!r}")
+        developmental = next(
+            (model for model in models
+             if model.get("purpose") == "developmental_adult_effect_comparison"), None,
+        )
+        if developmental is None or developmental.get("status") != "complete":
+            raise SystemExit(f"Missing developmental age fit for {cell_type!r}")
+        developmental_path = de_dir / developmental["results_by_covariate"]["age"]
+        developmental_results = list(csv.DictReader(developmental_path.open(newline="")))
+        if not developmental_results or "log2FoldChange_shrunk" not in developmental_results[0]:
+            raise SystemExit(f"Developmental age result lacks shrunken effects: {developmental_path}")
         depth_path = de_dir / merged["results_by_covariate"]["log10_total_counts"]
         if not depth_path.is_file():
             raise SystemExit(f"Missing combined depth results: {depth_path}")
@@ -303,7 +313,7 @@ def check_reports(
     ]["age_trajectory"]
     for cell_type in cell_types:
         slug = "-".join(cell_type.lower().split())
-        cell_type_dir = outdir / "cell_type_analysis" / slug
+        cell_type_dir = outdir / "analysis" / "per_type" / slug / "analysis"
         report_path = cell_type_dir / "report.html"
         if not report_path.is_file():
             raise SystemExit(f"Missing standard cell-type report: {report_path}")
@@ -414,7 +424,7 @@ def check_reports(
             for phrase, label in (
                 ("show trajectory clusters, umap, and merge diagnostic", "trajectory clusters"),
                 (
-                    "../../differential_expression/combined_analysis/report.html",
+                    "../../../combined/trajectory/report.html",
                     "cross-cell-type trajectory report link",
                 ),
             ):
@@ -422,7 +432,7 @@ def check_reports(
                     missing.append(label)
         if missing:
             raise SystemExit(f"{report_path} is missing expected DE content: {missing}")
-    trajectory_dir = outdir / "differential_expression" / "combined_analysis"
+    trajectory_dir = outdir / "analysis" / "combined" / "trajectory"
     required_outputs = [
         trajectory_dir / "report.html",
         trajectory_dir / "executed.ipynb",

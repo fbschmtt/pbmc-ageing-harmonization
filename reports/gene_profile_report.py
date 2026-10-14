@@ -1,6 +1,9 @@
 # %%
+import base64
 import json
 import os
+from html import escape
+from io import BytesIO
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -9,6 +12,7 @@ import pandas as pd
 import seaborn as sns
 from IPython.display import HTML, Markdown, display
 from matplotlib.lines import Line2D
+from pbmc_pipeline.gene_profile_report import format_model_results
 
 from pbmc_pipeline.report_theme import render_report_header
 
@@ -18,6 +22,13 @@ summary = json.loads((profile_dir / "fit_summary.json").read_text())
 cell_type = summary["cell_type"]
 gene = summary["gene"]
 gene_result = pd.read_csv(profile_dir / "gene_age_result.csv")
+exploratory_infant_adult_comparison_path = (
+    profile_dir / "exploratory_infant_adult_comparison.csv"
+)
+exploratory_infant_adult_comparison = (
+    pd.read_csv(exploratory_infant_adult_comparison_path)
+    if exploratory_infant_adult_comparison_path.is_file() else pd.DataFrame()
+)
 gene_samples = pd.read_csv(profile_dir / "gene_sample_counts.csv")
 model_fit_diagnostics = pd.read_csv(profile_dir / "model_fit_diagnostics.csv")
 mean_variance = pd.read_csv(profile_dir / "mean_variance.csv")
@@ -27,6 +38,9 @@ top_gene_correlations = pd.read_csv(
 )
 top_correlated_residuals = pd.read_csv(
     profile_dir / "top_correlated_gene_residuals.csv",
+)
+age_bin_residual_correlations = pd.read_csv(
+    profile_dir / "age_bin_residual_correlations.csv",
 )
 age_bin_samples = pd.read_csv(profile_dir / "naive_age_bin_samples.csv")
 age_bin_model_result = pd.read_csv(profile_dir / "naive_age_bin_model_result.csv")
@@ -60,6 +74,19 @@ display(HTML(render_report_header(
 )))
 
 
+def display_collapsible_figure(figure, summary):
+    image_buffer = BytesIO()
+    figure.savefig(image_buffer, format="png", bbox_inches="tight")
+    plt.close(figure)
+    image_data = base64.b64encode(image_buffer.getvalue()).decode("ascii")
+    display(HTML(
+        '<details class="report-details report-details-figure">'
+        f"<summary>{escape(summary)}</summary>"
+        f'<img alt="{escape(summary, quote=True)}" '
+        f'src="data:image/png;base64,{image_data}"></details>'
+    ))
+
+
 def display_fit_diagnostics(model_name):
     rows = model_fit_diagnostics.loc[model_fit_diagnostics["model"] == model_name]
     if rows.empty:
@@ -85,6 +112,7 @@ def display_fit_diagnostics(model_name):
         )
     display(Markdown(summary))
 
+
 # %% [markdown]
 # # PyDESeq2
 #
@@ -103,15 +131,69 @@ display(Markdown(f"**Design:** `{summary['design']}`"))
 display_fit_diagnostics("PyDESeq2")
 display(Markdown(
     "R² values are in-sample summaries, not cross-validated predictive scores. "
-    "PyDESeq2 R² is calculated on raw counts; the naive models use "
-    "`log(normalized count + 1)`. The mixed model reports fixed-effects-only "
+    "An ordinary R² is not reported for the negative-binomial PyDESeq2 model; "
+    "the naive models use `log(normalized count + 1)`. The mixed model reports fixed-effects-only "
     "and conditional R², with the latter including study-specific slope estimates."
 ))
-display(gene_result)
+display(format_model_results(gene_result))
+study_palette = dict(zip(
+    summary["studies"],
+    sns.color_palette("colorblind", n_colors=len(summary["studies"])),
+    strict=True,
+))
+display(Markdown(
+    "Observed points show normalized counts for each included sample; connected marks show "
+    "the fitted DESeq2 mean divided by that sample's size factor. The fitted values retain "
+    "each sample's observed study site, age, sex, and library-depth covariates."
+))
+figure, axis = plt.subplots(figsize=(9, 5.8))
+for study, rows in gene_samples.groupby("study", observed=True, sort=True):
+    color = study_palette.get(str(study))
+    axis.scatter(
+        rows["age"], np.log1p(rows["normalized_count"]),
+        color=color, s=28, alpha=0.32, linewidths=0, label=f"{study}: observed",
+    )
+    fitted_rows = rows.sort_values("age", kind="stable")
+    axis.plot(
+        fitted_rows["age"], np.log1p(fitted_rows["fitted_normalized_mean"]),
+        color=color, linewidth=1.8, label=f"{study}: fitted mean",
+    )
+axis.set_xlabel("Age (years)")
+axis.set_ylabel("log(normalized count + 1)")
+axis.set_title(f"{gene}: observed counts and fitted DESeq2 means")
+axis.legend(fontsize=8, bbox_to_anchor=(1.02, 1), loc="upper left")
+axis.grid(True, alpha=0.2)
+figure.tight_layout()
+plt.show()
 display(Markdown(
     f"Included studies: {', '.join(summary['studies'])}. "
 ))
 display(pd.Series(summary["metadata_exclusions"], name="pseudobulks").to_frame())
+
+# %% [markdown]
+# ## Exploratory infant-to-adult comparison
+#
+# This secondary comparison is descriptive and is not part of the primary
+# adult age-DE analysis. It contrasts the age-bin groups centered near ages 5
+# and 25, then shows the adult DESeq2 per-year effect and its 20-year linear
+# projection. The bin estimate is on log2(normalized count + 1), while the
+# adult estimate comes from the negative-binomial model; these scales are
+# related but are not interchangeable effect estimates.
+
+# %%
+display(Markdown(
+    "This exploratory view does not change the primary adult-only DESeq2 fit. "
+    "Age-bin effects are converted from natural-log to log2 units for "
+    "log(normalized count + 1); the adult 20-year value is a linear projection "
+    "of the per-year DESeq2 coefficient."
+))
+if exploratory_infant_adult_comparison.empty:
+    display(Markdown(
+        "_The profile samples do not include both age bins centered near 5 and 25 years._"
+    ))
+else:
+    display(exploratory_infant_adult_comparison)
+
 
 # %% [markdown]
 # ## Mean–dispersion position
@@ -186,12 +268,6 @@ plt.show()
 # already adjusts for the other terms in its design.
 
 # %%
-study_palette = dict(zip(
-    summary["studies"],
-    sns.color_palette("colorblind", n_colors=len(summary["studies"])),
-    strict=True,
-))
-
 def make_residual_plot_config(metadata, residual_label):
     metadata = metadata[["study", "study_site"]].copy()
     studies = metadata["study"].astype(str)
@@ -285,7 +361,11 @@ def plot_residuals(resids, x_values, x_label):
         loc="center left",
         frameon=False,
     )
-    plt.show()
+    display_collapsible_figure(
+        residual_grid.figure,
+        f"Open {active_residual_plot_config['residual_label']} plot vs. {x_label} · "
+        f"{active_residual_plot_config['metadata']['study'].nunique()} studies",
+    )
 
 # %% [markdown]
 # ### Against Age
@@ -313,20 +393,27 @@ plot_residuals(
 # %% [markdown]
 # ### Correlated genes
 #
-# The table starts with the selected gene itself (r = 1), followed by its ten
-# strongest residual correlates ranked by absolute Pearson correlation across
+# The table starts with the selected gene itself (r = 1), followed by up to five
+# strongest positive and five strongest negative residual correlates across
 # included samples. It also shows each gene's mean normalized count and final
-# dispersion. The scatter plots show the four strongest other genes; the
-# signed correlation is shown in each title. These are descriptive residual
-# associations from this fitted model.
+# dispersion. The scatter plots show the two strongest correlates of each sign.
+# These are descriptive residual associations from this fitted model.
 
 # %%
-plot_correlations = residual_correlations.head(4).copy()
+plot_correlations = pd.concat([
+    residual_correlations.loc[residual_correlations["pearson_r"] > 0].nlargest(
+        2, "pearson_r"
+    ),
+    residual_correlations.loc[residual_correlations["pearson_r"] < 0].nsmallest(
+        2, "pearson_r"
+    ),
+], ignore_index=True)
 if top_gene_correlations.empty:
     display(Markdown("_No other genes had finite residual correlations._"))
 else:
     display(top_gene_correlations[[
-        "gene", "pearson_r", "mean_normalized_count", "dispersions",
+        "gene", "correlation_direction", "pearson_r",
+        "mean_normalized_count", "dispersions",
     ]].round({
         "pearson_r": 3,
         "mean_normalized_count": 2,
@@ -485,10 +572,7 @@ plt.show()
 naive_model_result = pd.read_csv(profile_dir / "naive_linear_model_result.csv")
 display(Markdown(f"**Design:** `{summary['design']}`"))
 display_fit_diagnostics("Naive linear age model")
-display(naive_model_result.round({
-    "coefficient": 4, "standard_error": 4, "t_value": 3,
-    "p_value": 4, "ci_lower": 4, "ci_upper": 4,
-}))
+display(format_model_results(naive_model_result))
 
 # %% [markdown]
 # ## Residuals
@@ -530,10 +614,19 @@ display(Markdown(
     f"**Reference bin:** {summary['age_bin_model']['reference_bin']}"
 ))
 display_fit_diagnostics("Naive age-bin model")
-display(age_bin_model_result.round({
-    "coefficient": 4, "standard_error": 4, "t_value": 3,
-    "p_value": 4, "ci_lower": 4, "ci_upper": 4,
-}))
+display(format_model_results(age_bin_model_result))
+display(Markdown(
+    "Residual correlations below use the fitted categorical age-bin design and the same "
+    "`log(normalized count + 1)` scale. They are exploratory associations; the DESeq2 age "
+    "coefficient and adjusted p-value are included to help identify correlated age-DE genes."
+))
+if age_bin_residual_correlations.empty:
+    display(Markdown("_No finite age-bin residual correlations were available._"))
+else:
+    display(format_model_results(age_bin_residual_correlations[[
+        "gene", "correlation_direction", "pearson_r",
+        "log2FoldChange", "pvalue", "padj",
+    ]]))
 
 # %% [markdown]
 # ## Residuals
@@ -601,10 +694,7 @@ display(age_bin_predictions.round({
 # %%
 display(Markdown(f"**Design:** `{summary['study_slope_model']['design']}`"))
 display_fit_diagnostics("Naive age model with study-specific slopes")
-display(study_slopes.round({
-    "slope": 4, "standard_error": 4, "t_value": 3,
-    "p_value": 4, "ci_lower": 4, "ci_upper": 4,
-}))
+display(format_model_results(study_slopes))
 
 # %% [markdown]
 # ## Residuals
@@ -658,10 +748,7 @@ axis.legend(title="Study", bbox_to_anchor=(1.02, 1), loc="upper left")
 axis.grid(True, alpha=0.2)
 figure.tight_layout()
 plt.show()
-display(study_slope_model_result.round({
-    "coefficient": 4, "standard_error": 4, "t_value": 3,
-    "p_value": 4, "ci_lower": 4, "ci_upper": 4,
-}))
+display(format_model_results(study_slope_model_result))
 display(Markdown(
     "Sample-level normalized counts, expression, fitted values, and residuals "
     "are available in [gene_sample_counts.csv](gene_sample_counts.csv). The "
@@ -697,10 +784,7 @@ display(Markdown(
     f"**Residual SD:** {mixed_diagnostics['residual_sd']:.4g}  \n"
     f"**Fixed-effect uncertainty:** {mixed_diagnostics['fixed_effect_uncertainty']}"
 ))
-display(mixed_model_fixed_effects.round({
-    "coefficient": 4, "standard_error": 4, "test_statistic": 3,
-    "p_value": 4, "ci_lower": 4, "ci_upper": 4,
-}))
+display(format_model_results(mixed_model_fixed_effects))
 display(mixed_model_study_slopes.round({
     "fixed_age_slope": 4,
     "random_slope_deviation": 4,

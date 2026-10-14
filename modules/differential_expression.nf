@@ -40,7 +40,8 @@ process RUN_CELL_TYPE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION {
 
 process WRITE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION_MANIFEST {
     tag 'collect cell-type PyDESeq2 models'
-    publishDir "${params.outdir}", mode: 'copy', overwrite: true
+    publishDir "${params.outdir}", mode: 'copy', overwrite: true,
+        saveAs: { filename -> filename == 'analysis/per_type' ? null : filename }
 
     input:
     path pseudobulk_input
@@ -50,14 +51,17 @@ process WRITE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION_MANIFEST {
     val synthetic_test_data
 
     output:
-    path 'differential_expression', emit: results
+    path 'analysis/combined/differential_expression', emit: results
+    path 'analysis/per_type', emit: per_type
+    path 'analysis/per_type/*/differential_expression', emit: per_type_de
 
     script:
     def test_mode_argument = de_test_mode ? '--test-mode' : ''
     def synthetic_data_argument = synthetic_test_data ? '--synthetic-test-data' : ''
     """
     pbmc-differential-expression --input ${pseudobulk_input} \
-      --output-dir differential_expression --config ${pipeline_config} \
+      --output-dir analysis/combined/differential_expression \
+      --per-type-output-dir analysis/per_type --config ${pipeline_config} \
       --combine-cell-type-results ${cell_type_results} \
       ${test_mode_argument} ${synthetic_data_argument}
     """
@@ -65,21 +69,21 @@ process WRITE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION_MANIFEST {
 
 process RENDER_CROSS_CELL_TYPE_TRAJECTORY_REPORT {
     tag 'cross-cell-type age trajectory report'
-    publishDir "${params.outdir}/differential_expression", mode: 'copy', overwrite: true
+    publishDir "${params.outdir}/analysis/combined", mode: 'copy', overwrite: true
 
     input:
-    path differential_expression
+    path per_type_de
     path pseudobulk_input
     path pipeline_config
     path report_template
 
     output:
-    path 'combined_analysis', emit: report
+    path 'trajectory', emit: report
 
     script:
     """
-    pbmc-trajectory-report --differential-expression-dir ${differential_expression} \
-      --pseudobulk-input ${pseudobulk_input} --output-dir combined_analysis --config ${pipeline_config} \
+    pbmc-trajectory-report --differential-expression-dir ${per_type_de} \
+      --pseudobulk-input ${pseudobulk_input} --output-dir trajectory --config ${pipeline_config} \
       --template ${report_template} --project-root .
     """
 }

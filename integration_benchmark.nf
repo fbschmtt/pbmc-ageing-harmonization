@@ -5,7 +5,7 @@ include { RUN_INTEGRATION_BENCHMARK; RENDER_INTEGRATION_BENCHMARK_REPORT } from 
 workflow {
     def root = file(params.project_dir)
     if (!params.merged_input) {
-        error 'Provide --merged_input, for example output/merged/single_cell_merged.h5ad'
+        error 'Provide --merged_input, for example output/harmonization/merged/single_cell_merged.h5ad'
     }
     def merged_input = channel.value(file(params.merged_input, checkIfExists: true))
     def pipeline_config = channel.value(file(root.resolve('config/pipeline.json'), checkIfExists: true))

@@ -15,6 +15,80 @@ class ConfigurationError(ValueError):
 
 
 @dataclass(frozen=True)
+class ResidualWGCNASettings:
+    """Validated settings for PyWGCNA on one cell type's pseudobulk residuals."""
+
+    minimum_samples: int
+    maximum_genes: int
+    minimum_module_size: int
+    soft_threshold_powers: list[int]
+    scale_free_fit_threshold: float
+    mean_connectivity_threshold: int
+    module_eigengene_dissimilarity_threshold: float
+    dynamic_tree_deep_split: int
+    cmv_fdr_threshold: float
+
+    def __post_init__(self) -> None:
+        for name, minimum in (
+            ("minimum_samples", 3),
+            ("maximum_genes", 2),
+            ("minimum_module_size", 2),
+            ("mean_connectivity_threshold", 1),
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+                raise ConfigurationError(
+                    f"cell_type_analysis.residual_wgcna.{name} must be an integer of at least {minimum}"
+                )
+        if self.minimum_module_size > self.maximum_genes:
+            raise ConfigurationError(
+                "cell_type_analysis.residual_wgcna.minimum_module_size cannot exceed maximum_genes"
+            )
+        if (
+            not isinstance(self.soft_threshold_powers, list)
+            or not self.soft_threshold_powers
+            or any(
+                not isinstance(value, int) or isinstance(value, bool) or value < 1
+                for value in self.soft_threshold_powers
+            )
+            or len(set(self.soft_threshold_powers)) != len(self.soft_threshold_powers)
+        ):
+            raise ConfigurationError(
+                "cell_type_analysis.residual_wgcna.soft_threshold_powers must be a non-empty "
+                "list of unique positive integers"
+            )
+        for name in ("scale_free_fit_threshold", "module_eigengene_dissimilarity_threshold", "cmv_fdr_threshold"):
+            value = getattr(self, name)
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 < value < 1:
+                raise ConfigurationError(
+                    f"cell_type_analysis.residual_wgcna.{name} must be between 0 and 1"
+                )
+        if (
+            not isinstance(self.dynamic_tree_deep_split, int)
+            or isinstance(self.dynamic_tree_deep_split, bool)
+            or not 0 <= self.dynamic_tree_deep_split <= 4
+        ):
+            raise ConfigurationError(
+                "cell_type_analysis.residual_wgcna.dynamic_tree_deep_split must be an integer from 0 to 4"
+            )
+
+    @classmethod
+    def from_mapping(cls, mapping: dict[str, Any]) -> ResidualWGCNASettings:
+        expected = {field.name for field in fields(cls) if field.init}
+        missing = sorted(expected - mapping.keys())
+        unexpected = sorted(mapping.keys() - expected)
+        if missing or unexpected:
+            raise ConfigurationError(
+                "cell_type_analysis.residual_wgcna must define exactly the settings "
+                f"in the configuration model (missing={missing}, unexpected={unexpected})"
+            )
+        return cls(**mapping)
+
+    def to_mapping(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class AgeTrajectorySettings:
     """Validated, typed view of the required age-trajectory pipeline settings."""
 
@@ -357,34 +431,9 @@ def validate_configuration(
                 raise ConfigurationError(
                     "integration_benchmark BBKNN neighbors_within_batch must be positive"
                 )
-        elif method_type == "scvi":
-            unintegrated_scvi = method.get("name") == "scvi_unintegrated"
-            expected_basis = "X_scvi_unintegrated" if unintegrated_scvi else "X_scvi"
-            if method.get("adjusted_basis") != expected_basis:
-                raise ConfigurationError(
-                    f"integration_benchmark scVI methods must use adjusted_basis {expected_basis!r}"
-                )
-            if unintegrated_scvi:
-                if method.get("batch_key") is not None or method.get("hvg_batch_key") != "study":
-                    raise ConfigurationError(
-                        "integration_benchmark unintegrated scVI must omit batch_key and use "
-                        "study-aware HVG selection"
-                    )
-            elif method.get("batch_key") != "study":
-                raise ConfigurationError(
-                    "integration_benchmark integrated scVI methods must use batch_key 'study'"
-                )
-            for setting in (
-                "n_top_genes", "hvg_chunksize", "n_latent", "max_epochs", "batch_size",
-            ):
-                value = method.get(setting)
-                if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-                    raise ConfigurationError(
-                        f"integration_benchmark scVI {setting} must be a positive integer"
-                    )
         else:
             raise ConfigurationError(
-                "integration_benchmark method must be harmony, none, scanorama, bbknn, or scvi"
+                "integration_benchmark method must be harmony, none, scanorama, or bbknn"
             )
     if harmony_methods != 1:
         raise ConfigurationError("integration_benchmark.methods must contain exactly one Harmony method")
@@ -417,6 +466,10 @@ def validate_configuration(
             raise ConfigurationError(
                 "cell_type_analysis.integration.adjusted_basis must be 'X_pca_harmony'"
             )
+        residual_wgcna = cell_type_analysis.get("residual_wgcna")
+        if not isinstance(residual_wgcna, dict):
+            raise ConfigurationError("cell_type_analysis.residual_wgcna must be an object")
+        ResidualWGCNASettings.from_mapping(residual_wgcna)
         fraction_model = cell_type_analysis.get("fraction_model", {})
         bootstrap_replicates = fraction_model.get("binomial_bootstrap_replicates")
         if (
@@ -497,6 +550,26 @@ def validate_configuration(
                 "differential_expression.optional_covariates must be a unique list "
                 "containing only 'bmi' and/or 'cmv'"
             )
+        developmental_comparison = differential_expression.get("developmental_adult_comparison")
+        if not isinstance(developmental_comparison, dict):
+            raise ConfigurationError(
+                "differential_expression.developmental_adult_comparison must be an object"
+            )
+        developmental_minimum_age = developmental_comparison.get("minimum_age_years_inclusive")
+        developmental_maximum_age = developmental_comparison.get("maximum_age_years_inclusive")
+        if (
+            not isinstance(developmental_minimum_age, (int, float))
+            or isinstance(developmental_minimum_age, bool)
+            or developmental_minimum_age < 0
+            or not isinstance(developmental_maximum_age, (int, float))
+            or isinstance(developmental_maximum_age, bool)
+            or developmental_maximum_age <= developmental_minimum_age
+        ):
+            raise ConfigurationError(
+                "differential_expression.developmental_adult_comparison must define "
+                "non-negative minimum_age_years_inclusive and a larger "
+                "maximum_age_years_inclusive"
+            )
         alpha = differential_expression.get("alpha")
         if not isinstance(alpha, (int, float)) or not 0 < alpha < 1:
             raise ConfigurationError("differential_expression.alpha must be between 0 and 1")
@@ -510,6 +583,11 @@ def validate_configuration(
             raise ConfigurationError(
                 "differential_expression.sample_inclusion.minimum_age_years_inclusive "
                 "must be a non-negative number"
+            )
+        if developmental_maximum_age < minimum_age:
+            raise ConfigurationError(
+                "differential_expression.developmental_adult_comparison maximum age "
+                "must reach the adult-analysis minimum age"
             )
         minimum_cells = inclusion.get("minimum_cells_per_pseudobulk_inclusive")
         if (
