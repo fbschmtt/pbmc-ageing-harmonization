@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -10,6 +11,31 @@ from pathlib import Path
 import pandas as pd
 
 from .report_toc import populate_html_toc, set_notebook_title
+
+
+def _run_report_command(command, *, cwd: Path, env: dict[str, str], log_path: Path) -> None:
+    """Keep routine notebook-render output in the report log, surfacing failures."""
+    result = subprocess.run(
+        command, cwd=cwd, env=env, capture_output=True, text=True, check=False,
+    )
+    with log_path.open("a") as log:
+        log.write(f"$ {shlex.join(command)}\n")
+        if result.stdout:
+            log.write(result.stdout)
+            if not result.stdout.endswith("\n"):
+                log.write("\n")
+        if result.stderr:
+            log.write(result.stderr)
+            if not result.stderr.endswith("\n"):
+                log.write("\n")
+    if result.returncode:
+        if result.stdout:
+            sys.stdout.write(result.stdout)
+        if result.stderr:
+            sys.stderr.write(result.stderr)
+        raise subprocess.CalledProcessError(
+            result.returncode, command, output=result.stdout, stderr=result.stderr,
+        )
 
 
 def format_model_results(table, *, digits: int = 4):
@@ -39,6 +65,8 @@ def generate_gene_profile_report(
     project_root = project_root.resolve()
     output_notebook = profile_dir / "executed.ipynb"
     output_html = profile_dir / "report.html"
+    render_log = profile_dir / "report_render.log"
+    render_log.unlink(missing_ok=True)
     environment = os.environ.copy()
     environment["GENE_PROFILE_DIR"] = str(profile_dir)
     source_path = str(project_root / "src")
@@ -55,15 +83,15 @@ def generate_gene_profile_report(
         environment["MPLCONFIGDIR"] = str(matplotlib_cache)
         environment["JUPYTER_DATA_DIR"] = str(jupyter_data)
         materialized_template = temp_path / f"{template_path.stem}.ipynb"
-        subprocess.run([
+        _run_report_command([
             sys.executable, "-m", "jupytext", "--to", "notebook",
             "--output", str(materialized_template), str(template_path.resolve()),
-        ], cwd=project_root, env=environment, check=True)
-        subprocess.run([
+        ], cwd=project_root, env=environment, log_path=render_log)
+        _run_report_command([
             sys.executable, "-m", "jupyter", "nbconvert", "--execute", "--to", "notebook",
             "--ExecutePreprocessor.timeout=-1", f"--output={output_notebook.name}",
             f"--output-dir={profile_dir}", str(materialized_template),
-        ], cwd=project_root, env=environment, check=True)
+        ], cwd=project_root, env=environment, log_path=render_log)
         import json
 
         summary = json.loads((profile_dir / "fit_summary.json").read_text())
@@ -71,13 +99,13 @@ def generate_gene_profile_report(
             output_notebook,
             f"{summary['gene']} · {summary['cell_type']} | PBMC ageing",
         )
-        subprocess.run([
+        _run_report_command([
             sys.executable, "-m", "jupyter", "nbconvert", "--to", "html",
             "--HTMLExporter.exclude_input=True",
             "--HTMLExporter.exclude_input_prompt=True",
             "--HTMLExporter.exclude_output_prompt=True",
             f"--output={output_html.name}", f"--output-dir={profile_dir}",
             str(output_notebook),
-        ], cwd=project_root, env=environment, check=True)
+        ], cwd=project_root, env=environment, log_path=render_log)
     populate_html_toc(output_html, minimum_heading_level=1)
     return output_html

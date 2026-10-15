@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 
 import anndata as ad
@@ -61,6 +63,79 @@ def test_profile_report_renderer_requires_fit_summary(tmp_path) -> None:
             template_path=ROOT / "reports" / "gene_profile_report.py",
             project_root=ROOT,
         )
+
+
+def test_profile_report_renderer_captures_routine_tool_output(tmp_path, monkeypatch) -> None:
+    profile_dir = tmp_path / "profile"
+    profile_dir.mkdir()
+    (profile_dir / "fit_summary.json").write_text(json.dumps({
+        "gene": "GENE1", "cell_type": "CD14 monocyte",
+    }))
+    template = tmp_path / "gene_profile_report.py"
+    template.write_text("# report template")
+    calls = []
+
+    def record(command, **kwargs):
+        calls.append((command, kwargs))
+        if "--to" in command and command[command.index("--to") + 1] == "html":
+            output_name = next(arg.removeprefix("--output=") for arg in command
+                               if arg.startswith("--output="))
+            output_dir = Path(next(arg.removeprefix("--output-dir=") for arg in command
+                                   if arg.startswith("--output-dir=")))
+            (output_dir / output_name).write_text("<html><body>Report</body></html>")
+        return subprocess.CompletedProcess(
+            command, 0, stdout="routine progress\n", stderr="routine warning\n",
+        )
+
+    monkeypatch.setattr("pbmc_pipeline.gene_profile_report.subprocess.run", record)
+    monkeypatch.setattr("pbmc_pipeline.gene_profile_report.set_notebook_title", lambda *_: None)
+    monkeypatch.setattr(
+        "pbmc_pipeline.gene_profile_report.populate_html_toc", lambda *_, **__: None,
+    )
+
+    report = generate_gene_profile_report(
+        profile_dir=profile_dir,
+        template_path=template,
+        project_root=tmp_path,
+    )
+
+    assert report == profile_dir / "report.html"
+    assert len(calls) == 3
+    assert all(call[1]["capture_output"] for call in calls)
+    render_log = (profile_dir / "report_render.log").read_text()
+    assert "routine progress" in render_log
+    assert "routine warning" in render_log
+
+
+def test_profile_report_renderer_prints_and_logs_tool_output_on_failure(
+    tmp_path, monkeypatch, capsys,
+) -> None:
+    profile_dir = tmp_path / "profile"
+    profile_dir.mkdir()
+    (profile_dir / "fit_summary.json").write_text("{}")
+    template = tmp_path / "gene_profile_report.py"
+    template.write_text("# report template")
+
+    def fail(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command, 1, stdout="partial output\n", stderr="render failed\n",
+        )
+
+    monkeypatch.setattr("pbmc_pipeline.gene_profile_report.subprocess.run", fail)
+
+    with pytest.raises(subprocess.CalledProcessError, match="returned non-zero exit status 1"):
+        generate_gene_profile_report(
+            profile_dir=profile_dir,
+            template_path=template,
+            project_root=tmp_path,
+        )
+
+    captured = capsys.readouterr()
+    assert "partial output" in captured.out
+    assert "render failed" in captured.err
+    render_log = (profile_dir / "report_render.log").read_text()
+    assert "partial output" in render_log
+    assert "render failed" in render_log
 
 
 def test_gene_profile_results_keep_small_p_values_in_scientific_notation() -> None:

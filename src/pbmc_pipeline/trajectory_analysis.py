@@ -594,12 +594,10 @@ def _read_cell_type_trajectory_results(
 def build_developmental_adult_effect_comparison(
     differential_expression_dir: Path,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Join shrunken developmental and adult age coefficients by gene and cell type."""
+    """Join raw developmental and adult age effects plus expression support."""
     comparisons = []
     support = []
-    required_columns = {
-        "gene", "log2FoldChange", "log2FoldChange_shrunk", "lfc_shrink_converged", "padj",
-    }
+    required_columns = {"gene", "baseMean", "log2FoldChange", "padj"}
     for metadata_path in sorted(differential_expression_dir.rglob("run_metadata.json")):
         metadata = json.loads(metadata_path.read_text())
         cell_type = str(metadata["cell_type"])
@@ -646,23 +644,24 @@ def build_developmental_adult_effect_comparison(
             required_columns.issubset(developmental_results)
             and required_columns.issubset(adult_results)
         ):
-            row.update({"status": "skipped", "reason": "one age-coefficient CSV lacks shrinkage columns"})
+            row.update({
+                "status": "skipped",
+                "reason": "one age-coefficient CSV lacks effect, expression, or adjusted p-value columns",
+            })
             support.append(row)
             continue
         developmental_table = developmental_results[[
-            "gene", "log2FoldChange", "log2FoldChange_shrunk", "lfc_shrink_converged", "padj",
+            "gene", "baseMean", "log2FoldChange", "padj",
         ]].rename(columns={
             "log2FoldChange": "developmental_log2_fold_change_per_year",
-            "log2FoldChange_shrunk": "developmental_log2_fold_change_per_year_shrunk",
-            "lfc_shrink_converged": "developmental_lfc_shrink_converged",
+            "baseMean": "developmental_base_mean",
             "padj": "developmental_padj",
         })
         adult_table = adult_results[[
-            "gene", "log2FoldChange", "log2FoldChange_shrunk", "lfc_shrink_converged", "padj",
+            "gene", "baseMean", "log2FoldChange", "padj",
         ]].rename(columns={
             "log2FoldChange": "adult_log2_fold_change_per_year",
-            "log2FoldChange_shrunk": "adult_log2_fold_change_per_year_shrunk",
-            "lfc_shrink_converged": "adult_lfc_shrink_converged",
+            "baseMean": "adult_base_mean",
             "padj": "adult_padj",
         })
         joined = developmental_table.merge(adult_table, on="gene", how="inner", validate="one_to_one")
@@ -672,19 +671,21 @@ def build_developmental_adult_effect_comparison(
             "status": "complete",
             "reason": "",
             "n_genes_joined": len(joined),
-            "n_genes_with_finite_shrunk_effects": int(np.isfinite(
+            "n_genes_with_finite_effects": int(np.isfinite(
                 joined[[
-                    "developmental_log2_fold_change_per_year_shrunk",
-                    "adult_log2_fold_change_per_year_shrunk",
+                    "developmental_log2_fold_change_per_year",
+                    "adult_log2_fold_change_per_year",
                 ]].to_numpy(dtype=float)
             ).all(axis=1).sum()),
+            "n_genes_with_padj_in_both_models": int(
+                (joined["developmental_padj"].notna() & joined["adult_padj"].notna()).sum()
+            ),
         })
         support.append(row)
     columns = [
         "cell_type", "gene", "developmental_log2_fold_change_per_year",
-        "developmental_log2_fold_change_per_year_shrunk", "developmental_lfc_shrink_converged",
-        "developmental_padj", "adult_log2_fold_change_per_year",
-        "adult_log2_fold_change_per_year_shrunk", "adult_lfc_shrink_converged", "adult_padj",
+        "developmental_base_mean", "developmental_padj", "adult_log2_fold_change_per_year",
+        "adult_base_mean", "adult_padj",
     ]
     comparison = pd.concat(comparisons, ignore_index=True) if comparisons else pd.DataFrame(columns=columns)
     return comparison, pd.DataFrame(support)

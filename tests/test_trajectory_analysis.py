@@ -331,21 +331,21 @@ def test_completed_fit_with_fewer_than_seven_bins_is_omitted_from_report_data(tm
     ).exists()
 
 
-def test_developmental_adult_effect_comparison_joins_shrunken_coefficients(tmp_path) -> None:
+def test_developmental_adult_effect_comparison_joins_raw_coefficients_and_expression_support(
+    tmp_path,
+) -> None:
     cell_type_dir = tmp_path / "cd14-monocyte"
     cell_type_dir.mkdir()
     pd.DataFrame({
         "gene": ["G1", "G2"],
+        "baseMean": [25.0, 2.0],
         "log2FoldChange": [0.3, -0.2],
-        "log2FoldChange_shrunk": [0.2, -0.1],
-        "lfc_shrink_converged": [True, True],
-        "padj": [0.01, 0.8],
+        "padj": [0.01, np.nan],
     }).to_csv(cell_type_dir / "developmental.csv", index=False)
     pd.DataFrame({
         "gene": ["G1", "G2"],
+        "baseMean": [30.0, 3.0],
         "log2FoldChange": [0.4, -0.5],
-        "log2FoldChange_shrunk": [0.25, -0.3],
-        "lfc_shrink_converged": [True, False],
         "padj": [0.02, 0.7],
     }).to_csv(cell_type_dir / "merged.csv", index=False)
     (cell_type_dir / "run_metadata.json").write_text(json.dumps({
@@ -370,7 +370,9 @@ def test_developmental_adult_effect_comparison_joins_shrunken_coefficients(tmp_p
     effects, support = build_developmental_adult_effect_comparison(tmp_path)
 
     assert effects["gene"].tolist() == ["G1", "G2"]
-    assert effects["developmental_log2_fold_change_per_year_shrunk"].tolist() == [0.2, -0.1]
-    assert effects["adult_log2_fold_change_per_year_shrunk"].tolist() == [0.25, -0.3]
+    assert effects["developmental_log2_fold_change_per_year"].tolist() == [0.3, -0.2]
+    assert effects["adult_log2_fold_change_per_year"].tolist() == [0.4, -0.5]
+    assert effects["developmental_base_mean"].tolist() == [25.0, 2.0]
     assert support.loc[0, "status"] == "complete"
-    assert support.loc[0, "n_genes_with_finite_shrunk_effects"] == 2
+    assert support.loc[0, "n_genes_with_finite_effects"] == 2
+    assert support.loc[0, "n_genes_with_padj_in_both_models"] == 1

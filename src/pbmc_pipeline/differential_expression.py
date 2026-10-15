@@ -192,7 +192,6 @@ def _fit_covariate_model(
     alpha: float,
     cpus: int,
     pearson_residuals_path: Path | None = None,
-    shrink_covariates: frozenset[str] = frozenset(),
 ) -> dict[str, pd.DataFrame]:
     from formulaic_contrasts import FormulaicContrasts
     from pydeseq2.dds import DeseqDataSet
@@ -295,26 +294,6 @@ def _fit_covariate_model(
             )
             stats.summary()
             result = stats.results_df.copy()
-            if covariate in shrink_covariates:
-                # Keep the Wald estimate used for inference and add apeGLM's
-                # stabilized estimate for descriptive effect-size displays.
-                result["log2FoldChange_unshrunk"] = result["log2FoldChange"]
-                result["lfcSE_unshrunk"] = result["lfcSE"]
-                try:
-                    stats.lfc_shrink(term)
-                except Exception as exc:  # noqa: BLE001 - preserve the fitted Wald result
-                    result["log2FoldChange_shrunk"] = np.nan
-                    result["lfcSE_shrunk"] = np.nan
-                    result["lfc_shrink_converged"] = False
-                    result["lfc_shrink_error"] = f"{type(exc).__name__}: {exc}"
-                else:
-                    shrunk = stats.results_df
-                    result["log2FoldChange_shrunk"] = shrunk["log2FoldChange"]
-                    result["lfcSE_shrunk"] = shrunk["lfcSE"]
-                    result["lfc_shrink_converged"] = (
-                        stats._LFC_shrink_converged.reindex(result.index).fillna(False)
-                    ).astype(bool)
-                    result["lfc_shrink_error"] = ""
             if covariate in {"age", "bmi", "log10_total_counts"}:
                 contrast_label = {
                     "age": "per year",
@@ -352,7 +331,6 @@ def _run_model(
     test_mode: bool,
     synthetic_test_data: bool,
     save_pearson_residuals: bool = False,
-    shrink_covariates: frozenset[str] = frozenset(),
 ) -> dict:
     details: dict = {
         "model": model_name,
@@ -486,7 +464,6 @@ def _run_model(
             alpha=alpha,
             cpus=cpus,
             pearson_residuals_path=residuals_path,
-            shrink_covariates=shrink_covariates,
         )
     except _NonEstimableModel as exc:
         details.update({"status": "skipped", "reason": str(exc)})
@@ -773,7 +750,6 @@ def _run_cell_type_differential_expression(
             output_dir=output_dir,
             test_mode=test_mode,
             synthetic_test_data=synthetic_test_data,
-            shrink_covariates=frozenset({"age"}),
         )
     )
     comparison = spec["developmental_adult_comparison"]
@@ -801,7 +777,6 @@ def _run_cell_type_differential_expression(
         output_dir=output_dir,
         test_mode=test_mode,
         synthetic_test_data=synthetic_test_data,
-        shrink_covariates=frozenset({"age"}),
     )
     developmental_fit.update({
         "purpose": "developmental_adult_effect_comparison",

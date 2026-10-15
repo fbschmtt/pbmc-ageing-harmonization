@@ -169,12 +169,12 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/analysis/combined/differential_expression/differential_expression.json` (DE status and cell-type result index)
 - `<outdir>/analysis/combined/trajectory/{report.html,executed.ipynb}` (combined trajectory report)
 - `<outdir>/analysis/combined/trajectory/*.csv` (shared-bin cross-type clusters and means, gene-level DE recurrence, and cross-type pattern concordance)
-- `<outdir>/analysis/combined/trajectory/developmental_adult_age_effects.csv` (per-cell-type paired shrunken continuous-age coefficients for the 0–30 developmental and ≥20 adult fits)
+- `<outdir>/analysis/combined/trajectory/developmental_adult_age_effects.csv` (per-cell-type paired raw continuous-age coefficients, mean normalized expression, and adjusted p-values for the 0–30 developmental and ≥20 adult fits; per-cell-type reports plot genes retained by both models' independent expression filters)
 - `<outdir>/analysis/combined/trajectory/developmental_adult_age_effect_support.csv` (sample and gene support for that comparison)
 - `<outdir>/analysis/combined/trajectory/expression_atlas_*.csv` (study-balanced common-gene expression matrix, gene UMAP, depth support, and independent 3′/5′ and intronic-read sensitivity summaries)
 - `<outdir>/analysis/combined/trajectory/*_residual_{clusters,pc_scores}.csv` (per-cell-type sample cluster assignments and PCA scores)
 - `<outdir>/analysis/combined/trajectory/cross_cell_type_pearson_residuals.npz` and residual metadata/cluster CSVs (wide matrix, Leiden-primary assignments, K-means/HDBSCAN alternatives, marker contrasts, and cell-type feature composition for shared samples across full-trajectory-supported cell types)
-- `<outdir>/analysis/per_gene/<cell-type-slug>/<gene-slug>/` (focused gene-profile HTML and executed notebook, model coefficient and residual tables, mean–dispersion diagnostics, normalized sample counts, and compressed VST matrix)
+- `<outdir>/analysis/per_gene/<cell-type-slug>/<gene-slug>/` (focused gene-profile HTML and executed notebook, `report_render.log` for notebook-render diagnostics, model coefficient and residual tables, mean–dispersion diagnostics, normalized sample counts, and compressed VST matrix)
 - `<outdir>/run_manifest.json` (requested, selected, and skipped studies;
   hashes of selected source inputs, metadata dependencies, and annotation models;
   selected studies are the complete requested set for explicit study lists)

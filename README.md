@@ -703,10 +703,13 @@ significant trajectory shapes and clusters; a companion cross-cell-type report
 summarizes shared trajectory and Pearson-residual structure. That report also
 contains a descriptive, study-balanced expression atlas, including shared-gene
 availability and count-loss diagnostics, expression maps, and technical-label
-contrasts. It also compares every modelled gene's apeGLM-shrunken continuous
-age coefficient from an exploratory developmental fit (ages 0–30) with the
-corresponding adult fit (ages ≥20), faceted by cell type. This descriptive
-scatter applies no p-value or FDR selection; the 20–30 overlap means its axes
+contrasts. Each per-cell-type report compares the raw continuous-age
+coefficients from an exploratory developmental fit (ages 0–30) with the
+corresponding adult fit (ages ≥20) in a paired two-panel scatter figure. The
+panels color the same genes by developmental and adult −log10(adjusted
+p-value), using a shared color scale. Genes need a non-missing adjusted
+p-value in both fits after PyDESeq2's independent expression filtering; no
+significance cutoff is used to select points. The 20–30 overlap means the axes
 are not independent cohorts. These views complement rather than replace the
 per-cell-type DE results, and they are not covariate-adjusted estimates of
 absolute RNA abundance. Per-type DE results are stored under each type's
