@@ -49,7 +49,8 @@ make run-all STUDIES=all
 
 This builds the workflow images when needed, runs the core harmonization and
 single-cell merge, fits pseudobulk differential-expression models, profiles the
-top age-associated genes for each cell type, and renders all cell-type reports.
+top age-associated genes for each cell type, and renders separate per-type DE
+and residual single-cell reports.
 It uses the Docker profile by default; no local Python or R installation is
 required.
 
@@ -69,8 +70,8 @@ By default this requests every configured study and skips unavailable fixtures.
 It runs the core pipeline on available downsampled real-data fixtures, checks
 the integration benchmark, fits and checks a generated pseudobulk fixture for
 positive DE coverage, profiles two top age-associated genes per cell type,
-smoke-tests a focused gene report, and renders all per-cell-type reports from
-the real merge with the synthetic DE results. The benchmark artifact retains
+smoke-tests a focused gene report, and renders residual single-cell reports
+from the real merge plus per-type DE reports from the synthetic fixture. The benchmark artifact retains
 labels and UMAP coordinates without raw counts or neighbour graphs. Use
 `STUDIES=<list>` to narrow the core run. Existing fixtures are preserved; use
 `TEST_DATA_OVERWRITE=true` only to refresh them.
@@ -158,9 +159,9 @@ optional pseudobulk differential-expression workflow
                                    subsetting the same small pseudobulk H5AD in memory
                                      ├──> per-study fits with site adjustment
                                      └──> merged ~ study_site + age + sex + log10_total_counts fit
-                                           └──> output/analysis/per_type/<type>/differential_expression/
-                                                 + output/analysis/combined/differential_expression/differential_expression.json
-                                                 + output/analysis/combined/trajectory/report.html
+                                           ├──> output/analysis/per_type/<type>/differential_expression/report.html
+                                           ├──> output/analysis/combined/differential_expression/
+                                           └──> output/analysis/combined/trajectory/report.html
 
 Focused gene profiles are stored under output/analysis/per_gene/<type>/<gene>/
 ```
@@ -391,18 +392,15 @@ which validation to run.
 |---|---|---|
 | Python library, CLI, or deterministic test change | `make lint test-unit` | Run a focused workflow too if a task contract or published artifact changed. |
 | Nextflow workflow or configuration change | `make workflow-lint` | Add `make run-test STUDIES=<study>` when task wiring must execute. |
-| One cell-type report or analysis | `make run-cell-type-test CELL_TYPE=<slug>` (requires an existing split; create test splits with `make split-cell-types-test`) | Use `make render-cell-type-test CELL_TYPE=<slug>` to rerender one report from existing analysis artifacts, or `make render-cell-type-reports-test` to rerender all test reports. |
-| Rerender reports from existing analysis artifacts | `make render-cell-type-reports[-test]` | Use `make render-cell-type[-test] CELL_TYPE=<slug>` to refresh only one report. |
+| One residual single-cell report or analysis | `make run-cell-type-test CELL_TYPE=<slug>` (requires an existing split; create test splits with `make split-cell-types-test`) | Use `make render-cell-type-test CELL_TYPE=<slug>` to rerender one residual report from existing analysis artifacts, or `make render-cell-type-reports-test` to rerender all test residual reports. |
+| Rerender residual reports from existing analysis artifacts | `make render-cell-type-reports[-test]` | Use `make render-cell-type[-test] CELL_TYPE=<slug>` to refresh only one residual report. |
 | Rebuild the central report index | `make render-report-index` | It is also refreshed automatically after core, integration-benchmark, DE, and cell-type workflow targets. |
 | Cell-type splitting or shared analysis | `make run-test`, then `make run-cell-type-analysis-test` | Use `make run-all-test` when the complete ordered test workflow is needed. |
-| Positive pseudobulk DE fitting | `make run-de-synthetic-test` and `make check-synthetic-de-results` | This fixture is independent of the core merge. To check report integration, also run `make run-test` followed by `make run-cell-type-analysis-test` and `make check-synthetic-de-reports`. |
+| Positive pseudobulk DE fitting | `make run-de-synthetic-test` and `make check-synthetic-de-results` | This fixture is independent of the core merge and renders per-type DE plus cross-cell-type reports. To check residual reports too, run `make run-test`, `make run-cell-type-analysis-test`, and `make check-synthetic-de-reports`. |
 | Focused gene-by-cell-type profile | `make profile-gene CELL_TYPE=<label-or-slug> GENE=<gene-id>` | Use `make run-gene-profile-synthetic-test` to fit and render a planted synthetic gene and check the report end to end. |
 | Top merged age-DE gene profiles | `make profile-top-age-genes-test` | Uses the synthetic DE fixture and profiles two genes per cell type; included in `make run-all-test`. |
 | DE from an existing test pseudobulk merge | `make run-de-test` | Requires `make run-test` first; the small core fixture may not have enough independent samples for successful fits. Use the synthetic target above for positive fitting coverage. |
 | Focused profiles of top merged age-DE genes | `make profile-top-age-genes` | Runs ten profiles per cell type by adjusted p-value; set `TOP_AGE_GENE_COUNT` to change the number. Requires completed merged DE results and pseudobulk input. |
-| Cross-cell-type trajectory report only | `make render-trajectory-report[-test]` | Reuses existing DE results and reruns only the combined trajectory analysis and notebook. |
-| Combined plus representative per-type trajectory reports | `make render-trajectory-reports-focused-test` | Reuses existing synthetic DE, test split, and analysis artifacts; rerenders the combined report and the `CELL_TYPE` report (default `cd14-monocyte`) without refitting. |
-| End-to-end trajectory path | `make run-trajectory-test` | Reuses an existing test merge, then runs the config-sized synthetic DE fit, both report levels, and artifact checks; skips the integration benchmark. Run `make run-test` first if the merge is missing. |
 | Core workflow for one or a few studies | `make run-test STUDIES=<list>` | Omit `STUDIES` to request all configured studies. |
 | Global integration/annotation diagnostics | `make run-integration-benchmark[-test]` | Run after an existing single-cell merge; `make run-all-test` also exercises its test form. |
 | Ordered Docker integration test | `make run-all-test` | Use `make verify` when local lint, unit, and documentation checks are also needed. |
@@ -419,15 +417,16 @@ Harmony integration uses the pinned Harmony2 C++ backend. It uses the backend's
 native thread policy; the legacy OpenMP/OpenBLAS thread overrides that crashed
 on large production runs have been removed.
 
-Cell-type reports provide local embeddings, marker contrasts, study coverage,
-descriptive fraction trends, and optional DE summaries. Their model and
-interpretation details are documented in the downstream section below.
+Residual single-cell reports provide local embeddings, marker contrasts, study
+coverage, and descriptive fraction trends. Separate per-type DE reports and a
+combined cross-cell-type analysis report are generated by `run-de`; those DE
+reports need only the merged pseudobulk input.
 
-`make run-test` always creates the test single-cell merge. Production runs
-create it only through `make run-all` or when explicitly enabled:
+`make run-test` and `make run` create the single-cell merge by default. To skip
+the production merge when it is not needed, set `MERGE_SINGLE_CELL=false`:
 
 ```bash
-make run STUDIES=all MERGE_SINGLE_CELL=true
+make run STUDIES=all MERGE_SINGLE_CELL=false
 ```
 
 To benchmark global embedding and type-calling methods without rerunning that
@@ -476,7 +475,7 @@ The cell-type and merge QC runners call these helpers after notebook execution
 and HTML export. Other report templates do not use them unless their runner is
 updated to add the shared header and TOC placeholder, then populate the TOC.
 
-## Per-cell-type reports
+## Residual single-cell reports
 
 The optional downstream workflow loads a completed merged single-cell H5AD once
 and splits it by the retained per-study `aifi_l2_majority` call. Experimental
@@ -556,11 +555,11 @@ first, then `make run-cell-type-analysis-test` to consume the test merge under
 
 The central HTML report index is written to `<outdir>/index.html`. It links
 to the merged and per-study harmonization QC reports, integration benchmark,
-combined trajectory report, and currently published per-type reports. Core,
-integration-benchmark, DE, and cell-type report Make targets
-refresh it after publishing. When the cell-type manifest is present, it
-supplies the current type list; otherwise the index scans the published report
-files. To rebuild it manually after moving or removing reports, run
+combined cross-cell-type analysis, and currently published residual and DE
+reports for each type. Core, integration-benchmark, DE, and cell-type report
+Make targets refresh it after publishing. The index checks residual and DE
+report files independently, and adds known types from the cell-type manifest
+when available. To rebuild it manually after moving or removing reports, run
 `make render-report-index OUTDIR=<outdir>`.
 
 The raw-count splits are published under `<outdir>/analysis/per_type/<cell-type-slug>/split.h5ad` so one
@@ -678,7 +677,7 @@ does not materialize a per-type pseudobulk H5AD. Per-study models adjust for
 available optional covariates. The merged age-and-sex model uses
 `~ study_site + age + sex + log10_total_counts` across studies. `log10(total_counts)`
 from each pseudobulk is included as a technical covariate in all DE models and
-its coefficient is shown in the combined-model results and volcano plot. When
+its coefficient is shown in the combined-model result tables. When
 present and variable, BMI and CMV each receive separate combined fits adjusted
 for study site, age, sex, and log10 total counts.
 DESeq2 estimates size factors to normalize library depth, and this additional
@@ -687,68 +686,31 @@ Naive CD8 T cells, in addition to size-factor normalization. It is included in
 the per-study and combined DE models.
 Combined fits include studies with usable values for that covariate and report
 the studies, sites, and sample counts used. The site term is dropped when only
-one site remains. Age, sex, BMI, CMV, and log10(total_counts) effects each have
-a combined-model volcano plot where estimable. Age and log10(total_counts) also
-have volcano plots colored by log10 of the combined-fit baseMean. A final
-collector writes the result directories and manifest. Per-study results also
-show significant-gene counts
-inside and outside the per-covariate intersection of genes tested by all
-available study fits. The gene-universe table above is the canonical definition
-of which genes enter each fit. The parallel type-fitting task is configured for
-one CPU, which is passed directly to PyDESeq2; all other CPU, time, and memory
-requests use the executor defaults.
+one site remains. A final collector writes the result directories and manifest.
+Per-type DE reports show model status and result tables, with up to 25 rows per
+fit sorted by adjusted p-value. The gene-universe table above is the canonical
+definition of which genes enter each fit. The parallel type-fitting task is
+configured for one CPU, which is passed directly to PyDESeq2; all other CPU,
+time, and memory requests use the executor defaults.
 In addition to the continuous-age fit, each cell type gets an exploratory,
-site- and covariate-adjusted age-trajectory analysis. Its report shows
-significant trajectory shapes and clusters; a companion cross-cell-type report
-summarizes shared trajectory and Pearson-residual structure. That report also
-contains a descriptive, study-balanced expression atlas, including shared-gene
-availability and count-loss diagnostics, expression maps, and technical-label
-contrasts. Each per-cell-type report compares the raw continuous-age
-coefficients from an exploratory developmental fit (ages 0–30) with the
-corresponding adult fit (ages ≥20) in a paired two-panel scatter figure. The
-panels color the same genes by developmental and adult −log10(adjusted
-p-value), using a shared color scale. Genes need a non-missing adjusted
-p-value in both fits after PyDESeq2's independent expression filtering; no
-significance cutoff is used to select points. The 20–30 overlap means the axes
-are not independent cohorts. These views complement rather than replace the
-per-cell-type DE results, and they are not covariate-adjusted estimates of
-absolute RNA abundance. Per-type DE results are stored under each type's
+site- and covariate-adjusted age-trajectory model. Per-type DE reports show
+model status and result tables for available per-study and combined fits.
+`run-de` also renders the combined cross-cell-type analysis report. It
+summarizes shared age trajectories, cross-type recurrence, and Pearson-residual
+structure, and includes a descriptive, study-balanced expression atlas with
+gene availability, count-loss diagnostics, expression maps, and technical-
+label contrasts. These are exploratory outputs, not covariate-adjusted
+estimates of absolute RNA abundance. Per-type DE results are stored under each type's
 `analysis/per_type/<cell-type-slug>/differential_expression/`; combined DE and
 cross-type artifacts are under `analysis/combined/`. See
 [IMPLEMENTATION.md](IMPLEMENTATION.md#age-trajectory-settings) for the model,
 support rules, clustering, output tables, and current configurable settings.
-See [per-type residual WGCNA](IMPLEMENTATION.md#per-type-residual-wgcna) for
-the network settings and their role in the initial analysis.
-Residual-sample clusters use Leiden on a PC-space neighbor graph as the primary
-labeling. The selected resolution targets at least 10 clusters, with K-means
-and fixed-parameter HDBSCAN results shown as alternatives; marker contrasts are
-limited to the 16 largest clusters.
-The residual-analysis section first shows the primary Leiden clusters and
-UMAP/PCA, then the alternative clusterings and cluster-marker contrasts. A
-separate WGCNA section follows with signed-network diagnostics, module
-assignments, eigengenes, and CMV checks. Each per-type report runs PyWGCNA on
-its age-bin-model Pearson residuals, using up to 2,000 of the most variable
-residual genes. The report checks module overlap with CMV-associated genes from
-the merged CMV model and eigengene correlation with observed yes/no CMV status.
-These are descriptive residual diagnostics, not independent CMV tests. The
-settings and selected soft-threshold power are recorded with the report.
 
-Each cell type also renders
-one shared-age diagnostic figure: study-site age support, age against raw
-pseudobulk depth in the tested gene intersection,
-and a Q-Q plot of unadjusted p-values from the combined age model fitted across
-all eligible studies for that cell type and adjusted for study site, sex, age,
-and log10 total counts. Its dashed y=x line marks the null
-reference, with independently scaled axes for readability. Combined-model
-standard volcano point colors show the number of available per-study fits for the same
-covariate and contrast where that gene passes the FDR threshold; point position
-continues to show the combined-fit effect and adjusted p-value. On the age
-volcano, outlined study-coloured diamonds additionally show each study's most
-significant gene that passes the configured FDR threshold and lies outside the
-combined all-study gene intersection, using that study's own effect and
-adjusted p-value. Therefore a
-diamond cannot duplicate a combined-fit point; it is a context marker for a
-gene omitted from the combined model.
+The residual single-cell reports are generated separately by
+`run-cell-type-analysis` and contain local embeddings, markers, coverage, and
+fraction views. They do not consume the DE manifest. The residual WGCNA helper
+remains in the codebase, but the current report targets do not run it or publish
+per-type WGCNA outputs.
 
 Samples must be age 20 or older and have at least 10 cells in that
 sample × cell-type pseudobulk. Samples missing required metadata or covariates,
@@ -764,13 +726,12 @@ the manifest are published beneath
 and task fit records are under
 `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/`.
 
-The DE manifest is the handoff contract for reports. Its
-`results_by_cell_type` index lists the per-study and combined result paths for
-each covariate (or an empty result set) for each cell-type slug. The cell-type
-workflow reads this manifest and passes only the matching cell-type results to
-a single report renderer. `make render-cell-type-reports` rerenders all existing
-reports from the published splits and analysis artifacts without repeating
-analysis. The renderer writes all single-cell artifacts beneath
+The DE manifest's `results_by_cell_type` index lists the per-study and combined
+result paths for each covariate (or an empty result set) for each cell-type
+slug. `run-de` uses it to render separate per-type DE reports. The cell-type
+workflow does not read this manifest: `make render-cell-type-reports` rerenders
+residual single-cell reports from published splits and analysis artifacts
+without repeating analysis. That renderer writes single-cell artifacts beneath
 `<outdir>/analysis/per_type/<cell-type-slug>/analysis/`; it never publishes
 report files into the DE directory. Named Nextflow subworkflows group splitting
 plus analysis, analysis of an existing split, and report rendering while
@@ -847,10 +808,10 @@ the single-gene target.
 The Nextflow `test` profile used by `make run-de-test` enables a test-only mode
 that bypasses only the minimum-cell cutoff. It keeps the adult-age, metadata, and model-estimability
 checks, so the small fixture can exercise PyDESeq2 without changing the
-production inclusion rules. Every test-mode run is labeled `test_only`; its
-root and per-celltype metadata, result CSVs, and rendered reports carry a clear
-warning that the results are for software validation and must not be treated
-as biological evidence. Use `make run-de` for the configured analysis rules.
+production inclusion rules. DE test-mode runs are labeled `test_only`; their
+DE metadata, result CSVs, and DE reports carry a warning that the results are
+for software validation and must not be treated as biological evidence. Use
+`make run-de` for the configured analysis rules.
 
 The small core fixture may produce no DE fits because bypassing a cell cutoff
 does not add independent samples or fix a rank-deficient design.
@@ -869,30 +830,27 @@ p-value. The outputs are written under
 `output/test/analysis/per_gene/<cell-type>/<gene>/`; this target is also
 included in `make run-all-test` and `make verify`.
 
-For the focused end-to-end trajectory path, use `make run-trajectory-test`
-after `make run-test`; see [Choosing a Make target](#choosing-a-make-target)
-for the smallest target for other test scenarios.
-
 `make run-all-test` is the complete ordered Docker test. It runs the core and
 integration benchmark on available downsampled real-data fixtures, then fits
 the separate synthetic pseudobulk DE fixture, profiles its top two merged
 age-DE genes per cell type, runs the focused synthetic gene-profile smoke test,
-and renders reports from the real merge/splits with those DE results.
+renders per-type DE and combined cross-cell-type reports from that synthetic
+fixture, and renders residual single-cell reports from the real merge/splits.
 `make verify` runs it after linting, unit
 tests, Nextflow lint, and documentation checks. `STUDIES=<list>` narrows only
 the core test inputs.
 
-The generated input stays under `output/test/analysis/combined/synthetic_de/`. DE outputs use the
-standard `output/test/analysis/combined/differential_expression/` directory, and the ordinary
-cell-type report target renders them under
-`output/test/analysis/per_type/`.
+The generated input stays under `output/test/analysis/combined/synthetic_de/`.
+DE outputs and the combined manifest are written under
+`output/test/analysis/combined/differential_expression/`; `run-de-synthetic-test`
+renders per-type DE reports under `output/test/analysis/per_type/<slug>/differential_expression/`.
+The separate residual reports are rendered from the test single-cell merge by
+`run-cell-type-analysis-test` under each type's `analysis/` directory.
 
-Cell-type report generation checks for matching DE result files under that
-directory. When available, it appends per-study significant-gene recurrence
-within the genes tested in every per-study fit, total significant-gene counts,
-and combined-model volcano plots for the available covariates at the bottom of
-the report. Each plot is
-omitted if its corresponding result files are absent.
+`run-cell-type-analysis` renders the residual single-cell report and requires a
+merged single-cell input. `run-de` uses the pseudobulk merge to render the
+separate per-type DE reports and cross-cell-type analysis report, so those
+reports do not require a single-cell merge.
 
 Run the workflow after creating the pseudobulk merge:
 
@@ -900,22 +858,13 @@ Run the workflow after creating the pseudobulk merge:
 make run-de
 ```
 
-When only the cross-cell-type trajectory analysis or its notebook changes,
-rerender it from the existing DE manifest and result directories without
-refitting the models:
-
-```bash
-make render-trajectory-report
-make render-trajectory-report-test
-```
-
-The test form requires `output/test/analysis/combined/differential_expression/` from
-`make run-de-synthetic-test`; it does not require the core test merge.
+`make run-de` also renders the cross-cell-type analysis report. If a report
+template changes, Nextflow resume reuses completed DE fits and reruns the
+affected downstream report tasks.
 
 By default this reads `output/harmonization/merged/pseudobulk_merged.h5ad`. Override the
 input or output roots with `PSEUDOBULK_INPUT=/path/to/pseudobulk_merged.h5ad`
-or `OUTDIR=/path/to/output`. Override where cell-type report generation looks
-for DE results with `DE_RESULTS_DIR=/path/to/differential_expression`.
+or `OUTDIR=/path/to/output`.
 `make run-de-test` requires an existing test pseudobulk merge; create it first
 with `make run-test`. It uses the explicitly labeled test mode described above.
 Use `make run-de-synthetic-test` to exercise successful PyDESeq2 fits with the
@@ -932,8 +881,8 @@ all complete-case samples from studies that recorded it and adjusting for
 study site, age, sex, and log10 total counts. The site term is omitted when one
 site remains. CMV
 negative/positive values are harmonized
-to no/yes. Categorical volcano plots and summaries name their comparison
-groups, including male versus female and yes CMV versus no CMV.
+to no/yes. Categorical result tables name their comparison groups, including
+male versus female and yes CMV versus no CMV.
 
 ## Further reading
 

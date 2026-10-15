@@ -68,25 +68,11 @@ workflow ANALYSE_EXISTING_CELL_TYPE_SPLITS {
 workflow RENDER_CELL_TYPE_REPORTS {
     take:
     report_inputs
-    de_by_slug
-    pipeline_config_file
     pipeline_config
     report_template
 
     main:
-    def report_routes = report_inputs.join(de_by_slug, remainder: true).branch { row ->
-        with_de: row.size() > 3 && row[1] != null && row[3] != null
-        without_de: row.size() > 1 && row[1] != null && (row.size() < 4 || row[3] == null)
-    }
-    def with_de = report_routes.with_de.map { row ->
-        tuple(row[0], row[1], row[2], row[3], true)
-    }
-    def without_de = report_routes.without_de.map { row ->
-        // Reuse a known staged file in the uniform path slot; the flag prevents
-        // the report command from treating it as a DE result directory.
-        tuple(row[0], row[1], row[2], pipeline_config_file, false)
-    }
-    RENDER_CELL_TYPE_REPORT(with_de.mix(without_de), pipeline_config, report_template)
+    RENDER_CELL_TYPE_REPORT(report_inputs, pipeline_config, report_template)
 
     emit:
     RENDER_CELL_TYPE_REPORT.out
@@ -98,8 +84,7 @@ process RENDER_CELL_TYPE_REPORT {
         saveAs: { filename -> "${filename}/analysis" }
 
     input:
-    tuple val(slug), path(primitive), path(analysis_dir, stageAs: 'analysis_result'),
-        path(de_payload, stageAs: 'de_input'), val(has_de)
+    tuple val(slug), path(primitive), path(analysis_dir, stageAs: 'analysis_result')
     path pipeline_config
     path report_template
 
@@ -107,13 +92,11 @@ process RENDER_CELL_TYPE_REPORT {
     path "${slug}"
 
     script:
-    def de_argument = has_de ? "--differential-expression-dir ${de_payload}" : ''
     """
     mkdir -p ${slug}
     cp -a analysis_result/. ${slug}/
     pbmc-cell-type-report --input ${primitive} --analysis ${slug}/analysis.h5ad \\
-      --output-dir ${slug} --template ${report_template} --config ${pipeline_config} \\
-      ${de_argument}
+      --output-dir ${slug} --template ${report_template} --config ${pipeline_config}
     """
 }
 

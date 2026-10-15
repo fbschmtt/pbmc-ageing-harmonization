@@ -15,7 +15,7 @@ from pbmc_pipeline.report_toc import populate_html_toc, set_notebook_title
 
 def generate_cell_type_report(
     *, input_path: Path, analysis_path: Path, output_dir: Path, template_path: Path,
-    config_path: Path, differential_expression_dir: Path | None = None,
+    config_path: Path,
 ) -> Path:
     for path in (input_path, analysis_path, template_path, config_path):
         if not path.exists():
@@ -38,12 +38,6 @@ def generate_cell_type_report(
         "CELL_TYPE_CONFIG": str(config_path.resolve()),
     })
     env.pop("CELL_TYPE_DIFFERENTIAL_EXPRESSION_DIR", None)
-    if differential_expression_dir is not None:
-        if not differential_expression_dir.is_dir():
-            raise NotADirectoryError(differential_expression_dir)
-        env["CELL_TYPE_DIFFERENTIAL_EXPRESSION_DIR"] = str(
-            differential_expression_dir.resolve()
-        )
     with tempfile.TemporaryDirectory(prefix="pbmc-cell-type-notebook-") as temporary_dir:
         materialized_template = Path(temporary_dir) / f"{template_path.stem}.ipynb"
         subprocess.run([sys.executable, "-m", "jupytext", "--to", "notebook", "--output", str(materialized_template), str(template_path.resolve())], check=True, env=env)
@@ -73,7 +67,6 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--template", type=Path, required=True)
     parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--differential-expression-dir", type=Path)
     args = parser.parse_args()
     print(generate_cell_type_report(
         input_path=args.input,
@@ -81,7 +74,6 @@ def main() -> None:
         output_dir=args.output_dir,
         template_path=args.template,
         config_path=args.config,
-        differential_expression_dir=args.differential_expression_dir,
     ))
 
 

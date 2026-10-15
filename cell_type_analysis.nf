@@ -15,47 +15,6 @@ workflow {
     def pipeline_config_file = file(root.resolve('config/pipeline.json'), checkIfExists: true)
     def pipeline_config = channel.value(pipeline_config_file)
     def report_template = channel.value(file(root.resolve('reports/cell_type_report.py'), checkIfExists: true))
-    def de_manifest_path = params.differential_expression_manifest
-        ?: "${params.outdir}/analysis/combined/differential_expression/differential_expression.json"
-    def de_manifest_file = file(de_manifest_path.toString())
-    def de_by_slug = channel.empty()
-    if (de_manifest_file.isFile()) {
-        def de_manifest = new groovy.json.JsonSlurper().parse(de_manifest_file)
-        def result_index = de_manifest.results_by_cell_type
-        if (result_index == null && de_manifest.cell_types instanceof List) {
-            // Read manifests produced before the explicit artifact index existed.
-            result_index = de_manifest.cell_types.collectEntries { record ->
-                def completed = (record.models ?: []).findAll { model -> model.status == 'complete' }
-                [(record.slug as String): [
-                    per_study: completed.findAll { model -> model.model == 'per_study' }
-                        .collect { model -> [study: model.study, path: model.results] },
-                    merged: completed.find { model -> model.model == 'merged' }?.results,
-                ]]
-            }
-        }
-        if (!(result_index instanceof Map)) {
-            error "${de_manifest_file}: missing results_by_cell_type DE artifact index"
-        }
-        def indexed_dirs = result_index.collect { slug, record ->
-            def result_paths = (record.per_study ?: []).collectMany { model ->
-                if (model.paths instanceof Map) {
-                    return model.paths.values().collect { result_path -> result_path as String }
-                }
-                return model.path ? [model.path as String] : []
-            } + (record.combined instanceof Map
-                ? record.combined.values().collect { result_path -> result_path as String }
-                : []) + (record.merged ? [record.merged as String] : [])
-            result_paths = result_paths.unique()
-            result_paths.each { relative_path ->
-                if (!de_manifest_file.parent.resolve(relative_path as String).isFile()) {
-                    error "${de_manifest_file}: indexed DE result is missing: ${relative_path}"
-                }
-            }
-            def result_directory = record.directory ?: slug
-            tuple(slug as String, file(de_manifest_file.parent.resolve(result_directory as String), checkIfExists: true))
-        }
-        de_by_slug = channel.fromList(indexed_dirs)
-    }
 
     def report_inputs = null
     def merged_input = null
@@ -102,8 +61,6 @@ workflow {
     if (report_inputs != null) {
         RENDER_CELL_TYPE_REPORTS(
             report_inputs,
-            de_by_slug,
-            pipeline_config_file,
             pipeline_config,
             report_template,
         )

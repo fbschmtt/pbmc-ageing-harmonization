@@ -28,6 +28,14 @@ def test_report_index_links_published_reports_from_output_root(tmp_path: Path) -
         tmp_path / "analysis/per_type/cd14-monocyte/analysis/report.html",
         "CD14 monocyte | PBMC",
     )
+    _write_report(
+        tmp_path / "analysis/per_type/cd14-monocyte/differential_expression/report.html",
+        "CD14 monocyte DE | PBMC",
+    )
+    _write_report(
+        tmp_path / "analysis/per_type/naive-cd4-t-cell/differential_expression/report.html",
+        "Naive CD4 T cell | PBMC",
+    )
     (tmp_path / "analysis/per_type/cell_type_manifest.json").write_text(
         '{"cell_types": [{"slug": "cd14-monocyte"}]}',
         encoding="utf-8",
@@ -42,5 +50,9 @@ def test_report_index_links_published_reports_from_output_root(tmp_path: Path) -
     assert 'href="harmonization/integration_benchmark/report.html"' in html
     assert 'href="analysis/combined/trajectory/report.html"' in html
     assert 'href="analysis/per_type/cd14-monocyte/analysis/report.html"' in html
+    assert 'href="analysis/per_type/cd14-monocyte/differential_expression/report.html"' in html
+    assert 'href="analysis/per_type/naive-cd4-t-cell/differential_expression/report.html"' in html
+    assert "Residual single-cell report" in html
+    assert "Differential-expression report" in html
     assert ".ipynb" not in html
     assert "Study A QC" in html

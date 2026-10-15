@@ -129,8 +129,8 @@ whole-dataset single-cell merge.
 - [x] Add the separate pseudobulk PyDESeq2 workflow with per-study and merged
   age models, configured sample filters, task-level cell-type fan-out without
   materialized per-type pseudobulk inputs, and a manifest indexed by cell type.
-- [x] Allow standard cell-type reports to include matching DE results through
-  that manifest, keeping DE files and single-cell reports in separate folders.
+- [x] Publish per-type DE results and reports in task-specific directories,
+  independently from residual single-cell reports.
 - [x] Generate a deterministic positive-fit DE fixture on demand and include
   fit, planted-marker, and report-artifact assertions in `make run-all-test`
   and `make verify`.
@@ -142,12 +142,12 @@ whole-dataset single-cell merge.
   random-slope models; include model-specific residual diagnostics and a
   synthetic report smoke target. Add a workflow profiling the top merged
   age-DE genes per cell type.
-- [x] Add per-type residual WGCNA using the age-bin model Pearson residuals,
-  including network diagnostics, module outputs, and exploratory CMV overlap
-  and eigengene association plots.
+- [x] Implement the exploratory per-type residual WGCNA helper and settings.
+  It is retained in the codebase but is not run by the current residual or DE
+  report targets and does not publish per-type WGCNA outputs.
 - [x] Add an output-root HTML report index linking harmonization QC, the
-  integration benchmark, combined trajectory, and currently published
-  per-type reports; refresh it from the corresponding Make workflow targets.
+  integration benchmark, combined cross-cell-type analysis, and independently
+  available residual and DE reports per type; refresh it from the Make targets.
 
 ## Current implementation state
 
@@ -156,7 +156,9 @@ whole-dataset single-cell merge.
 - `make run-all-test` runs a fresh real-fixture core merge, integration
   benchmark and report check, synthetic positive DE fit, two top merged age-DE
   profiles per cell type, the focused synthetic gene-profile smoke test, and
-  cell-type reports. Fixtures live under ignored `test_data/`; Nextflow
+  separate per-type DE and residual single-cell reports. The DE and combined
+  cross-type reports use the synthetic fixture; residual reports use the fresh
+  real-data merge. Fixtures live under ignored `test_data/`; Nextflow
   intermediates live in ignored `work/`.
 - The core single-cell merge preserves only raw counts, canonical metadata, and
   harmonization-stage QC fields. Global normalization, Harmony, graphs, UMAP,
@@ -181,7 +183,7 @@ make profile-top-age-genes-test
 make run-gene-profile-synthetic-test
 make run-all-test
 make verify
-make run STUDIES=all MERGE_SINGLE_CELL=true
+make run STUDIES=all
 ```
 
 ## Open provenance questions and follow-up work
@@ -252,16 +254,17 @@ intersection of genes available in all studies contributing samples to that
 fit, avoiding synthetic outer-join zeros. Each parallel type task is configured
 for one CPU; other CPU, time, and memory requests are left to executor defaults.
 
-The DE workflow remains independent of per-celltype analysis; celltype reports
-consume matching DE result directories through the root manifest's explicit
-cell-type result index. The single-cell and pseudobulk workflows stay separate;
-named Nextflow subworkflows group split/analyse/render stages, and one report
-renderer accepts an optional matching DE result. Core preparation, harmonized
-data, pseudobulk, merged inputs, QC reports, and integration benchmarks publish
+The DE workflow remains independent of per-type residual analysis. It reads its
+cell-type result index to render a standalone DE report per type and the
+combined cross-cell-type report. The single-cell and pseudobulk workflows stay
+separate; named Nextflow subworkflows group split/analyse/render stages, and
+their report outputs are independent. Core preparation, harmonized data,
+pseudobulk, merged inputs, QC reports, and integration benchmarks publish
 beneath `harmonization/`. Analysis outputs publish beneath `analysis/`: shared
-outputs and the cross-type trajectory report are in `combined/`, per-cell-type
-reports and DE results are in `per_type/<cell-type-slug>/`, and focused gene
-profiles are in `per_gene/<cell-type-slug>/<gene-slug>/`.
+outputs and the cross-type report are in `combined/`, residual reports and DE
+results are in separate `per_type/<cell-type-slug>/analysis/` and
+`per_type/<cell-type-slug>/differential_expression/` directories, and focused
+gene profiles are in `per_gene/<cell-type-slug>/<gene-slug>/`.
 
 The test profile bypasses only the minimum-cell cutoff so the small real-data
 fixture can exercise filtering and graceful skip behavior while retaining the
@@ -282,9 +285,10 @@ test-mode result is biological evidence.
 
 The first pass includes samples aged at least 20 years with at least 10 cells
 in that sample × cell-type pseudobulk. It also requires complete sex metadata;
-all sample exclusions are recorded. Per-cell-type reports show per-study,
-per-covariate significance inside/outside the shared tested-gene intersection, and combined
-volcano plots for age, sex, BMI, and CMV where metadata support the fits. BMI
+all sample exclusions are recorded. Per-type DE reports show model status and
+result tables for per-study and combined covariate fits. The separate residual
+single-cell reports cover embeddings, markers, sample coverage, and fraction
+views; they do not display DE results. BMI
 and CMV use separate complete-case models adjusted for study site, age, sex,
 and log10 total counts; per-study models include site when it varies within the
 study. Each model records its included studies, sites, and sample counts.
@@ -295,15 +299,14 @@ Wald test for any difference across bins, adjusted for study site, sex, and
 log10 total counts. Configurable support rules drop
 sparse bins and skip cell types with fewer than the required number of retained
 bins. The current rule requires at least 10 eligible pseudobulks in each bin
-and seven of the eight decades from 20–30 through 90–100. Report figures,
-trajectory clustering, and gene recurrence omit types below that support
-threshold. Reported trajectory shapes are scaled by their population SD across
-all retained bins. Significant shapes (omnibus FDR ≤0.001) are hierarchically
-clustered and visualized with cluster means and a UMAP (Ward and Euclidean by
-default). Per-type assignments and mean profiles are saved beside the reports. A
-cross-cell-type notebook clusters significant gene-by-type trajectories over
-the bins shared by every eligible type (at least five shared bins), compares
-their shapes, and counts how many eligible types show omnibus-significant DE
+and seven of the eight decades from 20–30 through 90–100. The combined
+trajectory report omits types below that support threshold. Reported trajectory
+shapes are scaled by their population SD across all retained bins. Significant
+shapes (omnibus FDR ≤0.001) are hierarchically clustered and visualized with
+cluster means and a UMAP (Ward and Euclidean by default). The cross-cell-type
+notebook clusters significant gene-by-type trajectories over the bins shared by
+every eligible type (at least five shared bins), compares their shapes, and
+counts how many eligible types show omnibus-significant DE
 (FDR <0.05) for each gene. An age-20 sensitivity analysis remains a future
 decision. R DESeq2, edgeR quasi-likelihood, and limma-voom comparisons are
 outside this
@@ -418,6 +421,7 @@ cell-type-by-gene features.
    CPU, and elapsed-time baselines from production.
 5. Add targeted synthetic tests for metadata joins, rare labels, and conversion
    edge cases that random smoke-test subsets may omit.
-6. Assess whether residual WGCNA modules replicate across studies and compare
-   them with prespecified biological signatures. Keep these exploratory and
-   distinguish module discovery from independent validation.
+6. If residual WGCNA is reintroduced into a report target, assess whether its
+   modules replicate across studies and compare them with prespecified
+   biological signatures. Keep these exploratory and distinguish module
+   discovery from independent validation.

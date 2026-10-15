@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import re
 from pathlib import Path
 
 import anndata as ad
@@ -112,8 +111,8 @@ def check_results(outdir: Path) -> None:
             raise SystemExit(f"Missing developmental age fit for {cell_type!r}")
         developmental_path = de_dir / developmental["results_by_covariate"]["age"]
         developmental_results = list(csv.DictReader(developmental_path.open(newline="")))
-        if not developmental_results or "log2FoldChange_shrunk" not in developmental_results[0]:
-            raise SystemExit(f"Developmental age result lacks shrunken effects: {developmental_path}")
+        if not developmental_results or "log2FoldChange" not in developmental_results[0]:
+            raise SystemExit(f"Developmental age result lacks age effects: {developmental_path}")
         depth_path = de_dir / merged["results_by_covariate"]["log10_total_counts"]
         if not depth_path.is_file():
             raise SystemExit(f"Missing combined depth results: {depth_path}")
@@ -313,123 +312,29 @@ def check_reports(
     ]["age_trajectory"]
     for cell_type in cell_types:
         slug = "-".join(cell_type.lower().split())
-        cell_type_dir = outdir / "analysis" / "per_type" / slug / "analysis"
-        report_path = cell_type_dir / "report.html"
-        if not report_path.is_file():
-            raise SystemExit(f"Missing standard cell-type report: {report_path}")
-        cluster_path = cell_type_dir / "age_trajectory_clusters.csv"
-        cluster_means_path = cell_type_dir / "age_trajectory_cluster_means.csv"
-        if not cluster_path.is_file() or not cluster_means_path.is_file():
-            raise SystemExit(
-                f"Missing materialized trajectory clusters or means for {cell_type!r}"
-            )
-        cluster_rows = pd.read_csv(cluster_path)
-        cluster_means = pd.read_csv(cluster_means_path)
-        if cluster_rows.empty or cluster_means.empty:
-            raise SystemExit(f"Trajectory clustering produced no export rows for {cell_type!r}")
-        if not cluster_rows["trajectory_cluster"].notna().all():
-            raise SystemExit(f"Trajectory cluster labels are missing for {cell_type!r}")
-        if cluster_rows[["umap_1", "umap_2"]].notna().all(axis=1).sum() < 4:
-            raise SystemExit(f"Per-cell-type UMAP was not materialized for {cell_type!r}")
-        html = report_path.read_text(errors="replace").lower()
-        required = [
-            "synthetic test data", "differential gene expression",
-            "shared age-model diagnostics", "alternative clusterings",
-        ]
-        missing = [item for item in required if item.lower() not in html]
-        section_heading = re.search(
-            r'<h2\b[^>]*id="differential-gene-expression"[^>]*>', html
+        residual_report = outdir / "analysis" / "per_type" / slug / "analysis" / "report.html"
+        if not residual_report.is_file():
+            raise SystemExit(f"Missing residual single-cell report: {residual_report}")
+        residual_html = residual_report.read_text(errors="replace").lower()
+        for phrase in ("local embedding and clusters", "cluster composition"):
+            if phrase not in residual_html:
+                raise SystemExit(
+                    f"{residual_report} is missing residual-analysis content {phrase!r}"
+                )
+
+        report_path = (
+            outdir / "analysis" / "per_type" / slug / "differential_expression" / "report.html"
         )
-        if section_heading is None:
-            missing.append("DE section heading")
-        else:
-            next_section = re.search(r"<h2\b", html[section_heading.end():])
-            de_end = (
-                section_heading.end() + next_section.start()
-                if next_section else len(html)
-            )
-            de_section = html[section_heading.start():de_end]
-            toc_link = html.find('href="#differential-gene-expression"')
-            if toc_link < 0 or toc_link > section_heading.start():
-                missing.append("DE link in the top report contents box")
-
-            def heading_text(match: re.Match[str]) -> str:
-                content = re.sub(
-                    r"<a\b[^>]*>.*?</a>", "", match.group(1), flags=re.DOTALL
-                )
-                return re.sub(r"<[^>]+>", "", content).strip().lower()
-
-            h3s = list(re.finditer(r"<h3\b[^>]*>(.*?)</h3>", de_section, re.DOTALL))
-            h3_names = [heading_text(match) for match in h3s]
-            for heading in (
-                "shared age-model diagnostics", "covariate effects",
-                "per-study covariate models", "per-study gene-intersection diagnostic",
-            ):
-                if heading not in h3_names:
-                    missing.append(f"{heading} subsection")
-
-            rendered_h4 = list(re.finditer(r"<h4\b[^>]*>(.*?)</h4>", de_section, re.DOTALL))
-            h4_names = [heading_text(match) for match in rendered_h4]
-            plotted_covariates = [
-                covariate for covariate in expected_genes if covariate != "age_trajectory"
-            ]
-            display_names = {
-                "age": "age", "sex": "sex", "bmi": "bmi", "cmv": "cmv",
-                "log10_total_counts": "log10(total_counts)",
-            }
-            covariate_order = [display_names[name] for name in plotted_covariates]
-            covariate_order.append("log10(total_counts)")
-            heading_positions = {}
-            for covariate in covariate_order:
-                match_index = next(
-                    (index for index, name in enumerate(h4_names) if name == covariate),
-                    None,
-                )
-                if match_index is None:
-                    missing.append(f"{covariate} covariate subsection")
-                    continue
-                heading = rendered_h4[match_index]
-                end = (
-                    rendered_h4[match_index + 1].start()
-                    if match_index + 1 < len(rendered_h4)
-                    else len(de_section)
-                )
-                subsection = de_section[heading.end():end]
-                heading_positions[covariate] = heading.start()
-                if "<img" not in subsection:
-                    missing.append(f"{covariate} volcano plot")
-                if "<th>contrast</th>" not in subsection:
-                    missing.append(f"{covariate} model details contrast row")
-                if "<th>studies included (samples per study)</th>" not in subsection:
-                    missing.append(f"{covariate} model details per-study sample counts")
-            if (
-                "sex" in heading_positions
-                and "log10(total_counts)" in heading_positions
-                and heading_positions["log10(total_counts)"] < heading_positions["sex"]
-            ):
-                missing.append("depth volcano subsection after sex")
-            if de_section.count("<img") < len(covariate_order):
-                missing.append(
-                    f"at least {len(covariate_order)} covariate volcano images; "
-                    f"found {de_section.count('<img')} total DE images"
-                )
-
-        age_heading = re.search(r'<h2\b[^>]*id="age-bin-trajectories"[^>]*>', html)
-        if age_heading is None:
-            missing.append("age-bin trajectory section heading")
-        else:
-            next_section = re.search(r"<h2\b", html[age_heading.end():])
-            age_end = age_heading.end() + next_section.start() if next_section else len(html)
-            age_section = html[age_heading.start():age_end]
-            for phrase, label in (
-                ("show trajectory clusters, umap, and merge diagnostic", "trajectory clusters"),
-                (
-                    "../../../combined/trajectory/report.html",
-                    "cross-cell-type trajectory report link",
-                ),
-            ):
-                if phrase not in age_section:
-                    missing.append(label)
+        if not report_path.is_file():
+            raise SystemExit(f"Missing per-type DE report: {report_path}")
+        de_html = report_path.read_text(errors="replace").lower()
+        required = ["differential-expression results", "model summary", "synthetic test data"]
+        missing = [item for item in required if item not in de_html]
+        for covariate, genes in expected_genes.items():
+            if covariate == "age_trajectory":
+                continue
+            if not any(str(gene).lower() in de_html for gene in genes):
+                missing.append(f"planted {covariate} marker")
         if missing:
             raise SystemExit(f"{report_path} is missing expected DE content: {missing}")
     trajectory_dir = outdir / "analysis" / "combined" / "trajectory"

@@ -17,6 +17,12 @@ process LIST_PSEUDOBULK_CELL_TYPES {
 
 process RUN_CELL_TYPE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION {
     tag { cell_type }
+    publishDir "${params.outdir}/analysis/per_type", mode: 'copy', overwrite: true,
+        saveAs: { filename ->
+            filename == "cell_type_result/${slug}"
+                ? "${slug}/differential_expression"
+                : null
+        }
 
     input:
     path pseudobulk_input
@@ -53,7 +59,6 @@ process WRITE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION_MANIFEST {
     output:
     path 'analysis/combined/differential_expression', emit: results
     path 'analysis/per_type', emit: per_type
-    path 'analysis/per_type/*/differential_expression', emit: per_type_de
 
     script:
     def test_mode_argument = de_test_mode ? '--test-mode' : ''
@@ -67,8 +72,8 @@ process WRITE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION_MANIFEST {
     """
 }
 
-process RENDER_CROSS_CELL_TYPE_TRAJECTORY_REPORT {
-    tag 'cross-cell-type age trajectory report'
+process RENDER_CROSS_CELL_TYPE_ANALYSIS_REPORT {
+    tag 'cross-cell-type trajectory and expression analysis'
     publishDir "${params.outdir}/analysis/combined", mode: 'copy', overwrite: true
 
     input:
@@ -82,8 +87,29 @@ process RENDER_CROSS_CELL_TYPE_TRAJECTORY_REPORT {
 
     script:
     """
-    pbmc-trajectory-report --differential-expression-dir ${per_type_de} \
-      --pseudobulk-input ${pseudobulk_input} --output-dir trajectory --config ${pipeline_config} \
+    pbmc-trajectory-report --differential-expression-dir ${per_type_de} \\
+      --pseudobulk-input ${pseudobulk_input} --output-dir trajectory --config ${pipeline_config} \\
       --template ${report_template} --project-root .
+    """
+}
+
+process RENDER_PER_TYPE_DIFFERENTIAL_EXPRESSION_REPORTS {
+    tag 'per-cell-type differential expression reports'
+    publishDir "${params.outdir}/analysis/per_type", mode: 'copy', overwrite: true,
+        saveAs: { filename ->
+            filename.startsWith('de_reports/') ? filename.substring('de_reports/'.length()) : null
+        }
+
+    input:
+    path per_type_de
+    path cross_cell_type_report
+
+    output:
+    path 'de_reports/*/differential_expression/report.html', emit: reports
+
+    script:
+    """
+    test -s ${cross_cell_type_report}/report.html
+    pbmc-differential-expression-report --input-dir ${per_type_de} --output-root de_reports
     """
 }

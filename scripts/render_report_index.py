@@ -58,19 +58,19 @@ def render_report_index(outdir: Path) -> Path:
     cell_type_manifest = per_type_root / "cell_type_manifest.json"
     if cell_type_manifest.is_file():
         document = json.loads(cell_type_manifest.read_text(encoding="utf-8"))
-        slugs = [
+        manifest_slugs = [
             str(record["slug"])
             for record in document.get("cell_types", [])
             if isinstance(record, dict) and record.get("slug")
         ]
-        per_type_reports = [
-            per_type_root / slug / "analysis" / "report.html"
-            for slug in slugs
-            if (per_type_root / slug / "analysis" / "report.html").is_file()
-        ]
     else:
-        per_type_reports = list(per_type_root.glob("*/analysis/report.html"))
-    per_type_reports.sort(key=lambda path: path.parent.parent.name)
+        manifest_slugs = []
+    available_slugs = {
+        path.parent.parent.name
+        for pattern in ("*/analysis/report.html", "*/differential_expression/report.html")
+        for path in per_type_root.glob(pattern)
+    }
+    slugs = sorted(set(manifest_slugs) | available_slugs)
 
     def link(path: Path, label: str) -> str:
         relative = path.relative_to(outdir).as_posix()
@@ -118,28 +118,34 @@ def render_report_index(outdir: Path) -> Path:
 
     trajectory_links = []
     if trajectory_report.is_file():
-        trajectory_links.append(link(trajectory_report, "Combined trajectory report (HTML)"))
+        trajectory_links.append(link(trajectory_report, "Cross-cell-type analysis report (HTML)"))
     if not trajectory_links:
-        trajectory_content = "<p>No combined trajectory report is published yet.</p>"
+        trajectory_content = "<p>No cross-cell-type analysis report is published yet.</p>"
     else:
         trajectory_content = "<ul>" + "".join(
             f"<li>{item}</li>" for item in trajectory_links
         ) + "</ul>"
 
-    if per_type_reports:
+    if slugs:
         rows = []
-        for report in per_type_reports:
+        for slug in slugs:
+            residual_report = per_type_root / slug / "analysis" / "report.html"
+            de_report = per_type_root / slug / "differential_expression" / "report.html"
+            report = residual_report if residual_report.is_file() else de_report
             cell_type = _report_title(report)
-            slug = report.parent.parent.name
+            residual_link = link(residual_report, "Open report") if residual_report.is_file() else "—"
+            de_link = link(de_report, "Open report") if de_report.is_file() else "—"
             rows.append(
                 "<tr>"
                 f"<th scope=\"row\">{escape(cell_type)}</th>"
-                f"<td>{link(report, 'Open report')}</td>"
+                f"<td>{residual_link}</td>"
+                f"<td>{de_link}</td>"
                 f"<td><code>{escape(slug)}</code></td>"
                 "</tr>"
             )
         per_type_content = (
-            "<table><thead><tr><th>Cell type</th><th>Report</th><th>Output folder</th>"
+            "<table><thead><tr><th>Cell type</th><th>Residual single-cell report</th>"
+            "<th>Differential-expression report</th><th>Output folder</th>"
             "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
         )
     else:
@@ -175,7 +181,7 @@ def render_report_index(outdir: Path) -> Path:
     __BENCHMARK_REPORTS__
   </section>
   <section>
-    <h2>Combined trajectory and differential expression</h2>
+    <h2>Cross-cell-type analysis</h2>
     __TRAJECTORY_LINKS__
   </section>
   <section>

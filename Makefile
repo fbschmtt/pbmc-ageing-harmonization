@@ -21,7 +21,7 @@ TEST_CELLS ?= 200
 TEST_SEED ?= 42
 TEST_DATA_OVERWRITE ?= false
 VALIDATE_OUTDIR ?= output/validation
-MERGE_SINGLE_CELL ?= false
+MERGE_SINGLE_CELL ?= true
 MERGED_INPUT ?= $(OUTDIR)/harmonization/merged/single_cell_merged.h5ad
 INTEGRATION_BENCHMARK_INPUT ?= $(MERGED_INPUT)
 INTEGRATION_BENCHMARK_LOG_LEVEL ?= INFO
@@ -34,7 +34,6 @@ PSEUDOBULK_INPUT ?= $(OUTDIR)/harmonization/merged/pseudobulk_merged.h5ad
 GENE_PROFILE_DIR ?= $(OUTDIR)/analysis/per_gene
 GENE_PROFILE_TEST_DIR ?= $(OUTDIR)/analysis/combined/gene_profile_synthetic
 GENE_PROFILE_TEST_INPUT ?= $(GENE_PROFILE_TEST_DIR)/pseudobulk_merged.h5ad
-DE_RESULTS_DIR ?= $(OUTDIR)/analysis/combined/differential_expression
 PER_TYPE_DIR ?= $(OUTDIR)/analysis/per_type
 SYNTHETIC_DE_DIR ?= $(OUTDIR)/analysis/combined/synthetic_de
 VENV_PYTHON := .venv/bin/python
@@ -53,10 +52,10 @@ TEST_DATA_CONTAINER_PREREQS := image-python $(PRODUCTION_R_IMAGE_PREREQ)
 PYTHON_CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),image-python,)
 MERGE_ARGS = $(if $(filter true 1 yes,$(MERGE_SINGLE_CELL)),--merge_single_cell,)
 
-.PHONY: help install lint workflow-lint docs-check docs-update test-unit verify run-all-test run-trajectory-test \
+.PHONY: help install lint workflow-lint docs-check docs-update test-unit verify run-all-test \
 validate-study validate-test validate-full test-data download-inputs images image-python \
 	download-inputs-strict check-download-inputs \
-	image-r run run-no-qc run-test run-all split-cell-types split-cell-types-test \
+	image-r run run-test run-all split-cell-types split-cell-types-test \
 	run-cell-type-analysis run-cell-type-analysis-test \
 	run-cell-type run-cell-type-test render-cell-type render-cell-type-test \
 	render-cell-type-reports render-cell-type-reports-test \
@@ -65,10 +64,9 @@ validate-study validate-test validate-full test-data download-inputs images imag
 	run-gene-profile-synthetic-test \
 	run-integration-benchmark run-integration-benchmark-test check-integration-benchmark-prerequisites check-integration-benchmark-test \
 	run-de run-de-test run-de-synthetic-test \
-	render-trajectory-report render-trajectory-report-test render-trajectory-reports-focused-test render-report-index \
+	render-report-index \
 	check-synthetic-de-results check-synthetic-de-reports check-de-prerequisites \
 	check-cell-type-prerequisites check-cell-type-analysis-test-prerequisites check-cell-type-test-prerequisites \
-	check-focused-trajectory-test-prerequisites \
 	check-cell-type-render-prerequisites check-cell-type-test-render-prerequisites \
 	check-cell-type-reports-prerequisites clean clean-core-output clean-analysis-output clean-work
 
@@ -107,19 +105,13 @@ verify: lint test-unit workflow-lint docs-check run-all-test ## Run all checks a
 
 # Keep benchmark, DE, and reports ordered even under `make -j`: each stage
 # consumes the fresh core output or synthetic-DE manifest from the prior stage.
-run-all-test: run-test ## Run core, benchmark, DE, top-gene profiles, and cell-type test workflows
+run-all-test: run-test ## Run core, benchmark, DE, cross-cell-type analysis, profiles, and cell-type reports
 	$(MAKE) run-integration-benchmark-test
 	$(MAKE) check-integration-benchmark-test
 	$(MAKE) run-de-synthetic-test
 	$(MAKE) check-synthetic-de-results
 	$(MAKE) profile-top-age-genes-test
 	$(MAKE) run-gene-profile-synthetic-test
-	$(MAKE) run-cell-type-analysis-test
-	$(MAKE) check-synthetic-de-reports
-
-run-trajectory-test: check-cell-type-analysis-test-prerequisites ## Exercise synthetic trajectory fits and both report levels from an existing test merge
-	$(MAKE) run-de-synthetic-test
-	$(MAKE) check-synthetic-de-results
 	$(MAKE) run-cell-type-analysis-test
 	$(MAKE) check-synthetic-de-reports
 
@@ -159,7 +151,7 @@ image-python:
 image-r:
 	docker build -f docker/r-conversion.Dockerfile -t $(R_IMAGE) .
 
-run: $(CORE_CONTAINER_PREREQS) ## Resumable production workflow; opt in with MERGE_SINGLE_CELL=true
+run: $(CORE_CONTAINER_PREREQS) ## Resumable production workflow; merge single-cell data by default (opt out with MERGE_SINGLE_CELL=false)
 	$(NXF) run main.nf -profile $(NF_PROFILE),core -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) --python_image $(PYTHON_IMAGE) --r_image $(R_IMAGE) --pipeline_revision $(PIPELINE_REVISION) $(MERGE_ARGS) -resume
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
@@ -169,18 +161,14 @@ run-all: ## Run the core workflow, pseudobulk DE, and all cell-type analyses/rep
 	$(MAKE) profile-top-age-genes
 	$(MAKE) run-cell-type-analysis
 
-run-no-qc: $(CORE_CONTAINER_PREREQS) ## Resumable workflow without rendered QC reports
-	$(NXF) run main.nf -profile $(NF_PROFILE),core -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) --python_image $(PYTHON_IMAGE) --r_image $(R_IMAGE) --pipeline_revision $(PIPELINE_REVISION) $(MERGE_ARGS) --skip_qc -resume
-	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
-
 run-test: OUTDIR = output/test
 run-test: MERGE_SINGLE_CELL = true
 run-test: $(TEST_CONTAINER_PREREQS) ## Fresh deterministic test workflow for all configured studies; skips unavailable fixtures
 	$(NXF) run main.nf -profile $(NF_PROFILE),core,core_test,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) --python_image $(PYTHON_IMAGE) --r_image $(R_IMAGE) --pipeline_revision $(PIPELINE_REVISION) $(MERGE_ARGS)
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
-run-cell-type-analysis: $(PYTHON_CONTAINER_PREREQS) ## Analyse all cell types and render their reports, including DE results when present
-	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(MERGED_INPUT)" --differential_expression_manifest "$(DE_RESULTS_DIR)/differential_expression.json" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume
+run-cell-type-analysis: $(PYTHON_CONTAINER_PREREQS) ## Analyse cell types and render residual single-cell reports
+	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(MERGED_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 check-de-prerequisites:
@@ -190,13 +178,13 @@ check-de-prerequisites:
 		echo "Ready: $(PSEUDOBULK_INPUT)"; \
 	fi
 
-run-de: check-de-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Run per-study and combined covariate PyDESeq2 models from a pseudobulk H5AD
+run-de: check-de-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Fit pseudobulk DE models and render per-type DE reports
 	$(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression -work-dir $(WORK_DIR) --outdir $(OUTDIR) --pseudobulk_input "$(PSEUDOBULK_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 run-de-test: OUTDIR = output/test
 run-de-test: PSEUDOBULK_INPUT = output/test/harmonization/merged/pseudobulk_merged.h5ad
-run-de-test: check-de-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Run DE from an existing test pseudobulk merge
+run-de-test: check-de-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Fit DE and render per-type reports from an existing test pseudobulk merge
 	$(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --pseudobulk_input "$(PSEUDOBULK_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
@@ -257,7 +245,7 @@ check-integration-benchmark-test: $(PYTHON_CONTAINER_PREREQS) ## Check thin inte
 
 run-de-synthetic-test: OUTDIR = output/test
 run-de-synthetic-test: SYNTHETIC_DE_DIR = $(OUTDIR)/analysis/combined/synthetic_de
-run-de-synthetic-test: $(PYTHON_CONTAINER_PREREQS) ## Generate a compact positive DE fixture and fit it with production filters enabled
+run-de-synthetic-test: $(PYTHON_CONTAINER_PREREQS) ## Generate a positive DE fixture, fit it, and render per-type reports
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.synthetic_de --config config/pipeline.json --output "$(SYNTHETIC_DE_DIR)/pseudobulk_merged.h5ad"
 	$(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression,synthetic_de_test -work-dir $(WORK_DIR) --outdir "$(OUTDIR)" --pseudobulk_input "$(SYNTHETIC_DE_DIR)/pseudobulk_merged.h5ad" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
@@ -265,46 +253,8 @@ run-de-synthetic-test: $(PYTHON_CONTAINER_PREREQS) ## Generate a compact positiv
 check-synthetic-de-results: $(PYTHON_CONTAINER_PREREQS) ## Check completed synthetic DE fits and planted age markers
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/check_synthetic_de.py results --outdir output/test
 
-check-synthetic-de-reports: $(PYTHON_CONTAINER_PREREQS) ## Check synthetic DE warnings, markers, and plots in standard test reports
+check-synthetic-de-reports: $(PYTHON_CONTAINER_PREREQS) ## Check synthetic DE and residual reports
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/check_synthetic_de.py reports --outdir output/test
-
-check-trajectory-report-prerequisites:
-	@if test ! -f "$(DE_RESULTS_DIR)/differential_expression.json"; then \
-		echo "Missing DE manifest: $(DE_RESULTS_DIR)/differential_expression.json. Run make run-de first." >&2; exit 2; \
-	elif ! find "$(PER_TYPE_DIR)" -name run_metadata.json -print -quit 2>/dev/null | grep -q .; then \
-		echo "Missing per-type DE artifacts under $(PER_TYPE_DIR). Run make run-de first." >&2; exit 2; \
-	else \
-		echo "Ready to render the trajectory report from $(DE_RESULTS_DIR)"; \
-	fi
-
-render-trajectory-report: check-trajectory-report-prerequisites image-python ## Rerender the cross-cell-type trajectory report from existing DE results
-	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) pbmc-trajectory-report --differential-expression-dir "$(PER_TYPE_DIR)" --pseudobulk-input "$(PSEUDOBULK_INPUT)" --output-dir "$(OUTDIR)/analysis/combined/trajectory" --config config/pipeline.json --template reports/trajectory_analysis_report.py --project-root /work
-	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
-
-render-trajectory-report-test: OUTDIR = output/test
-render-trajectory-report-test: DE_RESULTS_DIR = $(OUTDIR)/analysis/combined/differential_expression
-render-trajectory-report-test: PER_TYPE_DIR = $(OUTDIR)/analysis/per_type
-render-trajectory-report-test: PSEUDOBULK_INPUT = $(OUTDIR)/analysis/combined/synthetic_de/pseudobulk_merged.h5ad
-render-trajectory-report-test: check-trajectory-report-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Rerender the test trajectory report from existing DE results
-	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) pbmc-trajectory-report --differential-expression-dir "$(PER_TYPE_DIR)" --pseudobulk-input "$(PSEUDOBULK_INPUT)" --output-dir "$(OUTDIR)/analysis/combined/trajectory" --config config/pipeline.json --template reports/trajectory_analysis_report.py --project-root /work
-	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
-
-check-focused-trajectory-test-prerequisites: OUTDIR = output/test
-check-focused-trajectory-test-prerequisites: DE_RESULTS_DIR = $(OUTDIR)/analysis/combined/differential_expression
-check-focused-trajectory-test-prerequisites: PER_TYPE_DIR = $(OUTDIR)/analysis/per_type
-check-focused-trajectory-test-prerequisites: PSEUDOBULK_INPUT = $(OUTDIR)/analysis/combined/synthetic_de/pseudobulk_merged.h5ad
-check-focused-trajectory-test-prerequisites: check-cell-type-test-render-prerequisites check-trajectory-report-prerequisites
-	@if test ! -f "$(PSEUDOBULK_INPUT)"; then \
-		echo "Missing synthetic test pseudobulk: $(PSEUDOBULK_INPUT). Run make run-de-synthetic-test first." >&2; exit 2; \
-	fi
-
-render-trajectory-reports-focused-test: OUTDIR = output/test
-render-trajectory-reports-focused-test: DE_RESULTS_DIR = $(OUTDIR)/analysis/combined/differential_expression
-render-trajectory-reports-focused-test: PER_TYPE_DIR = $(OUTDIR)/analysis/per_type
-render-trajectory-reports-focused-test: check-focused-trajectory-test-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Rerender combined and one per-type test report from existing artifacts
-	$(MAKE) render-trajectory-report-test OUTDIR="$(OUTDIR)" DE_RESULTS_DIR="$(DE_RESULTS_DIR)" PER_TYPE_DIR="$(PER_TYPE_DIR)" PSEUDOBULK_INPUT="$(OUTDIR)/analysis/combined/synthetic_de/pseudobulk_merged.h5ad"
-	$(MAKE) render-cell-type-test OUTDIR="$(OUTDIR)" DE_RESULTS_DIR="$(DE_RESULTS_DIR)" CELL_TYPE="$(CELL_TYPE)"
-	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/check_synthetic_de.py reports --outdir "$(OUTDIR)" --cell-type "$(CELL_TYPE)"
 
 split-cell-types: $(PYTHON_CONTAINER_PREREQS) ## Create reusable raw-count cell-type splits from an existing merged H5AD
 	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(MERGED_INPUT)" --split_only --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume
@@ -315,11 +265,11 @@ check-cell-type-prerequisites:
 	elif test -f "$(MERGED_INPUT)"; then \
 		echo "Missing split: $(CELL_TYPE_INPUT). Run: make split-cell-types CELL_TYPE=$(CELL_TYPE)" >&2; exit 2; \
 	else \
-		echo "Missing merge: $(MERGED_INPUT). Run: make run MERGE_SINGLE_CELL=true" >&2; exit 2; \
+		echo "Missing merge: $(MERGED_INPUT). Run: make run (single-cell merge is enabled by default)" >&2; exit 2; \
 	fi
 
 run-cell-type: check-cell-type-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Analyse and render one existing split; default CELL_TYPE=cd14-monocyte
-	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis -work-dir $(WORK_DIR) --outdir $(OUTDIR) --cell_type_input "$(CELL_TYPE_INPUT)" --differential_expression_manifest "$(DE_RESULTS_DIR)/differential_expression.json" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
+	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis -work-dir $(WORK_DIR) --outdir $(OUTDIR) --cell_type_input "$(CELL_TYPE_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 check-cell-type-render-prerequisites:
@@ -332,7 +282,7 @@ check-cell-type-render-prerequisites:
 	fi
 
 render-cell-type: check-cell-type-render-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Render one existing analysis without recomputing it
-	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis -work-dir $(WORK_DIR) --outdir $(OUTDIR) --cell_type_input "$(CELL_TYPE_INPUT)" --cell_type_analysis_input "$(CELL_TYPE_ANALYSIS_INPUT)" --differential_expression_manifest "$(DE_RESULTS_DIR)/differential_expression.json" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
+	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis -work-dir $(WORK_DIR) --outdir $(OUTDIR) --cell_type_input "$(CELL_TYPE_INPUT)" --cell_type_analysis_input "$(CELL_TYPE_ANALYSIS_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 check-cell-type-reports-prerequisites:
@@ -345,7 +295,7 @@ check-cell-type-reports-prerequisites:
 	fi
 
 render-cell-type-reports: check-cell-type-reports-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Rerender all cell-type reports from existing splits and analysis artifacts
-	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis -work-dir $(WORK_DIR) --outdir $(OUTDIR) --cell_type_input "$(OUTDIR)/analysis/per_type/*/split.h5ad" --cell_type_analysis_input "$(OUTDIR)/analysis/per_type/*/analysis" --differential_expression_manifest "$(DE_RESULTS_DIR)/differential_expression.json" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
+	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis -work-dir $(WORK_DIR) --outdir $(OUTDIR) --cell_type_input "$(OUTDIR)/analysis/per_type/*/split.h5ad" --cell_type_analysis_input "$(OUTDIR)/analysis/per_type/*/analysis" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 check-cell-type-analysis-test-prerequisites: OUTDIR = output/test
@@ -360,7 +310,7 @@ check-cell-type-analysis-test-prerequisites:
 run-cell-type-analysis-test: OUTDIR = output/test
 run-cell-type-analysis-test: MERGED_INPUT = output/test/harmonization/merged/single_cell_merged.h5ad
 run-cell-type-analysis-test: check-cell-type-analysis-test-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Analyse and render all cell types from an existing test merge
-	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(MERGED_INPUT)" --differential_expression_manifest "$(DE_RESULTS_DIR)/differential_expression.json" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
+	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(MERGED_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 split-cell-types-test: OUTDIR = output/test
@@ -385,7 +335,7 @@ check-cell-type-test-prerequisites:
 	fi
 
 run-cell-type-test: check-cell-type-test-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Analyse and render one existing test split; default CELL_TYPE=cd14-monocyte
-	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --cell_type_input "$(CELL_TYPE_INPUT)" --differential_expression_manifest "$(DE_RESULTS_DIR)/differential_expression.json" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
+	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --cell_type_input "$(CELL_TYPE_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 check-cell-type-test-render-prerequisites: OUTDIR = output/test
@@ -401,17 +351,15 @@ check-cell-type-test-render-prerequisites:
 	fi
 
 render-cell-type-test: OUTDIR = output/test
-render-cell-type-test: DE_RESULTS_DIR = output/test/analysis/combined/differential_expression
 render-cell-type-test: CELL_TYPE_INPUT = $(OUTDIR)/analysis/per_type/$(CELL_TYPE)/split.h5ad
 render-cell-type-test: CELL_TYPE_ANALYSIS_INPUT = $(OUTDIR)/analysis/per_type/$(CELL_TYPE)/analysis
 render-cell-type-test: check-cell-type-test-render-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Render one existing test analysis without recomputing it
-	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --cell_type_input "$(CELL_TYPE_INPUT)" --cell_type_analysis_input "$(CELL_TYPE_ANALYSIS_INPUT)" --differential_expression_manifest "$(DE_RESULTS_DIR)/differential_expression.json" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
+	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --cell_type_input "$(CELL_TYPE_INPUT)" --cell_type_analysis_input "$(CELL_TYPE_ANALYSIS_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 render-cell-type-reports-test: OUTDIR = output/test
-render-cell-type-reports-test: DE_RESULTS_DIR = output/test/analysis/combined/differential_expression
 render-cell-type-reports-test: check-cell-type-reports-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Rerender all test cell-type reports from existing artifacts
-	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --cell_type_input "$(OUTDIR)/analysis/per_type/*/split.h5ad" --cell_type_analysis_input "$(OUTDIR)/analysis/per_type/*/analysis" --differential_expression_manifest "$(DE_RESULTS_DIR)/differential_expression.json" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
+	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --cell_type_input "$(OUTDIR)/analysis/per_type/*/split.h5ad" --cell_type_analysis_input "$(OUTDIR)/analysis/per_type/*/analysis" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 clean-work: ## Delete completed Nextflow cache entries (destructive)
