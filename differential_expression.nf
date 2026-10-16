@@ -18,6 +18,9 @@ workflow {
     def trajectory_report_template = channel.value(
         file(root.resolve('reports/trajectory_analysis_report.py'), checkIfExists: true)
     )
+    def cell_type_report_template = channel.value(
+        file(root.resolve('reports/cell_type_report.py'), checkIfExists: true)
+    )
     def de_test_mode = channel.value(params.de_test_mode as boolean)
     def synthetic_test_data = channel.value(params.de_synthetic_test_data as boolean)
     LIST_PSEUDOBULK_CELL_TYPES(pseudobulk_input, pipeline_config)
@@ -53,5 +56,7 @@ workflow {
     RENDER_PER_TYPE_DIFFERENTIAL_EXPRESSION_REPORTS(
         WRITE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION_MANIFEST.out.per_type,
         RENDER_CROSS_CELL_TYPE_ANALYSIS_REPORT.out.report,
+        pipeline_config,
+        cell_type_report_template,
     )
 }

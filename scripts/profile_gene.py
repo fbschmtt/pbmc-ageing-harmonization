@@ -172,6 +172,14 @@ def _load_or_fit_deseq2_model(
     cache_parent.mkdir(parents=True, exist_ok=True)
     temporary_dir = cache_parent / f".{cache_key}.tmp-{os.getpid()}"
     temporary_dir.mkdir(parents=True, exist_ok=True)
+    # DeseqDataSet is an AnnData subclass.  Persisting the fitted object avoids
+    # repeating dispersion fitting for every requested gene; the cached VST,
+    # fitted means, and size factors are all used by the profile plots below.
+    # Pandas' nullable StringArray is not portable across AnnData versions, so
+    # materialize those metadata columns as ordinary strings before writing.
+    for column in dds.obs.columns:
+        if isinstance(dds.obs[column].dtype, pd.StringDtype):
+            dds.obs[column] = dds.obs[column].astype(object)
     dds.write_h5ad(temporary_dir / "fitted_model.h5ad")
     age_results.to_csv(temporary_dir / "age_results.csv", index_label="gene")
     (temporary_dir / "manifest.json").write_text(json.dumps({

@@ -165,6 +165,7 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/age_model_diagnostics.csv` (sample support and raw-count inputs for the shared age-model diagnostic figure)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/cell_type_result.json` (per-task fit record collected into the root manifest)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/report.html` (standalone per-type DE report rendered by `run-de` after collecting model results)
+- `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/residual_wgcna/` (residual WGCNA module assignments, eigengenes, soft-threshold and sample-connectivity diagnostics, covariate associations, hub genes, and leave-one-study-out module stability)
 - `<outdir>/analysis/combined/differential_expression/differential_expression.json` (DE status and cell-type result index)
 - `<outdir>/analysis/combined/trajectory/{report.html,executed.ipynb}` (combined trajectory report)
 - `<outdir>/analysis/combined/trajectory/*.csv` (shared-bin cross-type clusters and means, gene-level DE recurrence, and cross-type pattern concordance)
@@ -274,7 +275,7 @@ shared by every eligible type (at least five shared bins), clusters significant
 gene-by-type trajectories, and summarizes per-gene recurrence and pattern
 agreement. Its cluster tables and means are published under
 `analysis/combined/trajectory/`.
-The residual report process consumes only the split and single-cell analysis
+The single cell analysis report process consumes only the split and single-cell analysis
 artifacts. It has no DE manifest dependency. The DE workflow separately
 renders each per-type DE report after the collector completes. Cell-type
 analysis and reports publish under
@@ -282,7 +283,7 @@ analysis and reports publish under
 under `analysis/per_type/<cell-type-slug>/differential_expression/`. The
 collector writes the shared manifest under
 `analysis/combined/differential_expression/`, and the cross-type report is
-under `analysis/combined/trajectory/`. The residual single-cell report does
+under `analysis/combined/trajectory/`. The single cell analysis report does
 not require DE results, while `run-de` renders a separate DE report for each
 cell type from the pseudobulk outputs.
 
@@ -292,9 +293,9 @@ when it varies within the study, and `log10(total_counts)` as a technical
 covariate. Its coefficients use one complete-case sample set.
 Combined fits target one covariate at a time and include all complete-case
 samples from studies that recorded it, adjusting for `study_site`, age, sex,
-and log10 total counts. The per-type DE report presents fit status and result
-tables, including the depth coefficient where estimable. It does not render
-plots.
+and log10 total counts. The per-type DE report presents fit status, covariate
+volcano plots, age-bin trajectories, residual clustering, residual WGCNA, and result
+tables, including the depth coefficient where estimable.
 The site term is omitted when only one site remains. Fit metadata and CSVs
 record the formula, included studies and sites, complete-case sample count, and
 exclusions for missing design values.
@@ -383,7 +384,7 @@ those parameters are not swept. Marker and feature-origin contrasts include at m
 `residual_marker_max_clusters` largest clusters; all labels remain in the
 exported assignments. The combined report contains the sample-level residual
 UMAP/PCA, clustering comparisons, and cross-cell-type cluster composition.
-The residual single-cell reports instead show the local cell-level embedding,
+The single cell analysis reports instead show the local cell-level embedding,
 markers, and fraction views described in the per-type report workflow.
 
 The cross-type matrix starts with every cell type that has residual artifacts,
@@ -399,9 +400,11 @@ tested Leiden resolution counts. Wide columns are labeled
 `cell type::gene`. Per-type and cross-type cluster assignments, PC scores,
 matrices, and sample metadata are materialized for downstream analysis.
 
-The residual WGCNA helper and its configuration remain in the codebase, but
-the current `run-cell-type-analysis` and `run-de` report targets do not run it
-or publish per-type WGCNA outputs.
+Each per-type DE report runs residual WGCNA from the fitted age-bin residual
+matrix. It publishes module assignments and eigengenes together with
+soft-threshold, sample-connectivity, eigengene-covariate, hub-gene, CMV, and
+leave-one-study-out stability diagnostics. The module results are exploratory;
+the stability panel compares gene membership after omitting each study.
 
 ### Expression-atlas settings
 
@@ -477,7 +480,9 @@ validates local Markdown links and documented Make targets without adding a
 documentation-tool dependency.
 `run-de` fits pseudobulk models, writes the combined cross-cell-type analysis
 report, then renders each per-type DE report. With `-resume`, completed model
-fits remain cached when only a downstream report input changes.
+fits remain cached when only a downstream report input changes. Use
+`make render-de-reports` to rerender those per-type reports from their existing
+model outputs without fitting again.
 Core, integration-benchmark, DE, and cell-type report targets update
 `<outdir>/index.html` after publishing. `make render-report-index OUTDIR=<outdir>`
 rebuilds the index using the cell-type manifest when available, or scanning
@@ -490,13 +495,16 @@ merge it runs and checks the integration benchmark report, then generates
 synthetic pseudobulk data for positive DE fits, checks the completed models and
 planted markers, profiles the top two merged age-DE genes per cell type,
 exercises the focused synthetic gene-profile report, renders per-type DE
-reports from synthetic data, and renders residual single-cell reports from the
+reports from synthetic data, and renders single cell analysis reports from the
 fresh core test merge. Reserve it for cross-cutting or release-level validation;
 pass `STUDIES=<list>` for a narrower verification. The synthetic fixture has
 only two cell types, so other reports exercise the ordinary no-DE path. It is
 workflow coverage rather than a realistic model of study balance or biological
 effects: covariate availability and gene presence are deliberately simple, and
 the planted effects have no study-specific heterogeneity.
+Its synthetic WGCNA output currently has two modules. Thus verification executes
+the ordinary WGCNA and leave-one-study-out report path, but does not exercise
+the 25-module display cap or provide a production-scale runtime benchmark.
 `make run` is the resumable production entry point and merges single-cell data
 by default. Set `MERGE_SINGLE_CELL=false` to skip that optional branch.
 The current Nextflow profiles leave CPU and time requests unspecified except
@@ -505,7 +513,7 @@ limits. Resource reports and traces are not yet part of the tracked run
 artifacts; record measured peak RAM before sizing a different runner or adding
 resource directives.
 
-## Residual single-cell reports
+## Single cell analysis reports
 
 The main fraction model uses adults only and independently fits each
 study with eligible age, sex, BMI, and CMV covariates. Age effects are reported

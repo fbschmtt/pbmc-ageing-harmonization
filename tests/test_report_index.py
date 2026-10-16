@@ -52,7 +52,8 @@ def test_report_index_links_published_reports_from_output_root(tmp_path: Path) -
     assert 'href="analysis/per_type/cd14-monocyte/analysis/report.html"' in html
     assert 'href="analysis/per_type/cd14-monocyte/differential_expression/report.html"' in html
     assert 'href="analysis/per_type/naive-cd4-t-cell/differential_expression/report.html"' in html
-    assert "Residual single-cell report" in html
-    assert "Differential-expression report" in html
+    assert "Single cell analysis" in html
+    assert "Pseudobulk differential expression" in html
+    assert "<table><thead><tr><th>Cell type" not in html
     assert ".ipynb" not in html
     assert "Study A QC" in html

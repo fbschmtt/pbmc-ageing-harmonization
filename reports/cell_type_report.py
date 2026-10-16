@@ -22,6 +22,8 @@ import seaborn as sns
 import statsmodels.api as sm
 from IPython.display import HTML, Markdown, display
 from matplotlib.colors import Normalize
+from scipy.stats import f_oneway, pointbiserialr, spearmanr
+from statsmodels.stats.multitest import multipletests
 
 from pbmc_pipeline.report_theme import render_report_header
 
@@ -137,6 +139,26 @@ def display_collapsible_figure(figure, summary, *, open_by_default=False):
     ))
 
 
+WGCNA_MAX_DISPLAY_MODULES = 25
+
+
+def wgcna_modules_for_display(summary, *, limit=WGCNA_MAX_DISPLAY_MODULES):
+    """Return the largest modules retained in compact report figures."""
+    return summary.sort_values(
+        ["n_genes", "module"], ascending=[False, True], kind="stable"
+    )["module"].head(limit).tolist()
+
+
+def wgcna_display_caption(n_shown, n_total):
+    """Describe when a WGCNA figure omits smaller modules for legibility."""
+    if n_shown == n_total:
+        return ""
+    return (
+        f" Figures show the {n_shown} largest modules of {n_total}; "
+        "complete module-level results remain available in the downloadable tables."
+    )
+
+
 def load_residual_sample_clusters(de_dir, fit, settings):
     """Cluster one cell type's fitted age-bin residuals for its report."""
     if fit.get("status") != "complete":
@@ -191,13 +213,177 @@ def publish_residual_wgcna(result):
     return wgcna_dir
 
 
-def plot_residual_wgcna(result):
-    """Show PyWGCNA diagnostics and CMV checks for residual modules."""
+def wgcna_sample_connectivity(residuals, annotations):
+    """Summarize each sample's signed-residual-network connectivity."""
+    numeric = residuals.apply(pd.to_numeric, errors="coerce").dropna(axis=0, how="any")
+    if len(numeric) < 3:
+        return pd.DataFrame()
+    correlations = numeric.T.corr().clip(-1, 1)
+    adjacency = (correlations + 1) / 2
+    np.fill_diagonal(adjacency.values, 0)
+    connectivity = adjacency.sum(axis=1)
+    standard_deviation = connectivity.std(ddof=0)
+    standardized = (
+        (connectivity - connectivity.mean()) / standard_deviation
+        if standard_deviation > 0 else pd.Series(0.0, index=connectivity.index)
+    )
+    result = pd.DataFrame({
+        "sample_key": connectivity.index.astype(str),
+        "sample_connectivity": connectivity.to_numpy(),
+        "standardized_connectivity": standardized.to_numpy(),
+    })
+    metadata = annotations.drop_duplicates("sample_key")
+    columns = [column for column in ("sample_key", "study", "age", "sex") if column in metadata]
+    return result.merge(metadata[columns], on="sample_key", how="left", validate="one_to_one")
+
+
+def wgcna_module_membership(result, residuals):
+    """Calculate correlations between each gene and its assigned eigengene."""
+    assignments = result.module_assignments.copy()
+    eigengenes = result.eigengenes.set_index("sample_key")
+    shared_samples = residuals.index.intersection(eigengenes.index, sort=False)
+    assignments["module_membership"] = np.nan
+    for module, group in assignments.groupby("module", observed=True):
+        eigengene_column = f"ME{module}"
+        genes = [gene for gene in group["gene"] if gene in residuals.columns]
+        if eigengene_column not in eigengenes or not genes:
+            continue
+        eigengene = pd.to_numeric(eigengenes.loc[shared_samples, eigengene_column], errors="coerce")
+        values = residuals.loc[shared_samples, genes].apply(pd.to_numeric, errors="coerce")
+        assignments.loc[group.index, "module_membership"] = values.corrwith(eigengene).to_numpy()
+    return assignments
+
+
+def wgcna_covariate_associations(result, annotations):
+    """Associate module eigengenes with recorded continuous and categorical covariates."""
+    eigengenes = result.eigengenes.copy()
+    metadata = annotations.drop_duplicates("sample_key").copy()
+    data = eigengenes.merge(metadata, on="sample_key", how="inner", validate="one_to_one")
+    continuous = [
+        column for column in ("age", "log10_total_counts", "bmi") if column in data
+    ]
+    categorical = [
+        column for column in (
+            "sex", "cmv", "study", "study_site", "technology", "batch_single_cell",
+            "include_intronic",
+        ) if column in data
+    ]
+    rows = []
+    eigengene_columns = [column for column in eigengenes if column.startswith("ME")]
+    for eigengene_column in eigengene_columns:
+        module = eigengene_column.removeprefix("ME")
+        for covariate in continuous:
+            values = data[[eigengene_column, covariate]].apply(pd.to_numeric, errors="coerce").dropna()
+            if len(values) < 3 or values[covariate].nunique() < 2:
+                continue
+            effect_size, pvalue = spearmanr(values[eigengene_column], values[covariate])
+            rows.append({
+                "module": module, "covariate": covariate, "association": "Spearman correlation",
+                "effect_size": effect_size, "pvalue": pvalue, "n_samples": len(values),
+                "n_levels": np.nan,
+            })
+        for covariate in categorical:
+            values = data[[eigengene_column, covariate]].dropna().copy()
+            counts = values[covariate].astype(str).value_counts()
+            counts = counts.loc[counts >= 2]
+            values = values.loc[values[covariate].astype(str).isin(counts.index)]
+            if len(values) < 3 or len(counts) < 2:
+                continue
+            codes, _ = pd.factorize(values[covariate].astype(str), sort=True)
+            if len(counts) == 2:
+                effect_size, pvalue = pointbiserialr(codes, values[eigengene_column])
+                association = "Point-biserial correlation"
+            else:
+                groups = [
+                    values.loc[codes == code, eigengene_column].to_numpy()
+                    for code in range(len(counts))
+                ]
+                _, pvalue = f_oneway(*groups)
+                overall_mean = values[eigengene_column].mean()
+                total_sum_squares = ((values[eigengene_column] - overall_mean) ** 2).sum()
+                between_sum_squares = sum(
+                    len(group) * (np.mean(group) - overall_mean) ** 2 for group in groups
+                )
+                effect_size = between_sum_squares / total_sum_squares if total_sum_squares else np.nan
+                association = "One-way ANOVA η²"
+            rows.append({
+                "module": module, "covariate": covariate, "association": association,
+                "effect_size": effect_size, "pvalue": pvalue, "n_samples": len(values),
+                "n_levels": len(counts),
+            })
+    associations = pd.DataFrame(rows)
+    if associations.empty:
+        return associations
+    associations["fdr"] = np.nan
+    valid = associations["pvalue"].notna()
+    associations.loc[valid, "fdr"] = multipletests(
+        associations.loc[valid, "pvalue"], method="fdr_bh",
+    )[1]
+    return associations.sort_values(["fdr", "module", "covariate"], na_position="last")
+
+
+def wgcna_leave_one_study_out_stability(result, residuals, annotations, settings):
+    """Compare full-data modules with modules refitted after omitting each study."""
+    if "study" not in annotations:
+        return pd.DataFrame()
+    studies = sorted(annotations["study"].dropna().astype(str).unique())
+    if len(studies) < 2:
+        return pd.DataFrame()
+    full_modules = {
+        str(module): set(group["gene"].astype(str))
+        for module, group in result.module_assignments.groupby("module", observed=True)
+    }
+    rows = []
+    for held_out_study in studies:
+        retained = annotations.loc[annotations["study"].astype(str) != held_out_study].copy()
+        retained_residuals = residuals.loc[residuals.index.intersection(
+            retained["sample_key"].astype(str), sort=False
+        )]
+        refit = run_residual_wgcna(retained_residuals, retained, settings=settings)
+        if refit.metadata["status"] != "complete":
+            rows.append({
+                "held_out_study": held_out_study,
+                "module": "—",
+                "best_refit_module": "—",
+                "jaccard_overlap": np.nan,
+                "n_retained_samples": len(retained_residuals),
+                "status": refit.metadata.get("reason", "refit failed"),
+            })
+            continue
+        refit_modules = [
+            (str(module), set(group["gene"].astype(str)))
+            for module, group in refit.module_assignments.groupby("module", observed=True)
+        ]
+        for module, genes in full_modules.items():
+            best_module, best_overlap = max(
+                (
+                    (refit_module, len(genes & refit_genes) / len(genes | refit_genes))
+                    for refit_module, refit_genes in refit_modules
+                    if genes | refit_genes
+                ),
+                key=lambda item: item[1], default=("—", np.nan),
+            )
+            rows.append({
+                "held_out_study": held_out_study,
+                "module": module,
+                "best_refit_module": best_module,
+                "jaccard_overlap": best_overlap,
+                "n_retained_samples": len(retained_residuals),
+                "status": "complete",
+            })
+    return pd.DataFrame(rows)
+
+
+def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results):
+    """Show WGCNA diagnostics, covariates, hubs, and cross-study stability."""
     if result.metadata["status"] != "complete":
         display(Markdown(
             "_Residual WGCNA was not run: " + result.metadata.get("reason", "unknown reason") + "._"
         ))
         return
+    wgcna_dir = output_dir / "residual_wgcna"
+
+    display(Markdown("#### Network diagnostics"))
     soft_threshold = result.soft_threshold
     if not soft_threshold.empty and {"Power", "SFT.R.sq", "mean(k)"}.issubset(soft_threshold):
         figure, axes = plt.subplots(1, 2, figsize=(12, 4.3))
@@ -215,17 +401,52 @@ def plot_residual_wgcna(result):
         figure.tight_layout()
         display_collapsible_figure(figure, "Residual WGCNA soft-threshold diagnostics")
 
+    display(Markdown("#### Sample connectivity"))
+    connectivity = wgcna_sample_connectivity(residuals, annotations)
+    connectivity.to_csv(wgcna_dir / "sample_connectivity.csv", index=False)
+    if connectivity.empty:
+        display(Markdown("_Sample connectivity is unavailable for fewer than three residual samples._"))
+    else:
+        figure, axis = plt.subplots(figsize=(11, 4.4))
+        plot_data = connectivity.sort_values("standardized_connectivity").reset_index(drop=True)
+        sns.scatterplot(
+            data=plot_data, x=plot_data.index, y="standardized_connectivity",
+            hue="study" if "study" in plot_data else None, palette="tab20", s=46, ax=axis,
+        )
+        axis.axhline(-2, color="#c44e52", linestyle="--", linewidth=1, label="−2 SD")
+        axis.axhline(0, color="#666666", linewidth=0.8)
+        axis.set(xlabel="Samples ranked by connectivity", ylabel="Standardized sample connectivity")
+        axis.legend(title="Study", bbox_to_anchor=(1.02, 1), loc="upper left")
+        figure.subplots_adjust(right=0.82)
+        display_collapsible_figure(figure, "Show sample-connectivity diagnostic")
+        display_collapsible_table(
+            connectivity.sort_values("standardized_connectivity").head(15),
+            "Show lowest-connectivity residual samples",
+        )
+
     summary = result.module_summary.copy()
     if summary.empty:
         display(Markdown("_PyWGCNA did not retain any non-grey modules._"))
         return
-    display_collapsible_table(summary, "Show residual WGCNA module summary")
-    shown = summary.sort_values("n_genes", ascending=True)
-    figure, axes = plt.subplots(1, 2, figsize=(14, max(4.5, 0.42 * len(shown))))
+    display(Markdown("#### Module structure"))
+    display_collapsible_table(
+        summary, "Show residual WGCNA module summary", max_height=480,
+    )
+    display_modules = wgcna_modules_for_display(summary)
+    shown = summary.loc[summary["module"].isin(display_modules)].sort_values(
+        "n_genes", ascending=True
+    )
+    display_caption = wgcna_display_caption(len(shown), len(summary))
+    if display_caption:
+        display(Markdown(f"_{display_caption.strip()}_"))
+    figure_label_suffix = (
+        f" ({len(shown)} largest of {len(summary)})" if display_caption else ""
+    )
+    figure, axes = plt.subplots(1, 2, figsize=(14, max(4.5, 0.36 * len(shown) + 2)))
     colors = [module if module in mcolors.get_named_colors_mapping() else "#4c72b0" for module in shown["module"]]
     axes[0].barh(shown["module"], shown["n_genes"], color=colors)
-    axes[0].set(xlabel="Genes", title="Residual WGCNA module sizes")
-    trait_data = summary.dropna(subset=["cmv_eigengene_correlation"]).copy()
+    axes[0].set(xlabel="Genes", title="Residual WGCNA module sizes" + figure_label_suffix)
+    trait_data = shown.dropna(subset=["cmv_eigengene_correlation"]).copy()
     if trait_data.empty:
         axes[1].text(0.5, 0.5, "CMV status is not available in both groups", ha="center", va="center")
         axes[1].set_axis_off()
@@ -244,11 +465,130 @@ def plot_residual_wgcna(result):
         axes[1].axvline(0, color="#666666", linewidth=0.8)
         axes[1].set(
             xlabel="CMV-status vs eigengene correlation", ylabel="−log10(CMV-DE overlap FDR)",
-            title="CMV checks of residual modules",
+            title="CMV checks of residual modules" + figure_label_suffix,
         )
         figure.colorbar(points, ax=axes[1], label="Eigengene–CMV FDR")
     figure.tight_layout()
     display_collapsible_figure(figure, "Residual WGCNA modules and CMV diagnostics")
+
+    eigengenes = result.eigengenes.set_index("sample_key")
+    module_columns = [
+        f"ME{module}" for module in display_modules if f"ME{module}" in eigengenes
+    ]
+    if len(module_columns) > 1:
+        figure, axis = plt.subplots(figsize=(
+            max(5, 0.5 * len(module_columns) + 3),
+            max(4, 0.5 * len(module_columns) + 2),
+        ))
+        sns.heatmap(eigengenes[module_columns].corr(), cmap="vlag", center=0, vmin=-1, vmax=1,
+                    annot=True, fmt=".2f", square=True, ax=axis)
+        axis.set_title("Module eigengene correlation" + figure_label_suffix)
+        figure.tight_layout()
+        display_collapsible_figure(figure, "Show module-eigengene correlation heatmap")
+
+    display(Markdown("#### Covariate associations"))
+    associations = wgcna_covariate_associations(result, annotations)
+    associations.to_csv(wgcna_dir / "module_covariate_associations.csv", index=False)
+    if associations.empty:
+        display(Markdown("_No recorded covariates had sufficient variation for eigengene association tests._"))
+    else:
+        display(Markdown(
+            "Continuous covariates use Spearman correlation. Binary covariates use point-biserial "
+            "correlation; multi-level covariates use one-way ANOVA η². FDR is controlled across "
+            "all module–covariate tests."
+        ))
+        plotted_associations = associations.loc[associations["module"].isin(display_modules)]
+        figure, axes = plt.subplots(
+            1, 2, figsize=(15, max(4, 0.42 * plotted_associations["module"].nunique() + 2)),
+        )
+        continuous = plotted_associations.loc[
+            plotted_associations["association"] == "Spearman correlation"
+        ]
+        categorical = plotted_associations.loc[
+            plotted_associations["association"] != "Spearman correlation"
+        ]
+        for axis, subset, title, cmap, center in (
+            (axes[0], continuous, "Continuous covariates" + figure_label_suffix, "vlag", 0),
+            (axes[1], categorical, "Categorical covariates" + figure_label_suffix, "YlGnBu", None),
+        ):
+            if subset.empty:
+                axis.text(0.5, 0.5, "No eligible covariates", ha="center", va="center")
+                axis.set_axis_off()
+                continue
+            matrix = subset.pivot(index="module", columns="covariate", values="effect_size")
+            sns.heatmap(matrix, cmap=cmap, center=center, annot=True, fmt=".2f", linewidths=0.5,
+                        cbar_kws={"label": "Effect size"}, ax=axis)
+            axis.set_title(title)
+            axis.set_xlabel("")
+            axis.set_ylabel("Module")
+        figure.tight_layout()
+        display_collapsible_figure(
+            figure, "Show module-eigengene covariate association heatmaps", open_by_default=True,
+        )
+        display_collapsible_table(
+            associations, "Show module-eigengene covariate association statistics", max_height=480,
+        )
+
+    display(Markdown("#### Hub genes and CMV evidence"))
+    membership = wgcna_module_membership(result, residuals)
+    hub_genes = membership.assign(
+        absolute_module_membership=membership["module_membership"].abs()
+    ).sort_values(["module", "absolute_module_membership"], ascending=[True, False])
+    hub_genes["module_rank"] = hub_genes.groupby("module", observed=True).cumcount() + 1
+    hub_genes.to_csv(wgcna_dir / "hub_genes.csv", index=False)
+    display_collapsible_table(
+        hub_genes.loc[hub_genes["module_rank"] <= 20], "Show top 20 hub genes per module", max_height=560,
+    )
+    if cmv_results is not None and {"gene", "log2FoldChange", "padj"}.issubset(cmv_results):
+        cmv = cmv_results[["gene", "log2FoldChange", "padj"]].copy()
+        cmv["log2FoldChange"] = pd.to_numeric(cmv["log2FoldChange"], errors="coerce")
+        cmv["padj"] = pd.to_numeric(cmv["padj"], errors="coerce")
+        evidence = membership.merge(cmv, on="gene", how="left", validate="one_to_one").dropna(
+            subset=["module_membership", "log2FoldChange", "padj"]
+        )
+        if not evidence.empty:
+            figure, axis = plt.subplots(figsize=(8.5, 5.5))
+            points = axis.scatter(
+                evidence["module_membership"], evidence["log2FoldChange"],
+                c=-np.log10(evidence["padj"].clip(lower=np.finfo(float).tiny)), cmap="viridis",
+                s=28, alpha=0.8, linewidths=0,
+            )
+            axis.axhline(0, color="#666666", linewidth=0.8)
+            axis.axvline(0, color="#666666", linewidth=0.8)
+            axis.set(xlabel="Gene membership in assigned module", ylabel="CMV log2 fold change",
+                     title="Module membership and CMV-DE effect")
+            figure.colorbar(points, ax=axis, label="−log10(CMV adjusted p-value)")
+            figure.tight_layout()
+            display_collapsible_figure(figure, "Show module-membership versus CMV-DE evidence")
+
+    display(Markdown("#### Leave-one-study-out stability"))
+    stability = wgcna_leave_one_study_out_stability(result, residuals, annotations, settings)
+    stability.to_csv(wgcna_dir / "leave_one_study_out_stability.csv", index=False)
+    completed = stability.loc[stability.get("status", pd.Series(dtype=str)).eq("complete")].copy()
+    if completed.empty:
+        display(Markdown("_Leave-one-study-out module refits require at least two studies with sufficient retained samples._"))
+    else:
+        plotted_stability = completed.loc[completed["module"].isin(display_modules)]
+        figure, axis = plt.subplots(
+            figsize=(
+                max(6, 0.5 * plotted_stability["module"].nunique() + 4),
+                max(4, 0.75 * plotted_stability["held_out_study"].nunique() + 2),
+            )
+        )
+        matrix = plotted_stability.pivot(
+            index="held_out_study", columns="module", values="jaccard_overlap"
+        )
+        sns.heatmap(matrix, vmin=0, vmax=1, cmap="mako", annot=True, fmt=".2f", ax=axis,
+                    cbar_kws={"label": "Best refit-module Jaccard overlap"})
+        axis.set(
+            xlabel="Full-data module", ylabel="Held-out study",
+            title="Leave-one-study-out module stability" + figure_label_suffix,
+        )
+        figure.tight_layout()
+        display_collapsible_figure(figure, "Show leave-one-study-out module stability", open_by_default=True)
+        display_collapsible_table(
+            stability, "Show leave-one-study-out module matches", max_height=480,
+        )
 
 
 def annotate_cluster_centroids(axis, table, label_column):
@@ -335,7 +675,9 @@ def plot_residual_cluster_markers(residuals, annotations, settings):
             axis.set_title(f"Cluster {cluster}: {direction} vs. largest cluster")
             axis.set_xlabel("Mean Pearson-residual difference")
     figure.tight_layout()
-    plt.show()
+    display_collapsible_figure(
+        figure, "Show residual-cluster marker contrasts"
+    )
 
 
 def plot_residual_sample_umaps(table, *, minimum_umap_samples):
@@ -2806,6 +3148,16 @@ if de_dir:
                 "Download its [module assignments](residual_wgcna/module_assignments.csv), "
                 "[eigengenes](residual_wgcna/eigengenes.csv), [module summary]"
                 "(residual_wgcna/module_summary.csv), and [soft-threshold diagnostics]"
-                "(residual_wgcna/soft_threshold.csv)."
+                "(residual_wgcna/soft_threshold.csv), [sample connectivity]"
+                "(residual_wgcna/sample_connectivity.csv), [covariate associations]"
+                "(residual_wgcna/module_covariate_associations.csv), [hub genes]"
+                "(residual_wgcna/hub_genes.csv), and [leave-one-study-out stability]"
+                "(residual_wgcna/leave_one_study_out_stability.csv)."
             ))
-            plot_residual_wgcna(residual_wgcna)
+            plot_residual_wgcna(
+                residual_wgcna,
+                residual_matrix,
+                residual_clusters,
+                wgcna_settings,
+                load_merged_cmv_results(de_dir),
+            )

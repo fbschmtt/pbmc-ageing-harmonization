@@ -796,20 +796,32 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
         if axis.legend_ is not None:
             axis.legend_.set_title("Residual cluster")
             axis.legend_.set_bbox_to_anchor((1.02, 1))
-        figure.tight_layout()
+        # The legend is deliberately outside the axes; reserve its space
+        # explicitly instead of asking tight_layout to infer impossible margins.
+        figure.subplots_adjust(right=0.73)
         display_collapsible_figure(
-            figure, "Cross-cell-type residual UMAP: residual clusters"
+            figure, "Cross-cell-type residual UMAP: residual clusters", open_by_default=True,
         )
         plot_residual_covariates(
             cross_residual_clusters,
             "Cross-cell-type residual UMAPs: model covariates",
             [
-                "sex", "age", "log10_total_counts", "study", "study_site",
-                "ethnicity", "technology", "batch_single_cell",
+                "sex", "age", "log10_total_counts", "study_site",
             ],
             categorical_covariates={
-                "sex", "study", "study_site", "ethnicity", "technology",
-                "batch_single_cell",
+                "sex", "study_site",
+            },
+        )
+        plot_residual_covariates(
+            cross_residual_clusters,
+            "Cross-cell-type residual UMAPs: non-model covariates",
+            [
+                "study", "ethnicity", "technology", "batch_single_cell",
+                "include_intronic", "frozen",
+            ],
+            categorical_covariates={
+                "study", "ethnicity", "technology", "batch_single_cell",
+                "include_intronic", "frozen",
             },
         )
         if any(covariate in cross_residual_clusters for covariate in ("bmi", "cmv")):
@@ -908,7 +920,9 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
                     axis.set_title(f"Cluster {cluster}: {direction} vs. largest cluster")
                     axis.set_xlabel("Mean Pearson-residual difference")
             figure.tight_layout()
-            plt.show()
+            display_collapsible_figure(
+                figure, "Show residual-cluster marker contrasts"
+            )
         if not residual_composition.empty:
             composition = residual_composition.pivot_table(
                 index=["residual_cluster", "direction"], columns="cell_type",

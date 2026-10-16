@@ -103,13 +103,16 @@ process RENDER_PER_TYPE_DIFFERENTIAL_EXPRESSION_REPORTS {
     input:
     path per_type_de
     path cross_cell_type_report
+    path pipeline_config
+    path report_template
 
     output:
-    path 'de_reports/*/differential_expression/report.html', emit: reports
+    path 'de_reports/*/differential_expression/*', emit: reports
 
     script:
     """
     test -s ${cross_cell_type_report}/report.html
-    pbmc-differential-expression-report --input-dir ${per_type_de} --output-root de_reports
+    pbmc-differential-expression-report --input-dir ${per_type_de} --output-root de_reports \\
+      --template ${report_template} --config ${pipeline_config} --project-root .
     """
 }

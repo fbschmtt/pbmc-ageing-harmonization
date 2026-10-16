@@ -50,7 +50,7 @@ make run-all STUDIES=all
 This builds the workflow images when needed, runs the core harmonization and
 single-cell merge, fits pseudobulk differential-expression models, profiles the
 top age-associated genes for each cell type, and renders separate per-type DE
-and residual single-cell reports.
+and single cell analysis reports.
 It uses the Docker profile by default; no local Python or R installation is
 required.
 
@@ -70,7 +70,7 @@ By default this requests every configured study and skips unavailable fixtures.
 It runs the core pipeline on available downsampled real-data fixtures, checks
 the integration benchmark, fits and checks a generated pseudobulk fixture for
 positive DE coverage, profiles two top age-associated genes per cell type,
-smoke-tests a focused gene report, and renders residual single-cell reports
+smoke-tests a focused gene report, and renders single cell analysis reports
 from the real merge plus per-type DE reports from the synthetic fixture. The benchmark artifact retains
 labels and UMAP coordinates without raw counts or neighbour graphs. Use
 `STUDIES=<list>` to narrow the core run. Existing fixtures are preserved; use
@@ -392,11 +392,12 @@ which validation to run.
 |---|---|---|
 | Python library, CLI, or deterministic test change | `make lint test-unit` | Run a focused workflow too if a task contract or published artifact changed. |
 | Nextflow workflow or configuration change | `make workflow-lint` | Add `make run-test STUDIES=<study>` when task wiring must execute. |
-| One residual single-cell report or analysis | `make run-cell-type-test CELL_TYPE=<slug>` (requires an existing split; create test splits with `make split-cell-types-test`) | Use `make render-cell-type-test CELL_TYPE=<slug>` to rerender one residual report from existing analysis artifacts, or `make render-cell-type-reports-test` to rerender all test residual reports. |
-| Rerender residual reports from existing analysis artifacts | `make render-cell-type-reports[-test]` | Use `make render-cell-type[-test] CELL_TYPE=<slug>` to refresh only one residual report. |
+| One single cell analysis report | `make run-cell-type-test CELL_TYPE=<slug>` (requires an existing split; create test splits with `make split-cell-types-test`) | Use `make render-cell-type-test CELL_TYPE=<slug>` to rerender one report from existing analysis artifacts, or `make render-cell-type-reports-test` to rerender all test reports. |
+| Rerender single cell analysis reports from existing analysis artifacts | `make render-cell-type-reports[-test]` | Use `make render-cell-type[-test] CELL_TYPE=<slug>` to refresh one report. |
+| Rerender per-type pseudobulk DE reports from existing model results | `make render-de-reports[-test]` | This only reruns report rendering; use `make run-de-synthetic-test` to refit the positive synthetic-DE fixture. |
 | Rebuild the central report index | `make render-report-index` | It is also refreshed automatically after core, integration-benchmark, DE, and cell-type workflow targets. |
 | Cell-type splitting or shared analysis | `make run-test`, then `make run-cell-type-analysis-test` | Use `make run-all-test` when the complete ordered test workflow is needed. |
-| Positive pseudobulk DE fitting | `make run-de-synthetic-test` and `make check-synthetic-de-results` | This fixture is independent of the core merge and renders per-type DE plus cross-cell-type reports. To check residual reports too, run `make run-test`, `make run-cell-type-analysis-test`, and `make check-synthetic-de-reports`. |
+| Positive pseudobulk DE fitting | `make run-de-synthetic-test` and `make check-synthetic-de-results` | This fixture is independent of the core merge and renders per-type DE plus cross-cell-type reports. To check single cell analysis reports too, run `make run-test`, `make run-cell-type-analysis-test`, and `make check-synthetic-de-reports`. |
 | Focused gene-by-cell-type profile | `make profile-gene CELL_TYPE=<label-or-slug> GENE=<gene-id>` | Use `make run-gene-profile-synthetic-test` to fit and render a planted synthetic gene and check the report end to end. |
 | Top merged age-DE gene profiles | `make profile-top-age-genes-test` | Uses the synthetic DE fixture and profiles two genes per cell type; included in `make run-all-test`. |
 | DE from an existing test pseudobulk merge | `make run-de-test` | Requires `make run-test` first; the small core fixture may not have enough independent samples for successful fits. Use the synthetic target above for positive fitting coverage. |
@@ -417,7 +418,7 @@ Harmony integration uses the pinned Harmony2 C++ backend. It uses the backend's
 native thread policy; the legacy OpenMP/OpenBLAS thread overrides that crashed
 on large production runs have been removed.
 
-Residual single-cell reports provide local embeddings, marker contrasts, study
+Single cell analysis reports provide local embeddings, marker contrasts, study
 coverage, and descriptive fraction trends. Separate per-type DE reports and a
 combined cross-cell-type analysis report are generated by `run-de`; those DE
 reports need only the merged pseudobulk input.
@@ -475,7 +476,7 @@ The cell-type and merge QC runners call these helpers after notebook execution
 and HTML export. Other report templates do not use them unless their runner is
 updated to add the shared header and TOC placeholder, then populate the TOC.
 
-## Residual single-cell reports
+## Single cell analysis reports
 
 The optional downstream workflow loads a completed merged single-cell H5AD once
 and splits it by the retained per-study `aifi_l2_majority` call. Experimental
@@ -706,11 +707,16 @@ cross-type artifacts are under `analysis/combined/`. See
 [IMPLEMENTATION.md](IMPLEMENTATION.md#age-trajectory-settings) for the model,
 support rules, clustering, output tables, and current configurable settings.
 
-The residual single-cell reports are generated separately by
+The single cell analysis reports are generated separately by
 `run-cell-type-analysis` and contain local embeddings, markers, coverage, and
 fraction views. They do not consume the DE manifest. The residual WGCNA helper
-remains in the codebase, but the current report targets do not run it or publish
-per-type WGCNA outputs.
+is run by each per-type DE report from the fitted age-bin residual matrix. The
+report includes soft-threshold and sample-connectivity diagnostics, eigengene
+structure and covariate associations, hub genes, CMV evidence, and
+leave-one-study-out module stability. Its tables are published beside the
+report under `residual_wgcna/`. To keep large networks readable, module-indexed
+figures show at most the 25 largest modules and state when that limit applies;
+the complete module-level tables remain available in that directory.
 
 Samples must be age 20 or older and have at least 10 cells in that
 sample × cell-type pseudobulk. Samples missing required metadata or covariates,
@@ -730,7 +736,7 @@ The DE manifest's `results_by_cell_type` index lists the per-study and combined
 result paths for each covariate (or an empty result set) for each cell-type
 slug. `run-de` uses it to render separate per-type DE reports. The cell-type
 workflow does not read this manifest: `make render-cell-type-reports` rerenders
-residual single-cell reports from published splits and analysis artifacts
+single cell analysis reports from published splits and analysis artifacts
 without repeating analysis. That renderer writes single-cell artifacts beneath
 `<outdir>/analysis/per_type/<cell-type-slug>/analysis/`; it never publishes
 report files into the DE directory. Named Nextflow subworkflows group splitting
@@ -835,19 +841,22 @@ integration benchmark on available downsampled real-data fixtures, then fits
 the separate synthetic pseudobulk DE fixture, profiles its top two merged
 age-DE genes per cell type, runs the focused synthetic gene-profile smoke test,
 renders per-type DE and combined cross-cell-type reports from that synthetic
-fixture, and renders residual single-cell reports from the real merge/splits.
+fixture, and renders single cell analysis reports from the real merge/splits.
 `make verify` runs it after linting, unit
 tests, Nextflow lint, and documentation checks. `STUDIES=<list>` narrows only
-the core test inputs.
+the core test inputs. The synthetic WGCNA fixture exercises the ordinary
+network and report path, including its leave-one-study-out refits, but its
+two-module result does not exercise the 25-module figure cap or production-scale
+runtime.
 
 The generated input stays under `output/test/analysis/combined/synthetic_de/`.
 DE outputs and the combined manifest are written under
 `output/test/analysis/combined/differential_expression/`; `run-de-synthetic-test`
 renders per-type DE reports under `output/test/analysis/per_type/<slug>/differential_expression/`.
-The separate residual reports are rendered from the test single-cell merge by
+The separate single cell analysis reports are rendered from the test single-cell merge by
 `run-cell-type-analysis-test` under each type's `analysis/` directory.
 
-`run-cell-type-analysis` renders the residual single-cell report and requires a
+`run-cell-type-analysis` renders the single cell analysis report and requires a
 merged single-cell input. `run-de` uses the pseudobulk merge to render the
 separate per-type DE reports and cross-cell-type analysis report, so those
 reports do not require a single-cell merge.

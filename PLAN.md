@@ -130,7 +130,7 @@ whole-dataset single-cell merge.
   age models, configured sample filters, task-level cell-type fan-out without
   materialized per-type pseudobulk inputs, and a manifest indexed by cell type.
 - [x] Publish per-type DE results and reports in task-specific directories,
-  independently from residual single-cell reports.
+  independently from single cell analysis reports.
 - [x] Generate a deterministic positive-fit DE fixture on demand and include
   fit, planted-marker, and report-artifact assertions in `make run-all-test`
   and `make verify`.
@@ -142,9 +142,9 @@ whole-dataset single-cell merge.
   random-slope models; include model-specific residual diagnostics and a
   synthetic report smoke target. Add a workflow profiling the top merged
   age-DE genes per cell type.
-- [x] Implement the exploratory per-type residual WGCNA helper and settings.
-  It is retained in the codebase but is not run by the current residual or DE
-  report targets and does not publish per-type WGCNA outputs.
+- [x] Implement exploratory per-type residual WGCNA in the DE report, with
+  module assignments, eigengenes, covariate associations, hub genes, and
+  leave-one-study-out module stability diagnostics.
 - [x] Add an output-root HTML report index linking harmonization QC, the
   integration benchmark, combined cross-cell-type analysis, and independently
   available residual and DE reports per type; refresh it from the Make targets.
@@ -156,8 +156,8 @@ whole-dataset single-cell merge.
 - `make run-all-test` runs a fresh real-fixture core merge, integration
   benchmark and report check, synthetic positive DE fit, two top merged age-DE
   profiles per cell type, the focused synthetic gene-profile smoke test, and
-  separate per-type DE and residual single-cell reports. The DE and combined
-  cross-type reports use the synthetic fixture; residual reports use the fresh
+  separate per-type DE and single cell analysis reports. The DE and combined
+  cross-type reports use the synthetic fixture; single cell analysis reports use the fresh
   real-data merge. Fixtures live under ignored `test_data/`; Nextflow
   intermediates live in ignored `work/`.
 - The core single-cell merge preserves only raw counts, canonical metadata, and
@@ -261,7 +261,7 @@ separate; named Nextflow subworkflows group split/analyse/render stages, and
 their report outputs are independent. Core preparation, harmonized data,
 pseudobulk, merged inputs, QC reports, and integration benchmarks publish
 beneath `harmonization/`. Analysis outputs publish beneath `analysis/`: shared
-outputs and the cross-type report are in `combined/`, residual reports and DE
+outputs and the cross-type report are in `combined/`, single cell analysis reports and DE
 results are in separate `per_type/<cell-type-slug>/analysis/` and
 `per_type/<cell-type-slug>/differential_expression/` directories, and focused
 gene profiles are in `per_gene/<cell-type-slug>/<gene-slug>/`.

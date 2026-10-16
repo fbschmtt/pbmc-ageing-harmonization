@@ -59,6 +59,7 @@ validate-study validate-test validate-full test-data download-inputs images imag
 	run-cell-type-analysis run-cell-type-analysis-test \
 	run-cell-type run-cell-type-test render-cell-type render-cell-type-test \
 	render-cell-type-reports render-cell-type-reports-test \
+	render-de-reports render-de-reports-test \
 	profile-gene profile-top-age-genes check-top-age-profile-prerequisites \
 	profile-top-age-genes-test \
 	run-gene-profile-synthetic-test \
@@ -167,7 +168,7 @@ run-test: $(TEST_CONTAINER_PREREQS) ## Fresh deterministic test workflow for all
 	$(NXF) run main.nf -profile $(NF_PROFILE),core,core_test,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) --python_image $(PYTHON_IMAGE) --r_image $(R_IMAGE) --pipeline_revision $(PIPELINE_REVISION) $(MERGE_ARGS)
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
-run-cell-type-analysis: $(PYTHON_CONTAINER_PREREQS) ## Analyse cell types and render residual single-cell reports
+run-cell-type-analysis: $(PYTHON_CONTAINER_PREREQS) ## Analyse cell types and render single cell analysis reports
 	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(MERGED_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
@@ -187,6 +188,14 @@ run-de-test: PSEUDOBULK_INPUT = output/test/harmonization/merged/pseudobulk_merg
 run-de-test: check-de-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Fit DE and render per-type reports from an existing test pseudobulk merge
 	$(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --pseudobulk_input "$(PSEUDOBULK_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
+
+render-de-reports: image-python ## Render per-type DE reports from existing model results
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) pbmc-differential-expression-report --input-dir "$(PER_TYPE_DIR)" --output-root "$(PER_TYPE_DIR)" --template reports/cell_type_report.py --config config/pipeline.json --project-root .
+	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
+
+render-de-reports-test: OUTDIR = output/test
+render-de-reports-test: PER_TYPE_DIR = $(OUTDIR)/analysis/per_type
+render-de-reports-test: render-de-reports ## Render per-type DE reports from existing synthetic-DE results
 
 render-report-index: ## Rebuild the central HTML index for the reports currently published under OUTDIR
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"

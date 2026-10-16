@@ -294,7 +294,7 @@ def check_reports(
     selected_cell_type: str | None = None,
     config_path: Path = ROOT / "config/pipeline.json",
 ) -> None:
-    cell_types, expected_genes, _, _, _, _ = _load_fixture(outdir)
+    cell_types, _, _, _, _, _ = _load_fixture(outdir)
     if selected_cell_type is not None:
         requested = selected_cell_type.casefold()
         matching = [
@@ -314,7 +314,7 @@ def check_reports(
         slug = "-".join(cell_type.lower().split())
         residual_report = outdir / "analysis" / "per_type" / slug / "analysis" / "report.html"
         if not residual_report.is_file():
-            raise SystemExit(f"Missing residual single-cell report: {residual_report}")
+            raise SystemExit(f"Missing single cell analysis report: {residual_report}")
         residual_html = residual_report.read_text(errors="replace").lower()
         for phrase in ("local embedding and clusters", "cluster composition"):
             if phrase not in residual_html:
@@ -328,15 +328,32 @@ def check_reports(
         if not report_path.is_file():
             raise SystemExit(f"Missing per-type DE report: {report_path}")
         de_html = report_path.read_text(errors="replace").lower()
-        required = ["differential-expression results", "model summary", "synthetic test data"]
+        required = [
+            "differential gene expression",
+            "shared age-model diagnostics",
+            "covariate effects",
+            "age-bin trajectories",
+            "per-sample residual clustering",
+            "residual wgcna modules",
+            "synthetic test data",
+        ]
         missing = [item for item in required if item not in de_html]
-        for covariate, genes in expected_genes.items():
-            if covariate == "age_trajectory":
-                continue
-            if not any(str(gene).lower() in de_html for gene in genes):
-                missing.append(f"planted {covariate} marker")
         if missing:
             raise SystemExit(f"{report_path} is missing expected DE content: {missing}")
+        wgcna_dir = report_path.parent / "residual_wgcna"
+        required_wgcna = [
+            "soft_threshold.csv",
+            "module_assignments.csv",
+            "eigengenes.csv",
+            "module_summary.csv",
+            "sample_connectivity.csv",
+            "module_covariate_associations.csv",
+            "hub_genes.csv",
+            "leave_one_study_out_stability.csv",
+        ]
+        missing_wgcna = [str(wgcna_dir / name) for name in required_wgcna if not (wgcna_dir / name).is_file()]
+        if missing_wgcna:
+            raise SystemExit(f"{report_path} is missing WGCNA artifacts: {missing_wgcna}")
     trajectory_dir = outdir / "analysis" / "combined" / "trajectory"
     required_outputs = [
         trajectory_dir / "report.html",
