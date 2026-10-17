@@ -468,6 +468,13 @@ make docs-update
 make docs-check
 ```
 
+`make test-data`, `make run-test`, `make run-all-test`, and `make verify`
+default to the representative `aida25,cima,terekhova26` set. It covers the
+AIDA supplementary-metadata join, CIMA counts-layer input, and Terekhova26
+raw-count input. Pass `STUDIES=all` to exercise every available fixture, or a
+comma-separated list for another focused selection. Production `make run`
+continues to default to all studies.
+
 Use the smallest check that covers the edit: `make lint test-unit` for
 Python-only work, `make workflow-lint` for workflow/configuration edits, and a
 focused `make run-test STUDIES=<study>` when core execution wiring needs
@@ -490,14 +497,15 @@ published per-type reports otherwise, which keeps its links synchronized when
 cell types change. Harmonization and benchmark reports are linked when their
 published files are present.
 `make verify` runs linting, unit tests, Nextflow lint, image builds, and fresh
-Docker workflows across all configured studies by default. After the core
+Docker workflows for the representative test set by default. After the core
 merge it runs and checks the integration benchmark report, then generates
 synthetic pseudobulk data for positive DE fits, checks the completed models and
 planted markers, profiles the top two merged age-DE genes per cell type,
 exercises the focused synthetic gene-profile report, renders per-type DE
 reports from synthetic data, and renders single cell analysis reports from the
 fresh core test merge. Reserve it for cross-cutting or release-level validation;
-pass `STUDIES=<list>` for a narrower verification. The synthetic fixture has
+pass `STUDIES=all` for every available fixture or `STUDIES=<list>` for another
+focused verification. The synthetic fixture has
 only two cell types, so other reports exercise the ordinary no-DE path. It is
 workflow coverage rather than a realistic model of study balance or biological
 effects: covariate availability and gene presence are deliberately simple, and

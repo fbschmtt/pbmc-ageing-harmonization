@@ -17,6 +17,7 @@ def main() -> None:
     parser.add_argument("--report-output", type=Path, required=True)
     parser.add_argument("--project-root", type=Path, default=Path.cwd())
     parser.add_argument("--config", type=Path, default=Path("config/pipeline.json"))
+    parser.add_argument("--obs-schema", type=Path)
     parser.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
     args = parser.parse_args()
     configure_logging(args.log_level)
@@ -25,7 +26,11 @@ def main() -> None:
     if args.mode == "pseudobulk":
         if len(args.input) != 1:
             parser.error("pseudobulk mode requires exactly one --input")
-        report = pseudobulk_study(args.input[0], args.output, args.report_output, pipeline)
+        obs_schema_path = args.obs_schema or (root / pipeline["obs_schema"])
+        obs_schema = read_json(obs_schema_path)
+        report = pseudobulk_study(
+            args.input[0], args.output, args.report_output, pipeline, obs_schema
+        )
     elif args.mode == "pseudobulk-merge":
         report = merge_pseudobulks(args.input, args.output, args.report_output, pipeline)
     else:

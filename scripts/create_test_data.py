@@ -17,7 +17,7 @@ def parse_args():
 
 
 def main() -> None:
-    import scanpy as sc
+    import numpy as np
 
     from pbmc_pipeline.source import read_study_input
 
@@ -48,7 +48,10 @@ def main() -> None:
             continue
         adata = read_study_input(root, source, study)
         if adata.n_obs > args.cells:
-            sc.pp.sample(adata, n=args.cells, rng=args.seed, replace=False)
+            selected = np.random.default_rng(args.seed).choice(
+                adata.n_obs, size=args.cells, replace=False
+            )
+            adata = adata[selected].copy()
         adata.write_h5ad(target, compression="gzip")
         print(f"WROTE {study_id}: {target} ({adata.n_obs} cells)")
 

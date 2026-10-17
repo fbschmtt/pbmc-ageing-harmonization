@@ -46,13 +46,16 @@ def test_harmonized_output_keeps_only_selected_counts_in_x(tmp_path):
 
     schema = _schema()
     prepared_path = tmp_path / "prepared.csv.gz"
-    _prepared_metadata(schema, source.obs_names).to_csv(prepared_path, compression="infer")
+    prepared = _prepared_metadata(schema, source.obs_names)
+    prepared["study_doi"] = "10.0000/test"
+    prepared.to_csv(prepared_path, compression="infer")
     output = tmp_path / "harmonized.h5ad"
     harmonize_study(
         ROOT,
         "test",
         {
-            "counts_source": "layer:counts", "features": {"duplicate_policy": "error"},
+            "publication_doi": "10.0000/test", "counts_source": "layer:counts",
+            "features": {"duplicate_policy": "error"},
             "preparation": {"allow_cell_subset": False}, "annotation": {"method": "existing"},
         },
         {"processing": {"output_compression": "gzip"}},
@@ -70,6 +73,8 @@ def test_harmonized_output_keeps_only_selected_counts_in_x(tmp_path):
     assert result.obs["total_counts"].tolist() == [3, 7]
     assert result.obs["n_genes_by_counts"].tolist() == [2, 2]
     assert result.obs["percent_mito"].tolist() == [0.0, 0.0]
+    assert isinstance(result.obs["study_doi"].dtype, pd.CategoricalDtype)
+    assert result.obs["study_doi"].cat.categories.tolist() == ["10.0000/test"]
 
 
 def test_feature_repair_clears_stale_gene_id_index_name_before_write(tmp_path):

@@ -19,12 +19,19 @@ def prepare_cells(source, root):
 
     table = pd.read_excel(root / "input_data/terekhova23/mmc2.xlsx")
     visits = _reshape_visits(table)
-    joined = safe_left_join(cells, visits, ["Tube_id"])
+    first_visits = (
+        visits.sort_values(["Donor_id", "Visit"])
+        .drop_duplicates("Donor_id", keep="first")
+    )
+    first_visit_tubes = first_visits["Tube_id"]
+    cells = cells.loc[cells["Tube_id"].isin(first_visit_tubes)].copy()
+    if cells.empty:
+        raise MetadataError("Terekhova source contains no cells from donors' first visits")
+    joined = safe_left_join(cells, first_visits, ["Tube_id"])
     return canonical(joined, "terekhova23", {
         "study_celltype": {"source": "Cluster_names"},
         "sample": {"source": "Tube_id"},
         "subject": {"source": "Donor_id"},
-        "sampling_timepoint": {"source": "Visit", "prefix": "visit_"},
         "age": {"source": "Age", "dtype": "float"},
         "sex": {"source": "Gender", "lower": True},
         "bmi": {"source": "BMI", "dtype": "float"},

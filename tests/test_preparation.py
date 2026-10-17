@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from pbmc_pipeline.preparation import PreparationError, prepare_study, read_prepared_cells
-from pbmc_pipeline.studies import aida25, fachrul26, nehar_belaid26, perez22
+from pbmc_pipeline.studies import aida25, cima, fachrul26, nehar_belaid26, perez22, terekhova26
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -33,7 +33,10 @@ def test_onek_adapter_materializes_exactly_one_canonical_row_per_cell(tmp_path):
     report = tmp_path / "onek.prepare.json"
 
     summary = prepare_study(
-        ROOT, "onek1k", {"preparation": {"adapter": "onek1k"}}, _schema(),
+        ROOT, "onek1k", {
+            "publication_doi": "10.1126/science.abf3041",
+            "preparation": {"adapter": "onek1k"},
+        }, _schema(),
         expression, output, report, source_obs_output_path=source_obs_output,
     )
     prepared = read_prepared_cells(output, source.obs_names, _schema())
@@ -44,6 +47,7 @@ def test_onek_adapter_materializes_exactly_one_canonical_row_per_cell(tmp_path):
     assert prepared["batch_single_cell"].tolist() == ["onek1k_1", "onek1k_2"]
     assert prepared["technology"].tolist() == ["10X3'v2", "10X3'v2"]
     assert prepared["study"].tolist() == ["onek1k", "onek1k"]
+    assert prepared["study_doi"].tolist() == ["10.1126/science.abf3041"] * 2
     source_obs = pd.read_csv(source_obs_output, index_col="cell_id")
     assert source_obs.index.tolist() == ["cell_a", "cell_b"]
     assert source_obs["cell_type"].tolist() == ["T cell", "B cell"]
@@ -74,11 +78,55 @@ def test_fachrul_adapter_uses_embedded_metadata():
     assert prepared.loc["cell_a", "batch_single_cell"] == "fachrul26_library_1"
 
 
-def test_aida_site_label_has_study_prefix(monkeypatch):
+def test_cima_adapter_uses_embedded_metadata_and_highest_resolution_label():
+    source = pd.DataFrame(
+        {
+            "cell_type_l4": ["CD8_Tem_CCR7neg"], "sample": ["CIMA_H001"],
+            "age": [42], "sex": ["Female"], "BMI": [22.5],
+            "smoking_ststus": ["past"], "library": ["CIMA_RNA_H001_1"],
+        }, index=["cell_a"],
+    )
+
+    prepared = cima.prepare_cells(source, ROOT)
+
+    assert prepared.loc["cell_a", "study_celltype"] == "CD8_Tem_CCR7neg"
+    assert prepared.loc["cell_a", "sample"] == "CIMA_H001"
+    assert prepared.loc["cell_a", "technology"] == "DNBelab C Series"
+    assert prepared.loc["cell_a", "smoking_status"] == "no"
+    assert prepared.loc["cell_a", "batch_single_cell"] == "cima_CIMA_RNA_H001_1"
+    assert prepared.loc["cell_a", "aligner"] == "STAR 2.7.2b"
+    assert prepared.loc["cell_a", "genome"] == "GRCh38"
+    assert prepared.loc["cell_a", "frozen"] == "not_provided"
+    assert prepared.loc["cell_a", "include_intronic"] == "no"
+
+
+def test_terekhova26_adapter_uses_embedded_author_labels():
+    source = pd.DataFrame(
+        {
+            "author_celltype": ["CD8+ Tem GZMB+"], "donor_id": ["donor_1"],
+            "age": [66], "sex": ["Male"], "BMI": [27.7], "CMV": ["Positive"],
+            "ethnicity": ["European"], "Pool": ["Pool_16"],
+        }, index=["cell_a"],
+    )
+
+    prepared = terekhova26.prepare_cells(source, ROOT)
+
+    assert prepared.loc["cell_a", "study_celltype"] == "CD8+ Tem GZMB+"
+    assert prepared.loc["cell_a", "sample"] == "donor_1"
+    assert prepared.loc["cell_a", "cmv"] == "yes"
+    assert prepared.loc["cell_a", "batch_single_cell"] == "terekhova26_Pool_16"
+    assert prepared.loc["cell_a", "aligner"] == "Cell Ranger multi 9.0.1"
+    assert prepared.loc["cell_a", "genome"] == "GRCh38-2020-A"
+    assert prepared.loc["cell_a", "demultiplexing"] == "genetic+HTO"
+    assert prepared.loc["cell_a", "frozen"] == "yes"
+    assert prepared.loc["cell_a", "include_intronic"] == "yes"
+
+
+def test_aida_adapter_uses_level4_labels_and_prefixes_site(monkeypatch):
     source = pd.DataFrame(
         {
             "donor_id": ["donor_1"], "Country": ["IN"],
-            "Annotation_Level2": ["CD4 T cell"], "development_stage": ["45-year-old stage"],
+            "Annotation_Level4": ["CD4_T_CM_IL7Rhi"], "development_stage": ["45-year-old stage"],
             "sex": ["Female"], "BMI": [24.0], "self_reported_ethnicity": ["Asian"],
             "assay": ["10x 5' v2"], "alignment_software": ["Cell Ranger"],
             "reference_genome": ["GRCh38"], "intronic_reads_counted": ["yes"],
@@ -95,6 +143,7 @@ def test_aida_site_label_has_study_prefix(monkeypatch):
 
     prepared = aida25.prepare_cells(source, ROOT)
 
+    assert prepared.loc["cell_a", "study_celltype"] == "CD4_T_CM_IL7Rhi"
     assert prepared.loc["cell_a", "study_site"] == "aida_IN"
 
 
@@ -153,7 +202,7 @@ def test_nehar_belaid_adapter_excludes_reused_public_cohorts_and_uses_supplement
         {
             "Study": ["Nehar-Belaid_et_al", "Deng_et_al_2025", "Nehar-Belaid_et_al"],
             "sample_id": ["HI1", "public_1", "HO1"],
-            "LS_L3": ["CD4_naive", "CD8_memory", "CD14_mono"],
+            "LS_L4": ["CD4_naive_CCR7+", "CD8_memory_GZMK+", "CD14_mono_S100A8+"],
         },
         index=["own_1", "public_1", "own_2"],
     )
@@ -179,6 +228,7 @@ def test_nehar_belaid_adapter_excludes_reused_public_cohorts_and_uses_supplement
     assert prepared["country"].tolist() == ["usa", "canada"]
     assert prepared["study_site"].tolist() == ["nehar_belaid26_nch", "nehar_belaid26_hsnri"]
     assert prepared["technology"].tolist() == ["10X3'v2", "10X3'v3"]
+    assert prepared["study_celltype"].tolist() == ["CD4_naive_CCR7+", "CD14_mono_S100A8+"]
 
 
 def test_prepared_metadata_allows_declared_cell_subset(tmp_path):

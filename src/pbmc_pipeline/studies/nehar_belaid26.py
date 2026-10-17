@@ -58,10 +58,9 @@ def prepare_cells(source, root):
         raise MetadataError("Nehar-Belaid source is missing 'subject_id' or 'sample_id'")
 
     return canonical(joined, "nehar_belaid26", {
-        "study_celltype": {"source": "LS_L3"},
+        "study_celltype": {"source": "LS_L4"},
         "sample": {"source": "sample_id"},
         "subject": {"source": "IDs"},
-        "sampling_timepoint": {"constant": "not_provided"},
         "age": {"source": "age_years", "dtype": "float"},
         "sex": {"source": "Sex", "map": {"F": "female", "M": "male"}, "lower": True},
         "bmi": {"source": "bmi_numeric", "dtype": "float"},

@@ -12,8 +12,7 @@ the tracked `config/studies.schema.json` and
 `config/input_sources.schema.json` enforce their document structures before a
 workflow starts. Explicit adapters under `src/pbmc_pipeline/studies/` own
 source-specific joins and reshaping. The output metadata contract lives in
-`config/harmonized_obs_schema.json`. See `PLAN.md` for scope, progress, and
-unresolved scientific questions. See `IMPLEMENTATION.md` for the high-level
+`config/harmonized_obs_schema.json`. See `IMPLEMENTATION.md` for the high-level
 architecture.
 
 See `INPUT_FILES.md` for the complete list of external expression files,
@@ -36,9 +35,9 @@ make download-inputs STUDIES=all
 
 The three [AIFI CellTypist models](aifi_models/README) must be downloaded
 separately. Their links require interactive Allen authentication, which the
-project downloader does not support. AIDA25, Terekhova23, and Wang25 also have
-manual-only inputs; `STUDIES=all` skips studies with incomplete inputs and
-records the decision in `output/run_manifest.json`.
+project downloader does not support. AIDA25, Terekhova23, Terekhova26, and
+Wang25 also have manual-only inputs; `STUDIES=all` skips studies with
+incomplete inputs and records the decision in `output/run_manifest.json`.
 
 After the required AIFI models and the inputs for the studies you want to
 include are in their configured paths, run:
@@ -66,14 +65,17 @@ make test-data
 make run-all-test
 ```
 
-By default this requests every configured study and skips unavailable fixtures.
+By default this uses the representative `aida25,cima,terekhova26` set and
+skips unavailable fixtures. It covers a supplementary-metadata adapter, a
+counts-layer input, and a raw-counts input. Use `STUDIES=all` when a test must
+exercise every available fixture.
 It runs the core pipeline on available downsampled real-data fixtures, checks
 the integration benchmark, fits and checks a generated pseudobulk fixture for
 positive DE coverage, profiles two top age-associated genes per cell type,
 smoke-tests a focused gene report, and renders single cell analysis reports
 from the real merge plus per-type DE reports from the synthetic fixture. The benchmark artifact retains
 labels and UMAP coordinates without raw counts or neighbour graphs. Use
-`STUDIES=<list>` to narrow the core run. Existing fixtures are preserved; use
+`STUDIES=<list>` to select a different core-test set. Existing fixtures are preserved; use
 `TEST_DATA_OVERWRITE=true` only to refresh them.
 
 ## Setup details
@@ -102,10 +104,8 @@ conversion.
 
 ## Current status
 
-Current implementation work, validation status, and remaining scientific
-review are tracked in [PLAN.md](PLAN.md). Run the focused target in
-[Choosing a Make target](#choosing-a-make-target) before relying on a changed
-workflow or report.
+Run the focused target in [Choosing a Make target](#choosing-a-make-target)
+before relying on a changed workflow or report.
 
 ## Data flow
 
@@ -251,22 +251,47 @@ all-study run.
 
 ## Sample and metadata semantics
 
-`subject` is a biological individual. `sample` is one biological specimen at
-one collection timepoint; it is the unit aggregated into sample × AIFI-L2
+`subject` is a biological individual. `sample` is one biological specimen;
+it is the unit aggregated into sample × AIFI-L2
 pseudobulks. `batch_single_cell` is a technical library, run, pool, or well and
 never defines a pseudobulk. Missing string metadata is written as
 `not_provided`; missing numeric metadata is `NaN`.
 
-| Study | Reference DOI | Subject | Sample | Sampling timepoint | Technical batch | Notes |
-|---|---|---|---|---|---|---|
-| AIDA25 | [10.1016/j.cell.2025.02.017](https://doi.org/10.1016/j.cell.2025.02.017) | `donor_id` | country-qualified donor ID | not provided | supplementary experimental batch | Source `obs.assay` reports 10x 5′ v2. Lonza material replicated across sites remains intentionally split until downstream exclusion. BMI uses the supplementary donor metadata. |
-| AIFI | [10.1038/s41586-025-09686-5](https://doi.org/10.1038/s41586-025-09686-5) | specimen GUID prefix | specimen GUID | `sample.visitName` | `well_id` | A specimen GUID may span multiple wells; pseudobulk combines those technical partitions. The source H5AD has no assay field. |
-| OneK1K | [10.1126/science.abf3041](https://doi.org/10.1126/science.abf3041) | `donor_id` | `donor_id` | not provided | `pool_number` | No separate specimen or timepoint key is present in the source H5AD; the sample-per-donor assumption remains under review. |
-| Terekhova23 | [10.1016/j.immuni.2023.10.013](https://doi.org/10.1016/j.immuni.2023.10.013) | `Donor_id` | `Tube_id` | workbook visit | barcode-derived batch | Each tube maps to one donor and visit; a tube may span technical batches. The paper explicitly reports frozen input material. |
-| Wang25 | [10.1038/s41590-024-02059-6](https://doi.org/10.1038/s41590-024-02059-6) | `Sample ID` | `Sample ID` | not provided | not provided | No separate donor, timepoint, or technical-batch identifier has yet been recovered. Samples are provisionally treated as fresh based on the public reference-sample selection; author confirmation is pending. |
-| Nehar-Belaid26 | [10.1038/s41467-026-73729-2](https://doi.org/10.1038/s41467-026-73729-2) | Supplementary Data 1a `IDs` | Supplementary Data 1a `Names` | not provided | Supplementary Data 1a `runs_10x` | Reads the supplied GEO raw 10x tar directly (without extraction); `JB` subject IDs parsed from member names join to Supplementary Data 1a `IDs`, which supplies sample IDs and donor metadata. Published labels transfer only on a unique sample ID plus normalized barcode-sequence match. |
-| Fachrul26 | [10.64898/2026.02.15.704933](https://doi.org/10.64898/2026.02.15.704933) | `donor_id` | `sample_id` | not provided | `library_id` | Paper methods state PBMCs were cryopreserved and thawed; this takes precedence over the conflicting CELLxGENE `obs.sample_preservation_method=fresh`. |
-| Perez22 | [10.1126/science.abf1970](https://doi.org/10.1126/science.abf1970) | `donor_id` | `sample_uuid` | not provided | `library_uuid` | Paper reports frozen input material. Uses embedded H5AD metadata; `feature_name` supplies gene symbols. `obs.disease` is normalized and only `normal`/healthy cells are retained; embedded SLE cells are excluded before harmonization. |
+`study_celltype` preserves the highest-resolution published or author-provided
+cell-type annotation available per cell. An unsupervised cluster is not used
+merely because it has more values. The selected fields below are source labels
+for audit and reporting; cross-study analyses use the separately harmonized
+AIFI labels.
+
+Every harmonized and merged H5AD also contains `obs.study_doi`. It is a
+categorical per-cell DOI drawn from the required `publication_doi` study
+configuration field; it is intentionally not duplicated in `uns`.
+
+| Study | `study_celltype` source | Selection basis |
+|---|---|---|
+| AIDA25 | `Annotation_Level4` | Highest level of the published AIDA hierarchy. |
+| AIFI | `AIFI_L3` | Highest AIFI level supplied in the source H5AD. |
+| CIMA | `cell_type_l4` | Highest CIMA hierarchy level. |
+| Fachrul26 | `cell_type` | One-to-one with `author_cell_type`; no finer author annotation is supplied. |
+| Nehar-Belaid26 | `LS_L4` | Highest published LS hierarchy level. |
+| OneK1K | `cell_type` | One-to-one with the supplied `predicted.celltype.l2`; no finer level is supplied. |
+| Perez22 | `cell_type` | One-to-one with `author_cell_type`; no finer author annotation is supplied. |
+| Terekhova23 | `Cluster_names` | Only supplied per-cell type-label field. |
+| Terekhova26 | `author_celltype` | Highest author label; identical to `annotation`. |
+| Wang25 | `secondary_type` | Finer of the supplied `primary_type`/`secondary_type` fields. |
+
+| Study          | Reference DOI                                                                | Subject                     | Sample                        | Technical batch                  | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| -------------- | ---------------------------------------------------------------------------- | --------------------------- | ----------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AIDA25         | [10.1016/j.cell.2025.02.017](https://doi.org/10.1016/j.cell.2025.02.017)     | `donor_id`                  | country-qualified donor ID    | supplementary experimental batch | Source `obs.assay` reports 10x 5′ v2. Lonza material replicated across sites remains intentionally split until downstream exclusion. BMI uses the supplementary donor metadata.                                                                                                                                                                                                                                                        |
+| AIFI           | [10.1038/s41586-025-09686-5](https://doi.org/10.1038/s41586-025-09686-5)     | specimen GUID prefix        | specimen GUID                 | `well_id`                        | The configured Immune Health Atlas reference has one sample per donor. Although the source includes `sample.visitName`, it is not retained as a separate harmonized timepoint field. A specimen may span multiple wells, which are combined as technical partitions. The source H5AD has no assay field.                                                                                                                                        |
+| CIMA           | [10.1126/science.adt3130](https://doi.org/10.1126/science.adt3130)           | `obs.sample`                | `obs.sample`                  | `obs.library`                    | The H5AD embeds all canonical donor values. The separately supplied metadata table matches all 408 retained samples exactly, so it is deliberately not a workflow input. Native `cell_type_l4` (70 labels) is retained as the per-study label. Paper methods report DNBelab C Series, STAR v2.7.2b, GRCh38, and exclusion of intronic reads; no demultiplexing method is described, so `none` is inferred. Frozen status is not reported.                                                            |
+| OneK1K         | [10.1126/science.abf3041](https://doi.org/10.1126/science.abf3041)           | `donor_id`                  | `donor_id`                    | `pool_number`                    | No separate specimen identifier is present in the source H5AD; the sample-per-donor assumption remains under review.                                                                                                                                                                                                                                                                                                             |
+| Terekhova23    | [10.1016/j.immuni.2023.10.013](https://doi.org/10.1016/j.immuni.2023.10.013) | `Donor_id`                  | `Tube_id`                     | barcode-derived batch            | Only each donor's earliest available visit is retained before harmonization; later-visit cells are excluded. A tube may span technical batches. The paper explicitly reports frozen input material.                                                                                                                                                                                                                                    |
+| Terekhova26    | [10.1016/j.immuni.2026.09.012](https://doi.org/10.1016/j.immuni.2026.09.012) | `obs.donor_id`              | `obs.donor_id`                | `obs.Pool`                       | The supplied author-reannotated KCL H5AD embeds all runtime metadata. Native `author_celltype` (59 labels) is retained as the per-study label. Genetic demultiplexing (`souporcell_donor`) is paired with HTO antibodies that map genotypes to samples. Paper methods report cryopreserved/thawed PBMCs, Cell Ranger multi v9.0.1, and GRCh38-2020-A; intronic reads are inferred included from the Cell Ranger v6+ default arguments. |
+| Wang25         | [10.1038/s41590-024-02059-6](https://doi.org/10.1038/s41590-024-02059-6)     | `Sample ID`                 | `Sample ID`                   | not provided                     | No separate donor or technical-batch identifier has yet been recovered. Fresh/frozen status is not provided in the paper or supplementary metadata; the author was contacted but did not respond.                                                                                                                                                                                                                           |
+| Nehar-Belaid26 | [10.1038/s41467-026-73729-2](https://doi.org/10.1038/s41467-026-73729-2)     | Supplementary Data 1a `IDs` | Supplementary Data 1a `Names` | Supplementary Data 1a `runs_10x` | Reads the supplied GEO raw 10x tar directly (without extraction); `JB` subject IDs parsed from member names join to Supplementary Data 1a `IDs`, which supplies sample IDs and donor metadata. Published labels transfer only on a unique sample ID plus normalized barcode-sequence match.                                                                                                                                            |
+| Fachrul26      | [10.64898/2026.02.15.704933](https://doi.org/10.64898/2026.02.15.704933)     | `donor_id`                  | `sample_id`                   | `library_id`                     | Paper methods state PBMCs were cryopreserved and thawed; this takes precedence over the conflicting CELLxGENE `obs.sample_preservation_method=fresh`.                                                                                                                                                                                                                                                                                  |
+| Perez22        | [10.1126/science.abf1970](https://doi.org/10.1126/science.abf1970)           | `donor_id`                  | `sample_uuid`                 | `library_uuid`                   | Paper reports USA frozen PBMCs processed with 10x 3' v2 and Cell Ranger (version unspecified); intronic-read handling is not reported. Uses embedded H5AD metadata; `feature_name` supplies gene symbols. `obs.disease` is normalized and only `normal`/healthy cells are retained; embedded SLE cells are excluded before harmonization.                                                                                                  |
 
 `tests/` contains only automated test code. Reproducible local intermediates
 are collected under `cache/` for RDS-to-H5AD conversions. Downsampled smoke-test
@@ -314,9 +339,11 @@ Synapse expression objects require portal access, the AIDA publisher
 attachment rejects unauthenticated programmatic requests, and the AIFI full
 H5AD link currently redirects through Allen's Google-authenticated workspace.
 The downloader does not implement these access flows. Some files currently
-present at production paths are test-scale subsets. Recorded SHA-256 values and
-CELLxGENE byte sizes are verified; confirm that acquired files are suitable for
-production analysis.
+present at production paths are test-scale subsets. Entries explicitly marked
+as allowing a local subset retain their published full-file size as download
+documentation; a normal download check reports `local_subset` rather than a
+size failure, while the strict preflight still rejects it. Confirm that acquired
+files are suitable for production analysis.
 See `config/input_sources.json` and [INPUT_FILES.md](INPUT_FILES.md).
 
 ## QC reports
@@ -347,7 +374,10 @@ pbmc-qc \
 
 The merge workflow renders one combined document at
 `output/harmonization/harmonization_qc/merged/`. It
-covers pseudobulk composition and technical covariates; the pseudobulk outer
+covers pseudobulk composition, technical covariates, and a covariate-completeness
+heatmap showing the fraction of pseudobulk profiles missing each covariate per study. String
+metadata uses the canonical `not_provided` value for both source missingness and
+explicitly unreported fields, while numeric metadata uses `NaN`. The pseudobulk outer
 union retains all input counts. Shared-gene availability, hypothetical count
 loss under the all-study intersection, and the highest-count excluded gene are
 reported with the cross-cell-type expression atlas, where that intersection is
@@ -379,8 +409,9 @@ The Docker profile is the supported workflow environment and is selected by
 default. The test profile uses isolated 200-cell fixtures from `test_data/`;
 RDS fixtures still use the normal conversion process. `make test-data` creates
 only missing fixtures and never changes `input_data/`; use
-`TEST_DATA_OVERWRITE=true` to refresh them. Pass `STUDIES=<list>` to narrow a
-test or production run.
+`TEST_DATA_OVERWRITE=true` to refresh them. Tests default to
+`aida25,cima,terekhova26`; pass `STUDIES=<list>` (including `STUDIES=all`) to
+change that selection. Production `make run` still defaults to all studies.
 
 ## Choosing a Make target
 
@@ -402,17 +433,17 @@ which validation to run.
 | Top merged age-DE gene profiles | `make profile-top-age-genes-test` | Uses the synthetic DE fixture and profiles two genes per cell type; included in `make run-all-test`. |
 | DE from an existing test pseudobulk merge | `make run-de-test` | Requires `make run-test` first; the small core fixture may not have enough independent samples for successful fits. Use the synthetic target above for positive fitting coverage. |
 | Focused profiles of top merged age-DE genes | `make profile-top-age-genes` | Runs ten profiles per cell type by adjusted p-value; set `TOP_AGE_GENE_COUNT` to change the number. Requires completed merged DE results and pseudobulk input. |
-| Core workflow for one or a few studies | `make run-test STUDIES=<list>` | Omit `STUDIES` to request all configured studies. |
+| Core workflow for one or a few studies | `make run-test STUDIES=<list>` | Omit `STUDIES` for the representative AIDA25/CIMA/Terekhova26 set; use `STUDIES=all` for every available fixture. |
 | Global integration/annotation diagnostics | `make run-integration-benchmark[-test]` | Run after an existing single-cell merge; `make run-all-test` also exercises its test form. |
 | Ordered Docker integration test | `make run-all-test` | Use `make verify` when local lint, unit, and documentation checks are also needed. |
 | Markdown documentation or Make target names | `make docs-check` | Also run the target described by changed commands. |
-| Broad cross-cutting or release validation | `make verify` | This is deliberately non-resumed and includes all studies by default. |
+| Broad cross-cutting or release validation | `make verify` | This is deliberately non-resumed and uses the representative test set by default; pass `STUDIES=all` for every available fixture. |
 | Production analysis | `make run` | It is resumable; use only after the relevant focused checks pass. |
 
 Nextflow submission alone is not a passing workflow check: confirm each task's
-`.exitcode` and the published deliverables. Development test targets request
-all configured studies and skip unavailable test fixtures; pass an explicit
-comma-separated `STUDIES` list to narrow a run.
+`.exitcode` and the published deliverables. Development test targets use the
+representative AIDA25/CIMA/Terekhova26 fixtures and skip unavailable inputs;
+pass an explicit comma-separated `STUDIES` list to change a run.
 
 Harmony integration uses the pinned Harmony2 C++ backend. It uses the backend's
 native thread policy; the legacy OpenMP/OpenBLAS thread overrides that crashed
@@ -843,8 +874,8 @@ age-DE genes per cell type, runs the focused synthetic gene-profile smoke test,
 renders per-type DE and combined cross-cell-type reports from that synthetic
 fixture, and renders single cell analysis reports from the real merge/splits.
 `make verify` runs it after linting, unit
-tests, Nextflow lint, and documentation checks. `STUDIES=<list>` narrows only
-the core test inputs. The synthetic WGCNA fixture exercises the ordinary
+tests, Nextflow lint, and documentation checks. `STUDIES=<list>` changes only
+the core test inputs; use `STUDIES=all` for all available fixtures. The synthetic WGCNA fixture exercises the ordinary
 network and report path, including its leave-one-study-out refits, but its
 two-module result does not exercise the 25-module figure cap or production-scale
 runtime.
@@ -895,6 +926,5 @@ male versus female and yes CMV versus no CMV.
 
 ## Further reading
 
-See [INPUT_FILES.md](INPUT_FILES.md) for exact external paths and checksums,
-[IMPLEMENTATION.md](IMPLEMENTATION.md) for architecture and output contracts,
-and [PLAN.md](PLAN.md) for open scientific and reproducibility work.
+See [INPUT_FILES.md](INPUT_FILES.md) for exact external paths and checksums and
+[IMPLEMENTATION.md](IMPLEMENTATION.md) for architecture and output contracts.

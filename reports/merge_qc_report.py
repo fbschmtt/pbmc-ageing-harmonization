@@ -93,6 +93,71 @@ def show_technical_covariates(adata):
     plt.show()
 
 
+def show_covariate_completeness(adata):
+    covariates = [
+        "age",
+        "sex",
+        "bmi",
+        "cmv",
+        "ethnicity",
+        "ethnicity_fine",
+        "technology",
+        "aligner",
+        "genome",
+        "demultiplexing",
+        "frozen",
+        "include_intronic",
+        "smoking_status",
+        "disease_status",
+        "country",
+    ]
+    available = [column for column in covariates if column in adata.obs]
+    if not available:
+        return
+
+    metadata = adata.obs[["study", *available]].copy()
+    metadata["study"] = metadata["study"].astype(str)
+    studies = sorted(metadata["study"].unique())
+    missing_fraction = pd.DataFrame(
+        {
+            column: metadata.groupby("study", observed=True)[column].apply(
+                lambda values: (
+                    values.isna()
+                    | values.astype("string").str.strip().str.lower().isin({"", "not_provided"})
+                ).mean()
+            )
+            for column in available
+        }
+    ).T.reindex(index=available, columns=studies)
+
+    display(Markdown("### Covariate Completeness"))
+    display(Markdown(
+        "Each cell is the fraction of observations with missing metadata. "
+        "For canonical string fields, missing and blank values are normalized to "
+        "`not_provided`; numeric fields use `NaN`."
+    ))
+    figure, axis = plt.subplots(
+        figsize=(max(7, 1.1 * len(studies)), max(5, 0.38 * len(available)))
+    )
+    sns.heatmap(
+        missing_fraction,
+        ax=axis,
+        cmap="mako_r",
+        vmin=0,
+        vmax=1,
+        annot=True,
+        fmt=".0%",
+        linewidths=0.5,
+        linecolor="white",
+        cbar_kws={"label": "Fraction missing or not provided"},
+    )
+    axis.set_xlabel("Study")
+    axis.set_ylabel("Covariate")
+    axis.set_title("Missing or not-provided metadata")
+    figure.tight_layout()
+    plt.show()
+
+
 pseudobulk, pseudobulk_report, pseudobulk_path = load_merge("PSEUDOBULK")
 single_cell_available = "QC_SINGLE_CELL_H5AD" in os.environ
 if single_cell_available:
@@ -130,6 +195,7 @@ display(Markdown(
 ))
 show_study_coverage(pseudobulk)
 show_technical_covariates(pseudobulk)
+show_covariate_completeness(pseudobulk)
 
 # %% [markdown]
 # ### AIFI L2 Composition by Cell

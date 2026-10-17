@@ -17,7 +17,6 @@ def prepare_cells(source, root):
         "study_celltype": {"source": "secondary_type"},
         "sample": {"source": "Sample ID"},
         "subject": {"source": "Sample ID"},
-        "sampling_timepoint": {"constant": "not_provided"},
         "age": {"source": "Age (y)", "dtype": "float"},
         "sex": {"source": "Gender", "lower": True},
         "bmi": {"source": "BMI (kg/m2)", "dtype": "float"},
@@ -28,8 +27,7 @@ def prepare_cells(source, root):
         "aligner": {"constant": "CRv3.0.2"},
         "genome": {"constant": "GRCh38"},
         "demultiplexing": {"constant": "none"},
-        # inferred: public reference samples are described as fresh; author confirmation is pending.
-        "frozen": {"constant": "no"},
+        "frozen": {"constant": "not_provided"},
         # inferred: source processing metadata is used because no per-cell field is present.
         "include_intronic": {"constant": "no"},
         "smoking_status": {"constant": "no"},

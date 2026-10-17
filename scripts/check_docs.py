@@ -13,7 +13,6 @@ DOCUMENTS = (
     ROOT / "README.md",
     ROOT / "IMPLEMENTATION.md",
     ROOT / "INPUT_FILES.md",
-    ROOT / "PLAN.md",
     ROOT / "input_data/README.md",
     ROOT / "aifi_models/README",
 )

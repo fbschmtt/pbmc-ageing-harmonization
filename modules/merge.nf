@@ -8,13 +8,14 @@ process PSEUDOBULK {
     input:
     tuple val(study_id), path(expression), path(run_report)
     path merge_config
+    path obs_schema
 
     output:
     tuple val(study_id), path("${study_id}.pseudobulk.h5ad"), path("${study_id}.pseudobulk.json"), emit: pseudobulk
 
     script:
     """
-    pbmc-merge --project-root . --config ${merge_config} --mode pseudobulk --input ${expression} \\
+    pbmc-merge --project-root . --config ${merge_config} --obs-schema ${obs_schema} --mode pseudobulk --input ${expression} \\
       --output ${study_id}.pseudobulk.h5ad --report-output ${study_id}.pseudobulk.json
     """
 }

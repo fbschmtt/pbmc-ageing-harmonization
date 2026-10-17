@@ -22,7 +22,6 @@ def prepare_cells(source, root):
         "study_celltype": {"source": "source_celltype_column"},
         "sample": {"source": "source_sample_column"},
         "subject": {"source": "source_subject_column"},
-        "sampling_timepoint": {"constant": "not_provided"},
         "age": {"source": "source_age_column", "dtype": "float"},
         "sex": {"source": "source_sex_column", "lower": True},
         "bmi": {"constant": float("nan")},

@@ -165,6 +165,7 @@ def harmonize_study(
             source_input_cells - adata.n_obs,
         )
     adata.obs = prepared
+    _ensure_study_doi_categorical(adata, expected_doi=study["publication_doi"])
     _log_step(study_id, "attach_prepared_metadata", started, cells=adata.n_obs, warnings=len(warnings))
     input_cells, input_genes = adata.shape
     started = time.perf_counter()
@@ -273,6 +274,21 @@ def _normalize_nullable_strings_for_h5ad(adata) -> None:
             series = frame[column]
             if isinstance(series.dtype, pd.StringDtype):
                 frame[column] = series.astype(object).where(series.notna(), None)
+
+
+def _ensure_study_doi_categorical(adata, *, expected_doi: str | None = None) -> None:
+    """Require the per-cell DOI column and store it as a categorical."""
+    if "study_doi" not in adata.obs:
+        raise ValueError("study_doi is required in output observation metadata")
+    values = adata.obs["study_doi"].astype("string")
+    if values.isna().any() or values.str.strip().eq("").any():
+        raise ValueError("study_doi contains missing or empty values")
+    observed = sorted(values.unique().tolist())
+    if expected_doi is not None and observed != [expected_doi]:
+        raise ValueError(
+            f"study_doi differs from the configured publication DOI: {observed!r}"
+        )
+    adata.obs["study_doi"] = pd.Categorical(values, categories=observed)
 
 
 def _normalize_missing_metadata(adata, schema: dict) -> None:

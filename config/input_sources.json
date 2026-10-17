@@ -43,6 +43,18 @@
       "note": "Requires interactive Google-authenticated Allen access; the downloader does not handle credentials. Redistribution terms are unconfirmed."
     },
     {
+      "id": "cima_expression",
+      "studies": [
+        "cima"
+      ],
+      "path": "input_data/CIMA/CIMA_RNA_6484974cells_36326genes_compressed.h5ad",
+      "url": "https://ftp.cngb.org/pub/SciRAID/trueblood/cima/CIMA_Resource/Cell_Atlas/CIMA_RNA_6484974cells_36326genes_compressed.h5ad",
+      "source_page": "https://db.cngb.org/trueblood/cima/resource",
+      "expected_size_bytes": 47611600946,
+      "local_subset_allowed": true,
+      "note": "TrueBlood CIMA scRNA-seq H5AD (6,484,974 cells; 47,611,600,946 bytes). The checked-in local input is a 2,000-cell development subset, so its size is intentionally not validated; force a download to retrieve and verify the full artifact."
+    },
+    {
       "id": "aida_expression",
       "studies": [
         "aida25"
@@ -114,6 +126,18 @@
       "path": "input_data/wang25/scRNA-seqProcessedLabelledObject.rds",
       "manual_url": "https://www.synapse.org/Synapse:syn61609846",
       "note": "The published processed Seurat RDS is hosted at this Synapse entity and requires a Synapse login. No other public host for this processed object was identified on 2026-09-30; the paper's raw-data deposit (HRA009014) does not replace it."
+    },
+    {
+      "id": "terekhova26_expression",
+      "studies": [
+        "terekhova26"
+      ],
+      "path": "input_data/terekhova26/KCL_reannotated.h5ad",
+      "manual_url": "https://www.synapse.org/",
+      "source_page": "https://www.ega-archive.org/datasets/EGAD50000003136",
+      "expected_size_bytes": 793806465248,
+      "local_subset_allowed": true,
+      "note": "The supplied author-reannotated KCL H5AD is gated behind Synapse access; the downloader does not authenticate to controlled-access portals. Its 2,000-cell local development subset is intentionally accepted without a full-file size check. The EGA catalogue documents the underlying KCL healthy-aging source data."
     },
     {
       "id": "aida_metadata",

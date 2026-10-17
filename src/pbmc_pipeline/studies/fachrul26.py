@@ -10,7 +10,6 @@ def prepare_cells(source, root):
         "study_celltype": {"source": "cell_type"},
         "sample": {"source": "sample_id"},
         "subject": {"source": "donor_id"},
-        "sampling_timepoint": {"constant": "not_provided"},
         "age": {"source": "development_stage", "replace": {"-year-old stage": ""}, "dtype": "float"},
         "sex": {"source": "sex", "lower": True},
         "bmi": {"constant": None},

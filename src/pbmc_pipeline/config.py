@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import re
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, ClassVar
@@ -373,6 +374,17 @@ def validate_configuration(
         raise ConfigurationError(
             "merge.pseudobulk.groupby must include sample and aifi_l2_majority"
         )
+    pseudobulk_metadata = schema.get("pseudobulk_metadata")
+    if (
+        not isinstance(pseudobulk_metadata, list)
+        or not pseudobulk_metadata
+        or len(set(pseudobulk_metadata)) != len(pseudobulk_metadata)
+        or not set(pseudobulk_metadata).issubset(schema.get("required", {}))
+    ):
+        raise ConfigurationError(
+            "obs_schema.pseudobulk_metadata must be a non-empty, unique list "
+            "of harmonized observation contract columns"
+        )
     single_cell = merge.get("single_cell", {})
     if single_cell.get("gene_join") not in {"inner"}:
         raise ConfigurationError("merge.single_cell.gene_join currently supports only 'inner'")
@@ -601,13 +613,19 @@ def validate_configuration(
             )
 
     for study_id, study in studies["studies"].items():
-        missing_keys = {"input", "test_input", "counts_source", "preparation", "annotation"} - study.keys()
+        missing_keys = {"input", "test_input", "publication_doi", "counts_source", "preparation", "annotation"} - study.keys()
         if missing_keys:
             raise ConfigurationError(f"{study_id}: missing keys {sorted(missing_keys)}")
         if not isinstance(study["input"], str) or not study["input"]:
             raise ConfigurationError(f"{study_id}: input must be a non-empty path")
         if not isinstance(study["test_input"], str) or not study["test_input"]:
             raise ConfigurationError(f"{study_id}: test_input must be a non-empty filename")
+        publication_doi = study["publication_doi"]
+        if (
+            not isinstance(publication_doi, str)
+            or not re.fullmatch(r"10\.[^/]+/.+", publication_doi)
+        ):
+            raise ConfigurationError(f"{study_id}: publication_doi must be a DOI string")
         test_inputs.append(study["test_input"])
         counts_source = study["counts_source"]
         if not isinstance(counts_source, str) or not counts_source:

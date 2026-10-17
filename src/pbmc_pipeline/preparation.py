@@ -38,9 +38,13 @@ def prepare_study(
     adapter_name = study["preparation"]["adapter"]
     module = importlib.import_module(f"pbmc_pipeline.studies.{adapter_name}")
     prepared = module.prepare_cells(source_obs, root)
+    prepared["study_doi"] = study["publication_doi"]
     allow_cell_subset = study["preparation"].get("allow_cell_subset", False)
     prepared = validate_prepared_cells(
         prepared, source_ids, schema, allow_cell_subset=allow_cell_subset
+    )
+    prepared["study_doi"] = pd.Categorical(
+        prepared["study_doi"], categories=[study["publication_doi"]]
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

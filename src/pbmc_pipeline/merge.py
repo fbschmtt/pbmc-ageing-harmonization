@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import numbers
 import platform
 import tempfile
 import time
@@ -16,7 +17,7 @@ import pandas as pd
 from scipy import sparse
 
 from .config import config_digest
-from .harmonize import _normalize_nullable_strings_for_h5ad
+from .harmonize import _ensure_study_doi_categorical, _normalize_nullable_strings_for_h5ad
 
 LOGGER = logging.getLogger(__name__)
 
@@ -69,9 +70,13 @@ def _match_csr_index_dtypes(matrix):
 
 
 def pseudobulk_study(
-    input_path: Path, output_path: Path, report_path: Path, pipeline: dict
+    input_path: Path,
+    output_path: Path,
+    report_path: Path,
+    pipeline: dict,
+    obs_schema: dict,
 ) -> dict:
-    """Sum raw counts by sample and AIFI-L2, retaining legacy bulk metadata."""
+    """Sum raw counts and retain only contract-defined bulk metadata."""
     import anndata as ad
     import scanpy as sc
 
@@ -93,7 +98,13 @@ def pseudobulk_study(
     counts = membership @ adata.X
     if not sparse.issparse(counts):
         counts = sparse.csr_matrix(counts)
-    obs = _legacy_bulk_metadata(adata.obs, codes, len(unique))
+    metadata_columns = list(obs_schema["pseudobulk_metadata"])
+    missing_metadata = set(metadata_columns) - set(adata.obs.columns)
+    if missing_metadata:
+        raise ValueError(
+            f"{input_path}: pseudobulk metadata columns absent: {sorted(missing_metadata)}"
+        )
+    obs = _legacy_bulk_metadata(adata.obs, codes, len(unique), metadata_columns)
     for position, column in enumerate(groupby):
         obs[column] = unique.get_level_values(position).astype(str)
     study_id = str(adata.obs["study"].iloc[0])
@@ -110,7 +121,7 @@ def pseudobulk_study(
     output = ad.AnnData(X=counts, obs=obs, var=adata.var.copy())
     output.uns["pseudobulk"] = {
         "groupby": groupby,
-        "metadata_policy": "legacy_homogeneous_or_heterogeneous_during_bulk",
+        "metadata_policy": "harmonized_contract_sample_metadata",
         "source": str(input_path),
     }
     output.uns["pipeline_provenance"] = {
@@ -120,6 +131,7 @@ def pseudobulk_study(
         "input": str(input_path),
         "pipeline_version": "0.1.0",
     }
+    _ensure_study_doi_categorical(output)
     _normalize_nullable_strings_for_h5ad(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     # Pseudobulks are small, dense downstream interchange inputs. Keep them
@@ -152,10 +164,12 @@ def merge_pseudobulks(
     merged = ad.concat(parts, join="outer", merge="same", index_unique=None, fill_value=0)
     if not merged.obs_names.is_unique:
         raise ValueError("Pseudobulk identifiers are not unique across studies")
+    obs_type_normalizations = _stringify_mixed_object_columns(merged.obs)
     _annotate_gene_availability(merged, parts)
     merged.uns["pipeline_provenance"] = _merge_provenance(
         "pseudobulk_merge", paths, pipeline, gene_join="outer"
     )
+    _ensure_study_doi_categorical(merged)
     _normalize_nullable_strings_for_h5ad(merged)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     # See ``pseudobulk_study``: merged pseudobulk is deliberately uncompressed.
@@ -164,6 +178,7 @@ def merge_pseudobulks(
     report["gene_join_accounting"] = _gene_join_count_accounting(
         parts, merged.var_names, "outer",
     )
+    report["obs_type_normalizations"] = obs_type_normalizations
     _write_report(report_path, report)
     return report
 
@@ -381,6 +396,7 @@ def merge_single_cells(
     merged.uns["pipeline_provenance"] = _merge_provenance(
         "single_cell_merge", paths, pipeline, gene_join=spec["gene_join"]
     )
+    _ensure_study_doi_categorical(merged)
     _normalize_nullable_strings_for_h5ad(merged)
     started = _start_step(study_id, "write_merged_h5ad", output=output_path)
     merged.write_h5ad(output_path, compression=pipeline["processing"]["output_compression"])
@@ -402,10 +418,56 @@ def _distribution(values: pd.Series) -> dict[str, float]:
     return {key: float(values.quantile(q)) for key, q in {"min": 0, "p50": .5, "p95": .95, "max": 1}.items()}
 
 
-def _legacy_bulk_metadata(obs: pd.DataFrame, codes: np.ndarray, n_groups: int) -> pd.DataFrame:
-    """Retain homogeneous metadata and mark mixed values as in the legacy notebook."""
-    values_by_column: dict[str, list[object]] = {}
+def _stringify_mixed_object_columns(obs: pd.DataFrame) -> list[dict[str, object]]:
+    """Stringify mixed-type object columns while preserving nulls and reporting repairs."""
+    normalizations: list[dict[str, object]] = []
     for column in obs.columns:
+        series = obs[column]
+        if not pd.api.types.is_object_dtype(series.dtype):
+            continue
+        present = series[series.notna()]
+        kinds = {_metadata_value_kind(value) for value in present}
+        if len(kinds) <= 1:
+            continue
+
+        obs[column] = series.map(
+            lambda value: None if pd.isna(value) else str(value)
+        ).astype(object)
+        source_types = sorted(kinds)
+        LOGGER.warning(
+            "pseudobulk merge found mixed value types in obs column %s (%s); "
+            "stringified values while preserving missing values",
+            column,
+            ", ".join(source_types),
+        )
+        normalizations.append({
+            "column": str(column),
+            "source_types": source_types,
+            "converted_to": "string",
+        })
+    return normalizations
+
+
+def _metadata_value_kind(value: object) -> str:
+    if isinstance(value, (str, np.str_)):
+        return "string"
+    if isinstance(value, (bool, np.bool_)):
+        return "boolean"
+    if isinstance(value, numbers.Number):
+        return "number"
+    value_type = type(value)
+    return f"{value_type.__module__}.{value_type.__qualname__}"
+
+
+def _legacy_bulk_metadata(
+    obs: pd.DataFrame,
+    codes: np.ndarray,
+    n_groups: int,
+    columns: list[str],
+) -> pd.DataFrame:
+    """Aggregate only explicitly approved sample-level metadata columns."""
+    values_by_column: dict[str, list[object]] = {}
+    for column in columns:
         aggregated: list[object] = []
         series = obs[column]
         for group_code in range(n_groups):

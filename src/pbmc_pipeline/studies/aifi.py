@@ -9,7 +9,6 @@ def prepare_cells(source, root):
         "study_celltype": {"source": "AIFI_L3"},
         "sample": {"source": "specimen.specimenGuid"},
         "subject": {"source": "specimen.specimenGuid", "split": {"separator": "-", "index": 0}},
-        "sampling_timepoint": {"source": "sample.visitName"},
         "age": {"source": "sample.subjectAgeAtDraw", "dtype": "float"},
         "sex": {"source": "subject.biologicalSex", "lower": True},
         "bmi": {"source": "subject.bmi", "dtype": "float"},

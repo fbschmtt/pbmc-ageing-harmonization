@@ -30,7 +30,6 @@ def prepare_cells(source, root):
         "study_celltype": {"source": "cell_type"},
         "sample": {"source": "sample_uuid"},
         "subject": {"source": "donor_id"},
-        "sampling_timepoint": {"constant": "not_provided"},
         "age": {"source": "development_stage", "replace": {"-year-old stage": ""}, "dtype": "float"},
         "sex": {"source": "sex", "lower": True},
         "bmi": {"constant": None},
@@ -38,7 +37,7 @@ def prepare_cells(source, root):
         "ethnicity": {"source": "self_reported_ethnicity", "lower": True},
         "ethnicity_fine": {"source": "self_reported_ethnicity", "lower": True},
         "technology": {"source": "assay", "map": {"10x 3' v2": "10X3'v2"}},
-        "aligner": {"constant": "not_provided"},
+        "aligner": {"constant": "Cell Ranger"},
         # inferred: GENCODE 19 implies the GRCh37-era reference assembly.
         "genome": {"constant": "GRCh37"},
         "demultiplexing": {"constant": "not_provided"},
@@ -47,6 +46,6 @@ def prepare_cells(source, root):
         "smoking_status": {"constant": "not_provided"},
         "disease_status": {"source": DISEASE_STATUS_COLUMN},
         "study_site": {"constant": "perez22"},
-        "country": {"constant": "not_provided"},
+        "country": {"constant": "usa"},
         "batch_single_cell": {"source": "library_uuid", "prefix": "perez22_"},
     })

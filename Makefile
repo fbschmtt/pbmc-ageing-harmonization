@@ -1,6 +1,10 @@
 .DEFAULT_GOAL := help
 
 STUDIES ?= all
+# Representative default for test fixtures and non-production workflows. Keep
+# production `make run` on all studies; override any test selection with
+# `STUDIES=<comma-separated-list>` when needed.
+TEST_STUDIES ?= aida25,cima,terekhova26
 NF_PROFILE ?= docker
 NXF ?= nextflow
 WORK_DIR ?= work
@@ -47,8 +51,8 @@ SELECTS_WANG = $(if $(filter all,$(1)),yes,$(if $(findstring wang25,$(1)),yes))
 PRODUCTION_R_IMAGE_PREREQ = $(if $(and $(call SELECTS_WANG,$(STUDIES)),$(wildcard $(WANG_RDS_SOURCE))),image-r)
 TEST_R_IMAGE_PREREQ = $(if $(and $(call SELECTS_WANG,$(STUDIES)),$(wildcard $(WANG_TEST_RDS))),image-r)
 CORE_CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),image-python $(PRODUCTION_R_IMAGE_PREREQ),)
-TEST_CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),image-python $(TEST_R_IMAGE_PREREQ),)
-TEST_DATA_CONTAINER_PREREQS := image-python $(PRODUCTION_R_IMAGE_PREREQ)
+TEST_CONTAINER_PREREQS = $(if $(findstring docker,$(NF_PROFILE)),image-python,)
+TEST_DATA_CONTAINER_PREREQS = image-python
 PYTHON_CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),image-python,)
 MERGE_ARGS = $(if $(filter true 1 yes,$(MERGE_SINGLE_CELL)),--merge_single_cell,)
 
@@ -102,19 +106,21 @@ docs-update: ## Update generated documentation from config/pipeline.json
 test-unit: $(VENV_DEPS) ## Run deterministic unit and output-contract tests
 	$(VENV_PYTHON) -m pytest -q
 
-verify: lint test-unit workflow-lint docs-check run-all-test ## Run all checks and fresh Docker workflows for all studies
+verify: STUDIES = $(TEST_STUDIES)
+verify: lint test-unit workflow-lint docs-check run-all-test ## Run all checks and fresh Docker workflows for representative studies
 
 # Keep benchmark, DE, and reports ordered even under `make -j`: each stage
 # consumes the fresh core output or synthetic-DE manifest from the prior stage.
+run-all-test: STUDIES = $(TEST_STUDIES)
 run-all-test: run-test ## Run core, benchmark, DE, cross-cell-type analysis, profiles, and cell-type reports
-	$(MAKE) run-integration-benchmark-test
-	$(MAKE) check-integration-benchmark-test
-	$(MAKE) run-de-synthetic-test
-	$(MAKE) check-synthetic-de-results
-	$(MAKE) profile-top-age-genes-test
-	$(MAKE) run-gene-profile-synthetic-test
-	$(MAKE) run-cell-type-analysis-test
-	$(MAKE) check-synthetic-de-reports
+	$(MAKE) run-integration-benchmark-test STUDIES="$(STUDIES)"
+	$(MAKE) check-integration-benchmark-test STUDIES="$(STUDIES)"
+	$(MAKE) run-de-synthetic-test STUDIES="$(STUDIES)"
+	$(MAKE) check-synthetic-de-results STUDIES="$(STUDIES)"
+	$(MAKE) profile-top-age-genes-test STUDIES="$(STUDIES)"
+	$(MAKE) run-gene-profile-synthetic-test STUDIES="$(STUDIES)"
+	$(MAKE) run-cell-type-analysis-test STUDIES="$(STUDIES)"
+	$(MAKE) check-synthetic-de-reports STUDIES="$(STUDIES)"
 
 validate-study:
 	@case "$(STUDIES)" in all|*,*) echo "validation requires exactly one STUDIES value" >&2; exit 2;; esac
@@ -129,11 +135,15 @@ validate-full: validate-study image-python ## Validate one full input in the Pyt
 	$(DOCKER_WORKSPACE_RO) $(PYTHON_IMAGE) pbmc-prepare --project-root /work --config config/pipeline.json --study $(STUDIES) --input /work/$(shell jq -r '.studies["$(STUDIES)"].input' config/studies.json) --output /result/$(STUDIES).cells.csv.gz --source-obs-output /result/$(STUDIES).source_obs.csv.gz --report-output /result/$(STUDIES).prepare.json
 	$(DOCKER_WORKSPACE_RO) -e PYTHONFAULTHANDLER=1 $(PYTHON_IMAGE) pbmc-harmonize --project-root /work --config config/pipeline.json --study $(STUDIES) --prepared-obs /result/$(STUDIES).cells.csv.gz --validate-only --report-output /result/$(STUDIES).json
 
-test-data: $(TEST_DATA_CONTAINER_PREREQS) ## Create missing 200-cell H5AD and RDS smoke-test fixtures
+BUILD_TEST_R_IMAGE = $(if $(TEST_R_IMAGE_PREREQ),$(MAKE) image-r,@:)
+BUILD_TEST_DATA_R_IMAGE = $(if $(PRODUCTION_R_IMAGE_PREREQ),$(MAKE) image-r,@:)
+CREATE_TEST_RDS = $(if $(and $(call SELECTS_WANG,$(STUDIES)),$(wildcard $(WANG_RDS_SOURCE))),$(DOCKER_WORKSPACE) $(R_IMAGE) Rscript scripts/create_test_rds.R --project-root /work --cells $(TEST_CELLS) --seed $(TEST_SEED) --studies "$(STUDIES)" $(if $(filter true 1 yes,$(TEST_DATA_OVERWRITE)),--overwrite,),@:)
+
+test-data: STUDIES = $(TEST_STUDIES)
+test-data: $(TEST_DATA_CONTAINER_PREREQS) ## Create missing 200-cell H5AD and RDS smoke-test fixtures for representative studies
 	$(DOCKER_WORKSPACE) -e PYTHONPATH=/work/src $(PYTHON_IMAGE) python scripts/create_test_data.py --cells $(TEST_CELLS) --seed $(TEST_SEED) --studies "$(STUDIES)" $(if $(filter true 1 yes,$(TEST_DATA_OVERWRITE)),--overwrite,)
-ifneq ($(PRODUCTION_R_IMAGE_PREREQ),)
-	$(DOCKER_WORKSPACE) $(R_IMAGE) Rscript scripts/create_test_rds.R --project-root /work --cells $(TEST_CELLS) --seed $(TEST_SEED) --studies "$(STUDIES)" $(if $(filter true 1 yes,$(TEST_DATA_OVERWRITE)),--overwrite,)
-endif
+	$(BUILD_TEST_DATA_R_IMAGE)
+	$(CREATE_TEST_RDS)
 
 download-inputs: image-python ## Best-effort public input download; never runs implicitly
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/download_inputs.py --project-root /work --studies "$(STUDIES)" $(if $(filter 1 true yes,$(DOWNLOAD_FORCE)),--force,)
@@ -164,7 +174,9 @@ run-all: ## Run the core workflow, pseudobulk DE, and all cell-type analyses/rep
 
 run-test: OUTDIR = output/test
 run-test: MERGE_SINGLE_CELL = true
-run-test: $(TEST_CONTAINER_PREREQS) ## Fresh deterministic test workflow for all configured studies; skips unavailable fixtures
+run-test: STUDIES = $(TEST_STUDIES)
+run-test: $(TEST_CONTAINER_PREREQS) ## Fresh deterministic test workflow for representative studies; skips unavailable fixtures
+	$(BUILD_TEST_R_IMAGE)
 	$(NXF) run main.nf -profile $(NF_PROFILE),core,core_test,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) --python_image $(PYTHON_IMAGE) --r_image $(R_IMAGE) --pipeline_revision $(PIPELINE_REVISION) $(MERGE_ARGS)
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 

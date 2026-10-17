@@ -342,8 +342,10 @@ def main() -> None:
             observed_size = destination.stat().st_size
             record["observed_size_bytes"] = observed_size
             if item.get("expected_size_bytes") not in (None, observed_size):
-                record["status"] = "size_mismatch"
                 record["expected_size_bytes"] = item["expected_size_bytes"]
+                record["status"] = (
+                    "local_subset" if item.get("local_subset_allowed") else "size_mismatch"
+                )
             else:
                 record["status"] = "present"
         elif "url" not in item:
@@ -376,6 +378,7 @@ def main() -> None:
             expected_size = item.get("expected_size_bytes")
             if (
                 record["status"] != "failed"
+                and not item.get("local_subset_allowed")
                 and expected_size is not None
                 and record["observed_size_bytes"] != expected_size
             ):
@@ -401,6 +404,8 @@ def main() -> None:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps({"records": records}, indent=2) + "\n")
     invalid_downloads = {"failed", "checksum_mismatch", "size_mismatch"}
+    if args.require_all:
+        invalid_downloads.add("local_subset")
     if any(record["status"] in invalid_downloads for record in records):
         raise SystemExit(1)
     if args.require_all and any(record["status"] == "manual" for record in records):

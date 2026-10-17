@@ -82,11 +82,12 @@ workflow {
         root.relativize(input).toString()
     }.join('\t')
     def merge_config_ch = channel.value(file(root.resolve('config/pipeline.json'), checkIfExists: true))
+    def obs_schema_ch = channel.value(file(root.resolve(pipeline.obs_schema as String), checkIfExists: true))
     def expression_ch = channel.fromList(direct_inputs).mix(CONVERT_RDS(channel.fromList(conversion_inputs)))
 
     PREPARE_CELLS(expression_ch, dependency_ch)
     HARMONIZE(PREPARE_CELLS.out.prepared, dependency_ch)
-    PSEUDOBULK(HARMONIZE.out.harmonized, merge_config_ch)
+    PSEUDOBULK(HARMONIZE.out.harmonized, merge_config_ch, obs_schema_ch)
     MERGE_PSEUDOBULKS(PSEUDOBULK.out.pseudobulk.map { _study_id, expression, _report -> expression }.collect(), merge_config_ch)
 
     def merged_outputs = MERGE_PSEUDOBULKS.out.merged

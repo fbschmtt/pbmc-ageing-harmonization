@@ -4,6 +4,7 @@
     "aida25": {
       "input": "input_data/aida25/3a8a77a6-f069-479c-a2c1-252feafd0106.h5ad",
       "test_input": "3a8a77a6-f069-479c-a2c1-252feafd0106.h5ad",
+      "publication_doi": "10.1016/j.cell.2025.02.017",
       "counts_source": "raw",
       "features": {
         "source_column": "feature_name",
@@ -24,6 +25,7 @@
         ]
       },
       "provenance": {
+        "celltypes": "obs.Annotation_Level4, the highest-resolution published AIDA annotation",
         "technology": "obs.assay; values report 10x 5' v2",
         "frozen": "reported_in_legacy",
         "include_intronic": "obs.intronic_reads_counted",
@@ -34,6 +36,7 @@
     "aifi": {
       "input": "input_data/aifi/human_immune_health_atlas_full.h5ad",
       "test_input": "human_immune_health_atlas_full.h5ad",
+      "publication_doi": "10.1038/s41586-025-09686-5",
       "counts_source": "raw",
       "features": {
         "duplicate_policy": "error"
@@ -47,15 +50,55 @@
       },
       "provenance": {
         "celltypes": "native_AIFI_labels",
+        "sample": "specimen.specimenGuid; one sample per donor in the configured 108-sample Atlas reference, although sample.visitName varies between donors",
         "technology": "inferred 10X 3-prime from the source protocol; no assay field is present in obs",
         "frozen": "inferred from the AIFI source processing workflow",
         "include_intronic": "not provided in source obs",
         "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use"
       }
     },
+    "cima": {
+      "input": "input_data/CIMA/CIMA_RNA_6484974cells_36326genes_compressed.h5ad",
+      "test_input": "CIMA_RNA_6484974cells_36326genes_compressed.h5ad",
+      "publication_doi": "10.1126/science.adt3130",
+      "counts_source": "layer:counts",
+      "features": {
+        "duplicate_policy": "error"
+      },
+      "preparation": {
+        "adapter": "cima",
+        "dependencies": []
+      },
+      "annotation": {
+        "method": "celltypist",
+        "levels": [
+          "l1",
+          "l2",
+          "l3"
+        ]
+      },
+      "provenance": {
+        "article": "CIMA resource, TrueBlood database; DOI: 10.1126/science.adt3130",
+        "metadata": "embedded H5AD obs fields; CIMA_Sample_Information_Metadata.csv matches every retained obs sample and is not a workflow dependency",
+        "celltypes": "obs.cell_type_l4, the highest-resolution published CIMA label",
+        "sample": "obs.sample; no separate specimen or longitudinal timepoint field is available",
+        "subject": "obs.sample",
+        "technology": "paper methods: DNBelab C Series",
+        "aligner": "paper methods: STAR v2.7.2b",
+        "genome": "paper methods: GRCh38",
+        "demultiplexing": "inferred none; no demultiplexing method is described in the paper",
+        "frozen": "not reported in the embedded H5AD obs or retained source metadata",
+        "include_intronic": "paper methods: intronic reads excluded",
+        "ethnicity": "inferred Chinese from the CIMA cohort identity; no per-donor ancestry field is in obs",
+        "smoking_status": "obs.smoking_ststus: current maps to yes; never and past map to no because the canonical field captures current status",
+        "disease_status": "inferred healthy from the resource cohort scope; validate before disease-comparative use",
+        "feature_names": "H5AD var_names are unique gene symbols"
+      }
+    },
     "fachrul26": {
       "input": "input_data/fachrul26/6a322de5-4cc6-43f5-b35d-6f0c246fb297.h5ad",
       "test_input": "6a322de5-4cc6-43f5-b35d-6f0c246fb297.h5ad",
+      "publication_doi": "10.64898/2026.02.15.704933",
       "counts_source": "raw",
       "features": {
         "source_column": "feature_name",
@@ -90,6 +133,7 @@
     "nehar_belaid26": {
       "input": "input_data/nehar_belaid26/GSE233321_RAW.tar",
       "test_input": "GSE233321_from_tar.h5ad",
+      "publication_doi": "10.1038/s41467-026-73729-2",
       "counts_source": "X",
       "features": {
         "source_column": "gene_symbol",
@@ -125,13 +169,14 @@
         "smoking_status": "not_reported",
         "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use",
         "input": "GEO GSE233321 RAW tar; all complete 10x libraries are read in memory from the archive",
-        "celltypes": "Published H5AD LS labels are joined only on unique sample_id plus normalized barcode-sequence identity (the H5AD has reassigned numeric barcode suffixes); unmatched cells are not_provided and CellTypist supplies harmonized labels. All retained H5AD sample IDs occur in Supplementary Data 1a, while seven supplementary samples have no retained label-H5AD cells.",
+        "celltypes": "Published H5AD LS_L4 labels, the highest-resolution provided level, are joined only on unique sample_id plus normalized barcode-sequence identity (the H5AD has reassigned numeric barcode suffixes); unmatched cells are not_provided and CellTypist supplies harmonized labels. All retained H5AD sample IDs occur in Supplementary Data 1a, while seven supplementary samples have no retained label-H5AD cells.",
         "feature_names": "10x feature gene symbols; 48 duplicated symbols are summed during harmonization"
       }
     },
     "onek1k": {
       "input": "input_data/onek1k/81d84489-bff9-4fb6-b0ee-78348126eada.h5ad",
       "test_input": "81d84489-bff9-4fb6-b0ee-78348126eada.h5ad",
+      "publication_doi": "10.1126/science.abf3041",
       "counts_source": "X",
       "features": {
         "source_column": "feature_name",
@@ -165,6 +210,7 @@
     "perez22": {
       "input": "input_data/perez22/c55dc602-d168-4d15-acc1-5de4f2f5d551.h5ad",
       "test_input": "c55dc602-d168-4d15-acc1-5de4f2f5d551.h5ad",
+      "publication_doi": "10.1126/science.abf1970",
       "counts_source": "raw",
       "features": {
         "source_column": "feature_name",
@@ -189,15 +235,19 @@
         "disease_status": "obs.disease; source-backed mapping and healthy-only selection in adapter",
         "sample": "obs.sample_uuid",
         "subject": "obs.donor_id",
-        "technology": "obs.assay",
-        "frozen": "explicitly reported as frozen in the paper",
+        "technology": "paper methods and obs.assay: 10x 3' v2",
+        "aligner": "paper methods: Cell Ranger; version not reported",
+        "frozen": "paper methods: frozen input material",
         "genome": "inferred GRCh37 from obs.mapped_reference_annotation=GENCODE 19",
+        "include_intronic": "not reported in the paper or embedded H5AD obs",
+        "country": "paper cohort location: USA",
         "feature_names": "var.feature_name is used instead of Ensembl var_names"
       }
     },
     "terekhova23": {
       "input": "input_data/terekhova23/pbmc_gex_raw_with_var_obs.h5ad",
       "test_input": "pbmc_gex_raw_with_var_obs.h5ad",
+      "publication_doi": "10.1016/j.immuni.2023.10.013",
       "counts_source": "X",
       "features": {
         "duplicate_policy": "error"
@@ -207,7 +257,8 @@
         "dependencies": [
           "input_data/terekhova23/cell_to_tube.csv.gz",
           "input_data/terekhova23/mmc2.xlsx"
-        ]
+        ],
+        "allow_cell_subset": true
       },
       "annotation": {
         "method": "celltypist",
@@ -218,15 +269,55 @@
         ]
       },
       "provenance": {
+        "selection": "retain cells from each donor's earliest available workbook visit before canonical metadata is written",
         "frozen": "explicitly reported as frozen in the paper",
         "include_intronic": "inferred_from_cellranger",
         "smoking_status": "paper_exclusion_criterion",
         "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use"
       }
     },
+    "terekhova26": {
+      "input": "input_data/terekhova26/KCL_reannotated.h5ad",
+      "test_input": "KCL_reannotated.h5ad",
+      "publication_doi": "10.1016/j.immuni.2026.09.012",
+      "counts_source": "raw",
+      "features": {
+        "source_column": "gene_symbol",
+        "duplicate_policy": "error"
+      },
+      "preparation": {
+        "adapter": "terekhova26",
+        "dependencies": []
+      },
+      "annotation": {
+        "method": "celltypist",
+        "levels": [
+          "l1",
+          "l2",
+          "l3"
+        ]
+      },
+      "provenance": {
+        "article": "Terekhova et al., Immunity 2026, DOI: 10.1016/j.immuni.2026.09.012",
+        "metadata": "embedded author-reannotated KCL H5AD obs fields; no supplementary dependency",
+        "celltypes": "obs.author_celltype, the highest-resolution author label (identical to obs.annotation in the supplied H5AD)",
+        "sample": "obs.donor_id; no distinct specimen or timepoint identifier is present",
+        "subject": "obs.donor_id",
+        "technology": "inferred 10x Genomics scRNA-seq from the EGA KCL catalogue; chemistry is not reported in the supplied H5AD",
+        "aligner": "paper methods: Cell Ranger multi v9.0.1",
+        "genome": "paper methods: GRCh38-2020-A reference genome",
+        "demultiplexing": "paper methods: genetic demultiplexing; HTO antibodies map genotypes to samples. obs.souporcell_donor retains the genetic donor assignments",
+        "frozen": "paper methods: cryopreserved PBMCs were thawed before processing",
+        "include_intronic": "inferred yes from the default arguments of Cell Ranger v6+; the paper reports Cell Ranger multi v9.0.1",
+        "country": "inferred United Kingdom from the KCL cohort",
+        "disease_status": "inferred ostensibly healthy from the source cohort description; validate before disease-comparative use",
+        "feature_names": "var.gene_symbol is used; it is identical to the supplied unique var_names"
+      }
+    },
     "wang25": {
       "input": "cache/converted/scRNA-seqProcessedLabelledObject.h5ad",
       "test_input": "scRNA-seqProcessedLabelledObject.h5ad",
+      "publication_doi": "10.1038/s41590-024-02059-6",
       "conversion": {
         "source": "input_data/wang25/scRNA-seqProcessedLabelledObject.rds",
         "test_source": "test_data/scRNA-seqProcessedLabelledObject.rds",
@@ -257,7 +348,7 @@
         "sample_metadata": "join_recovered_from_legacy_wang25_2_create_anndata_notebook",
         "ethnicity": "confirmed",
         "cmv": "qualitative_CMV_IgM_serostatus_all_negative",
-        "frozen": "preliminary_fresh_reference_samples; pending author confirmation",
+        "frozen": "not_provided in paper or supplementary metadata; author contacted without response",
         "include_intronic": "inferred",
         "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use"
       }

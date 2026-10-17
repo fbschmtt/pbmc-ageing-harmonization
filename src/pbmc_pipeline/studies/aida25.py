@@ -14,10 +14,9 @@ def prepare_cells(source, root):
     table = table.drop_duplicates(["Country", "donor_id"], keep="first")
     joined = safe_left_join(source, table, ["donor_id", "Country"])
     return canonical(joined, "aida25", {
-        "study_celltype": {"source": "Annotation_Level2"},
+        "study_celltype": {"source": "Annotation_Level4"},
         "sample": {"concat": [{"constant": "aida"}, "Country", "donor_id"], "separator": "_"},
         "subject": {"source": "donor_id"},
-        "sampling_timepoint": {"constant": "not_provided"},
         "age": {"source": "development_stage", "replace": {"-year-old stage": ""}, "dtype": "float"},
         "sex": {"source": "sex", "lower": True},
         "bmi": {"source": "BMI", "dtype": "float"},
