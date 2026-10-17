@@ -49,7 +49,8 @@ def _default_samples_per_study(settings: AgeTrajectorySettings, study_count: int
             f"{age_bin_count} available bins"
         )
     per_study_per_bin = int(np.ceil(settings.minimum_samples_per_bin / study_count))
-    return age_bin_count * per_study_per_bin
+    developmental_bin_count = settings.reference_bin_start_age // settings.bin_width_years
+    return (age_bin_count + developmental_bin_count) * per_study_per_bin
 
 
 def create_synthetic_pseudobulk(
@@ -75,19 +76,25 @@ def create_synthetic_pseudobulk(
 
     rng = np.random.default_rng(seed)
     cell_types = ["CD14 monocyte", "Naive CD4 T cell"]
-    age_bin_starts = list(range(
+    adult_age_bin_starts = list(range(
         trajectory_settings.reference_bin_start_age,
         trajectory_settings.strict_age_cutoff_exclusive,
         trajectory_settings.bin_width_years,
     ))
     if (
-        len(age_bin_starts) != len(TRAJECTORY_PROFILE_MULTIPLIERS[0])
-        or trajectory_settings.minimum_bins > len(age_bin_starts)
+        len(adult_age_bin_starts) != len(TRAJECTORY_PROFILE_MULTIPLIERS[0])
+        or trajectory_settings.minimum_bins > len(adult_age_bin_starts)
     ):
         raise ValueError(
             "The synthetic age-trajectory fixture's planted bins must cover "
             "the configured minimum-bin threshold"
         )
+    developmental_age_bin_starts = list(range(
+        0,
+        trajectory_settings.reference_bin_start_age,
+        trajectory_settings.bin_width_years,
+    ))
+    age_bin_starts = developmental_age_bin_starts + adult_age_bin_starts
     per_bin_sample_count = samples_per_study // len(age_bin_starts)
     if samples_per_study % len(age_bin_starts):
         raise ValueError(
@@ -114,6 +121,9 @@ def create_synthetic_pseudobulk(
     sexes = np.tile(sex_pattern, len(age_bin_starts))
     bmi_values = rng.permutation(np.linspace(21.0, 34.0, samples_per_study))
     cmv_values = np.resize(np.array(["negative", "positive", "negative", "positive"]), samples_per_study)
+    smoking_values = np.resize(
+        np.array(["no", "yes", "yes", "no"]), samples_per_study
+    )
 
     base_genes = [f"SYNTH_GENE_{index:03d}" for index in range(80)]
     age_genes = ["SYNTH_AGE_MARKER_1", "SYNTH_AGE_MARKER_2", "SYNTH_AGE_MARKER_3"]
@@ -123,6 +133,7 @@ def create_synthetic_pseudobulk(
     sex_genes = ["SYNTH_SEX_MARKER_1", "SYNTH_SEX_MARKER_2"]
     bmi_genes = ["SYNTH_BMI_MARKER_1", "SYNTH_BMI_MARKER_2"]
     cmv_genes = ["SYNTH_CMV_MARKER_1", "SYNTH_CMV_MARKER_2"]
+    smoking_genes = ["SYNTH_SMOKING_MARKER_1", "SYNTH_SMOKING_MARKER_2"]
     study_specific_genes = ["SYNTH_STUDY_A_ONLY", "SYNTH_STUDY_B_ONLY"]
     study_specific_age_effects = {
         "synthetic_study_a": ("SYNTH_STUDY_A_ONLY", 0.075),
@@ -130,7 +141,7 @@ def create_synthetic_pseudobulk(
     }
     genes = (
         base_genes + age_genes + trajectory_genes + sex_genes + bmi_genes
-        + cmv_genes + study_specific_genes
+        + cmv_genes + smoking_genes + study_specific_genes
     )
     var = pd.DataFrame(index=pd.Index(genes, name="gene"))
     for study in studies:
@@ -141,6 +152,10 @@ def create_synthetic_pseudobulk(
     rows: list[dict] = []
     count_rows: list[np.ndarray] = []
     baseline = np.exp(rng.normal(np.log(120), 0.45, size=len(genes)))
+    # Keep the planted CMV genes from dominating library depth, which is an
+    # explicit adjustment term in the CMV model itself.
+    for gene in cmv_genes:
+        baseline[genes.index(gene)] = 30.0
     alpha = 0.08  # negative-binomial dispersion, independent of the analysis alpha
     for study_index, study in enumerate(studies):
         for cell_type_index, cell_type in enumerate(cell_types):
@@ -158,28 +173,37 @@ def create_synthetic_pseudobulk(
                 cmv = str(cmv_values[sample_index]) if study == studies[0] else pd.NA
                 if study == studies[0] and sample_index == 1:
                     cmv = pd.NA
+                smoking_status = (
+                    str(smoking_values[sample_index]) if study == studies[1] else pd.NA
+                )
+                if study == studies[1] and sample_index == 1:
+                    smoking_status = pd.NA
                 mean = baseline.copy() * (1.0 + 0.08 * cell_type_index)
                 age_effect = np.array([gene in age_genes for gene in genes])
                 sex_effect = np.array([gene in sex_genes for gene in genes])
                 bmi_effect = np.array([gene in bmi_genes for gene in genes])
                 cmv_effect = np.array([gene in cmv_genes for gene in genes])
+                smoking_effect = np.array([gene in smoking_genes for gene in genes])
                 mean[age_effect] *= np.exp(0.025 * (age - 50))
                 age_bin_start = (
                     int(age // trajectory_settings.bin_width_years)
                     * trajectory_settings.bin_width_years
                 )
-                bin_index = (
-                    age_bin_start - trajectory_settings.reference_bin_start_age
-                ) // trajectory_settings.bin_width_years
-                for gene, profile in zip(
-                    trajectory_genes, TRAJECTORY_PROFILE_MULTIPLIERS, strict=True
-                ):
-                    mean[genes.index(gene)] *= profile[bin_index]
+                if age_bin_start >= trajectory_settings.reference_bin_start_age:
+                    bin_index = (
+                        age_bin_start - trajectory_settings.reference_bin_start_age
+                    ) // trajectory_settings.bin_width_years
+                    for gene, profile in zip(
+                        trajectory_genes, TRAJECTORY_PROFILE_MULTIPLIERS, strict=True
+                    ):
+                        mean[genes.index(gene)] *= profile[bin_index]
                 mean[sex_effect & (sex == "male")] *= 1.7
                 if np.isfinite(bmi):
                     mean[bmi_effect] *= np.exp(0.15 * (bmi - 27.5))
                 if not pd.isna(cmv) and cmv == "positive":
-                    mean[cmv_effect] *= 5.0
+                    mean[cmv_effect] *= 20.0
+                if not pd.isna(smoking_status) and smoking_status == "yes":
+                    mean[smoking_effect] *= 5.0
                 if study == "synthetic_study_a":
                     mean[genes.index("SYNTH_STUDY_A_ONLY")] *= 1.2
                 elif study == "synthetic_study_b":
@@ -206,6 +230,7 @@ def create_synthetic_pseudobulk(
                         "sex": sex,
                         "bmi": bmi,
                         "cmv": cmv,
+                        "smoking_status": smoking_status,
                         "n_cells": int(cells_per_pseudobulk),
                         "total_counts": int(counts.sum()),
                         "aifi_l2_majority": cell_type,
@@ -236,6 +261,7 @@ def create_synthetic_pseudobulk(
             "sex": sex_genes,
             "bmi": bmi_genes,
             "cmv": cmv_genes,
+            "smoking_status": smoking_genes,
         },
         "expected_age_trajectory_associated_genes": trajectory_genes,
         "expected_age_trajectory_profiles": {
@@ -246,11 +272,16 @@ def create_synthetic_pseudobulk(
         "expected_sex_associated_genes": sex_genes,
         "expected_bmi_associated_genes": bmi_genes,
         "expected_cmv_associated_genes": cmv_genes,
+        "expected_smoking_status_associated_genes": smoking_genes,
         "expected_covariate_studies": {
             "bmi": [studies[0], studies[2]],
             "cmv": [studies[0]],
+            "smoking_status": [studies[1]],
         },
         "samples_per_study": int(samples_per_study),
+        "adult_samples_per_study": int(
+            per_bin_sample_count * len(adult_age_bin_starts)
+        ),
         "age_trajectory_settings": trajectory_settings.to_mapping(),
         "cells_per_pseudobulk": int(cells_per_pseudobulk),
         "study_technologies": SYNTHETIC_STUDY_TECHNOLOGIES,

@@ -39,6 +39,7 @@ def test_sample_abundance_input_includes_zero_types_and_groups_by_study_and_samp
         "sample": ["shared"] * 3 + ["zero_type"] * 2 + ["shared"],
         "age": [30] * 3 + [40] * 2 + [50],
         "sex": ["female"] * 3 + ["male"] * 2 + ["female"],
+        "smoking_status": ["no"] * 3 + ["yes"] * 2 + ["no"],
         "n_cells": [2, 3, 5, 4, 6, 7],
         "aifi_l2_majority": ["T1", "T2", "Other", "T2", "Other", "Other"],
     })
@@ -63,6 +64,11 @@ def test_sample_abundance_input_includes_zero_types_and_groups_by_study_and_samp
         ("study_a", "shared"): 2,
         ("study_a", "zero_type"): 0,
         ("study_b", "shared"): 0,
+    }
+    assert abundance["smoking_status"].to_dict() == {
+        ("study_a", "shared"): "no",
+        ("study_a", "zero_type"): "yes",
+        ("study_b", "shared"): "no",
     }
     assert abundance["aifi_l2_majority"].unique().tolist() == ["T1"]
     assert abundance["aifi_l1_parent_for_l2"].unique().tolist() == ["T parent"]
@@ -173,18 +179,18 @@ def test_test_mode_bypasses_cell_count_cutoff_but_keeps_adult_filter() -> None:
     assert excluded[0]["reasons"] == ["age_below_minimum"]
 
 
-def test_developmental_metadata_uses_the_configured_zero_to_thirty_range() -> None:
+def test_developmental_metadata_uses_a_half_open_age_range() -> None:
     obs = pd.DataFrame(
         {
             "study": ["study_a"] * 4,
             "study_site": ["site_1"] * 4,
-            "sample": ["infant", "young", "overlap", "adult"],
-            "age": [0, 12, 30, 31],
+            "sample": ["infant", "young", "near_cutoff", "adult"],
+            "age": [0, 12, 19.9, 20],
             "sex": ["female", "male", "female", "male"],
             "n_cells": [12] * 4,
             "total_counts": [200] * 4,
         },
-        index=["pb_0", "pb_12", "pb_30", "pb_31"],
+        index=["pb_0", "pb_12", "pb_19_9", "pb_20"],
     )
     metadata, support, exclusions, _ = _prepare_developmental_metadata(
         obs,
@@ -192,16 +198,16 @@ def test_developmental_metadata_uses_the_configured_zero_to_thirty_range() -> No
             "minimum_age_years_inclusive": 20,
             "minimum_cells_per_pseudobulk_inclusive": 10,
         },
-        {"minimum_age_years_inclusive": 0, "maximum_age_years_inclusive": 30},
+        {"minimum_age_years_inclusive": 0, "maximum_age_years_exclusive": 20},
         test_mode=False,
     )
 
-    assert metadata["age"].tolist() == [0, 12, 30]
+    assert metadata["age"].tolist() == [0, 12, 19.9]
     assert support == {
         "minimum_age_years_inclusive": 0,
-        "maximum_age_years_inclusive": 30,
+        "maximum_age_years_exclusive": 20,
         "n_samples_before_maximum_age_filter": 4,
-        "n_samples_excluded_above_maximum_age": 1,
+        "n_samples_excluded_at_or_above_maximum_age": 1,
         "n_samples_retained": 3,
     }
     assert exclusions["age_below_minimum"] == 0
@@ -217,10 +223,10 @@ def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None
     first = ad.read_h5ad(first_path)
     second = ad.read_h5ad(second_path)
 
-    assert first.shape == (168, 96)
+    assert first.shape == (216, 98)
     assert first.obs["study"].nunique() == 3
     assert first.obs["study_site"].nunique() == 4
-    assert first.obs["sample"].nunique() == 28
+    assert first.obs["sample"].nunique() == 36
     assert first.obs["aifi_l2_majority"].nunique() == 2
     assert first.obs.groupby("study", observed=True)["technology"].first().to_dict() == {
         "synthetic_study_a": "10X3'v2",
@@ -233,8 +239,12 @@ def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None
         "synthetic_study_c": "not_provided",
     }
     assert first.obs["n_cells"].min() == 15
-    assert (first.obs["age"] >= 20).all()
-    assert first.obs.groupby(["study", "aifi_l2_majority"], observed=True).size().eq(28).all()
+    assert (first.obs["age"] >= 0).all()
+    assert (first.obs["age"] < 90).all()
+    assert first.obs.groupby("aifi_l2_majority", observed=True)["age"].apply(
+        lambda ages: (ages < 20).sum()
+    ).eq(24).all()
+    assert first.obs.groupby(["study", "aifi_l2_majority"], observed=True).size().eq(36).all()
     assert (first.obs["total_counts"] > 0).all()
     assert (
         first.obs.groupby(["study", "aifi_l2_majority"], observed=True)["total_counts"]
@@ -261,7 +271,7 @@ def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None
     }
     assert _default_samples_per_study(
         replace(TRAJECTORY_SETTINGS, minimum_samples_per_bin=13), study_count=3
-    ) == 35
+    ) == 45
     assert first.obs.groupby("study", observed=True)["bmi"].apply(
         lambda values: values.notna().any()
     ).to_dict() == {
@@ -279,10 +289,9 @@ def test_synthetic_fixture_is_small_reproducible_and_estimable(tmp_path) -> None
         .groupby(["aifi_l2_majority", "study_site", "sex"], observed=True)
         .size()
     )
-    expected_samples_per_site_sex = (
-        TRAJECTORY_SETTINGS.strict_age_cutoff_exclusive
-        - TRAJECTORY_SETTINGS.reference_bin_start_age
-    ) // TRAJECTORY_SETTINGS.bin_width_years
+    expected_samples_per_site_sex = first.obs.loc[
+        first.obs["study"] == "synthetic_study_a", "sample"
+    ].nunique() // 4
     assert first_study_site_sex_counts.eq(expected_samples_per_site_sex).all()
     assert first.obs.groupby("study", observed=True)["cmv"].apply(
         lambda values: values.notna().any()
@@ -302,14 +311,21 @@ def test_per_study_design_uses_all_varying_covariates_once() -> None:
         "log10_total_counts": np.log10([100, 120, 140, 160, 180]),
         "bmi": [22.0, 24.0, np.nan, 28.0, 30.0],
         "cmv": ["no", "yes", pd.NA, "yes", "no"],
+        "smoking_status": ["no", "yes", "no", "yes", "no"],
     })
 
-    covariates = _maximal_per_study_covariates(metadata, ["bmi", "cmv"])
+    covariates = _maximal_per_study_covariates(
+        metadata, ["bmi", "cmv", "smoking_status"]
+    )
 
-    assert covariates == ["age", "sex", "log10_total_counts", "bmi", "cmv"]
+    assert covariates == [
+        "age", "sex", "log10_total_counts", "bmi", "cmv", "smoking_status",
+    ]
     assert _design_with_covariates(
         "~ study_site + age + sex + log10_total_counts", covariates
-    ) == "~ study_site + age + sex + log10_total_counts + bmi + cmv"
+    ) == (
+        "~ study_site + age + sex + log10_total_counts + bmi + cmv + smoking_status"
+    )
 
 
 def test_combined_covariate_fit_is_allowed_with_a_single_study(monkeypatch, tmp_path) -> None:

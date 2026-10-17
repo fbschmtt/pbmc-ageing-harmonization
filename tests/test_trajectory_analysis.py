@@ -361,7 +361,7 @@ def test_developmental_adult_effect_comparison_joins_raw_coefficients_and_expres
                 "results_by_covariate": {"age": "developmental.csv"},
                 "developmental_age_range": {
                     "minimum_age_years_inclusive": 0,
-                    "maximum_age_years_inclusive": 30,
+                    "maximum_age_years_exclusive": 20,
                 },
             },
         ],

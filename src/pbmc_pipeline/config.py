@@ -393,6 +393,12 @@ def validate_configuration(
     benchmark = pipeline.get("integration_benchmark", {})
     if benchmark.get("annotation_level") != "l2":
         raise ConfigurationError("integration_benchmark.annotation_level must be 'l2'")
+    max_benchmark_cells = benchmark.get("max_cells")
+    if max_benchmark_cells is not None and (
+        not isinstance(max_benchmark_cells, int) or isinstance(max_benchmark_cells, bool)
+        or max_benchmark_cells < 1
+    ):
+        raise ConfigurationError("integration_benchmark.max_cells must be a positive integer")
     methods = benchmark.get("methods")
     if not isinstance(methods, list) or not methods:
         raise ConfigurationError("integration_benchmark.methods must be a non-empty list")
@@ -568,16 +574,18 @@ def validate_configuration(
                 "differential_expression.age_trajectory reference bin must start at the "
                 "minimum included age and align with bin_width_years"
             )
-        optional_covariates = differential_expression.get("optional_covariates", ["bmi", "cmv"])
+        optional_covariates = differential_expression.get(
+            "optional_covariates", ["bmi", "cmv", "smoking_status"]
+        )
         if (
             not isinstance(optional_covariates, list)
             or not all(isinstance(value, str) for value in optional_covariates)
             or len(optional_covariates) != len(set(optional_covariates))
-            or not set(optional_covariates).issubset({"bmi", "cmv"})
+            or not set(optional_covariates).issubset({"bmi", "cmv", "smoking_status"})
         ):
             raise ConfigurationError(
                 "differential_expression.optional_covariates must be a unique list "
-                "containing only 'bmi' and/or 'cmv'"
+                "containing only 'bmi', 'cmv', and/or 'smoking_status'"
             )
         developmental_comparison = differential_expression.get("developmental_adult_comparison")
         if not isinstance(developmental_comparison, dict):
@@ -585,7 +593,7 @@ def validate_configuration(
                 "differential_expression.developmental_adult_comparison must be an object"
             )
         developmental_minimum_age = developmental_comparison.get("minimum_age_years_inclusive")
-        developmental_maximum_age = developmental_comparison.get("maximum_age_years_inclusive")
+        developmental_maximum_age = developmental_comparison.get("maximum_age_years_exclusive")
         if (
             not isinstance(developmental_minimum_age, (int, float))
             or isinstance(developmental_minimum_age, bool)
@@ -597,7 +605,7 @@ def validate_configuration(
             raise ConfigurationError(
                 "differential_expression.developmental_adult_comparison must define "
                 "non-negative minimum_age_years_inclusive and a larger "
-                "maximum_age_years_inclusive"
+                "maximum_age_years_exclusive"
             )
         alpha = differential_expression.get("alpha")
         if not isinstance(alpha, (int, float)) or not 0 < alpha < 1:

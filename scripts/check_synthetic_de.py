@@ -17,8 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def _load_fixture(
     outdir: Path,
 ) -> tuple[
-    list[str], dict[str, list[str]], dict[str, list[str]], int, dict[str, list[float]],
-    dict[str, list[str]],
+    list[str], dict[str, list[str]], dict[str, list[str]], int,
+    dict[str, list[float]], dict[str, list[str]],
 ]:
     fixture_path = outdir / "analysis" / "combined" / "synthetic_de" / "pseudobulk_merged.h5ad"
     if not fixture_path.is_file():
@@ -27,7 +27,9 @@ def _load_fixture(
     metadata = fixture.uns["synthetic_test_data"]
     expected_genes = {
         covariate: metadata.get(f"expected_{covariate}_associated_genes")
-        for covariate in ("age", "sex", "bmi", "cmv", "age_trajectory")
+        for covariate in (
+            "age", "sex", "bmi", "cmv", "smoking_status", "age_trajectory"
+        )
     }
     if any(genes is None or len(genes) == 0 for genes in expected_genes.values()):
         raise SystemExit(f"Fixture does not declare planted covariate markers: {fixture_path}")
@@ -35,7 +37,7 @@ def _load_fixture(
     if not covariate_studies:
         raise SystemExit(f"Fixture does not declare expected covariate study coverage: {fixture_path}")
     cell_types = sorted(fixture.obs["aifi_l2_majority"].astype(str).unique())
-    samples_per_study = int(metadata["samples_per_study"])
+    adult_samples_per_study = int(metadata["adult_samples_per_study"])
     trajectory_profiles = metadata.get("expected_age_trajectory_profiles")
     if not trajectory_profiles:
         raise SystemExit(f"Fixture does not declare planted trajectory profiles: {fixture_path}")
@@ -47,7 +49,7 @@ def _load_fixture(
         cell_types,
         {key: list(value) for key, value in expected_genes.items()},
         {key: list(value) for key, value in covariate_studies.items()},
-        samples_per_study,
+        adult_samples_per_study,
         {gene: list(profile) for gene, profile in trajectory_profiles.items()},
         {study: list(genes) for study, genes in per_study_age_genes.items()},
     )
@@ -55,7 +57,7 @@ def _load_fixture(
 
 def check_results(outdir: Path) -> None:
     (
-        cell_types, expected_genes, covariate_studies, samples_per_study,
+        cell_types, expected_genes, covariate_studies, adult_samples_per_study,
         trajectory_profiles, per_study_age_genes,
     ) = _load_fixture(outdir)
     de_dir = outdir / "analysis" / "combined" / "differential_expression"
@@ -175,7 +177,7 @@ def check_results(outdir: Path) -> None:
                     f"Single-study CMV fit for {cell_type!r} omitted its varying site term: "
                     f"{combined.get('design')}"
                 )
-            expected_n = samples_per_study - 1
+            expected_n = adult_samples_per_study
             if set(combined.get("study_sample_counts", {}).values()) != {expected_n}:
                 raise SystemExit(
                     f"Combined {covariate} fit for {cell_type!r} did not select the "
@@ -283,7 +285,7 @@ def check_results(outdir: Path) -> None:
                     f"expected {expected_covariates}"
                 )
     print(
-        "Synthetic DE check passed: age, sex, BMI, and CMV markers were detected; "
+        "Synthetic DE check passed: age, sex, BMI, CMV, and smoking markers were detected; "
         "covariate study selection, complete-case counts, and single-study CMV fit matched."
     )
 

@@ -119,6 +119,7 @@ idna==3.20
 igraph==1.0.0
     # via
     #   leidenalg
+    #   pbmc-ageing-pipeline (pyproject.toml)
 interface-meta==2.0.1
     # via
     #   formulaic
@@ -186,7 +187,6 @@ legacy-api-wrap==1.5
 leidenalg==0.12.0
     # via
     #   celltypist
-    #   pbmc-ageing-pipeline (pyproject.toml)
 llvmlite==0.49.0
     # via
     #   numba

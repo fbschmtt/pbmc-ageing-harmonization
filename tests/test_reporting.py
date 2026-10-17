@@ -4,6 +4,7 @@ from pbmc_pipeline.covariates import (
     categorical_contrast_label,
     categorical_levels,
     normalize_cmv_status,
+    normalize_smoking_status,
 )
 from pbmc_pipeline.reporting import (
     aifi_l2_concordance,
@@ -17,12 +18,21 @@ from pbmc_pipeline.reporting import (
 
 def test_categorical_reference_levels_are_explicit_and_cmv_labels_are_harmonized():
     cmv = normalize_cmv_status(pd.Series(["Positive", "Negative", "no", "yes"]))
+    smoking = normalize_smoking_status(
+        pd.Series([" YES ", "no", "not_provided", "former"])
+    )
 
     assert cmv.tolist() == ["yes", "no", "no", "yes"]
+    assert smoking.iloc[:2].tolist() == ["yes", "no"]
+    assert smoking.iloc[2:].isna().all()
     assert categorical_levels("sex", pd.Series(["male", "female"])) == ["female", "male"]
     assert categorical_levels("cmv", cmv) == ["no", "yes"]
+    assert categorical_levels("smoking_status", pd.Series(["yes", "no"])) == ["no", "yes"]
     assert categorical_contrast_label("sex", "male", "female") == "SEX: male vs female"
     assert categorical_contrast_label("cmv", "yes", "no") == "CMV: yes vs no"
+    assert categorical_contrast_label(
+        "smoking_status", "yes", "no"
+    ) == "SMOKING STATUS: yes vs no"
 
 
 def test_signed_largest_magnitude_retains_direction_and_ignores_invalid_values():

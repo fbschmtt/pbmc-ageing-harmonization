@@ -612,14 +612,22 @@ def display_collapsible_figure(figure, summary, *, open_by_default=False):
 
 
 def plot_residual_covariates(
-    table, title, covariates, *, categorical_covariates, open_by_default=False
+    table, title, covariates, *, categorical_covariates, hidden_legends=(),
+    open_by_default=False,
 ):
     n_columns = 2
     n_rows = max(1, int(np.ceil(len(covariates) / n_columns)))
-    figure, axes = plt.subplots(
-        n_rows, n_columns, figsize=(16.8, 4.32 * n_rows), squeeze=False
+    figure = plt.figure(figsize=(20, 4.8 * n_rows))
+    grid = figure.add_gridspec(
+        n_rows, n_columns * 2, width_ratios=[1, 0.46, 1, 0.46],
+        wspace=0.12, hspace=0.48,
     )
-    for axis, covariate in zip(axes.flat, covariates):
+    hidden_legends = set(hidden_legends)
+    for index, covariate in enumerate(covariates):
+        row, column = divmod(index, n_columns)
+        axis = figure.add_subplot(grid[row, column * 2])
+        legend_axis = figure.add_subplot(grid[row, column * 2 + 1])
+        legend_axis.set_axis_off()
         if covariate not in table:
             axis.text(0.5, 0.5, "Not recorded", ha="center", va="center")
             axis.set_axis_off()
@@ -638,14 +646,86 @@ def plot_residual_covariates(
         axis.set_title(f"{covariate.replace('_', ' ')} · {len(values)}/{len(table)} present")
         axis.set_xlabel("UMAP 1")
         axis.set_ylabel("UMAP 2")
-        if categorical and axis.legend_ is not None:
-            axis.legend_.set_title(covariate)
-            axis.legend_.set_bbox_to_anchor((1.02, 1))
-    for axis in axes.flat[len(covariates):]:
-        axis.set_axis_off()
-    figure.suptitle(title, y=1.01)
-    figure.tight_layout()
+        if covariate in hidden_legends:
+            if axis.legend_ is not None:
+                axis.legend_.remove()
+            legend_axis.text(
+                0, 1, "Legend hidden; see\nper-study batch counts below.",
+                ha="left", va="top", fontsize=8,
+            )
+        elif axis.legend_ is not None:
+            handles, labels = axis.get_legend_handles_labels()
+            axis.legend_.remove()
+            legend_axis.legend(
+                handles, labels, title=covariate, loc="upper left",
+                frameon=False, fontsize=7, title_fontsize=8,
+            )
+    for index in range(len(covariates), n_rows * n_columns):
+        row, column = divmod(index, n_columns)
+        figure.add_subplot(grid[row, column * 2]).set_axis_off()
+        figure.add_subplot(grid[row, column * 2 + 1]).set_axis_off()
+    figure.suptitle(title, y=0.99)
+    figure.subplots_adjust(top=0.95, bottom=0.04, left=0.05, right=0.99)
     display_collapsible_figure(figure, title, open_by_default=open_by_default)
+
+
+def plot_technical_batch_sample_counts(table):
+    """Show sample counts for every technical batch within each study and site."""
+    required = {"sample_key", "study", "batch_single_cell"}
+    if not required.issubset(table.columns):
+        display(Markdown("_Per-study-site technical batch counts are unavailable._"))
+        return
+
+    columns = ["sample_key", "study", "batch_single_cell"]
+    if "study_site" in table:
+        columns.append("study_site")
+    samples = table[columns].drop_duplicates("sample_key").copy()
+    samples["study"] = samples["study"].astype("string").fillna("not_provided")
+    if "study_site" not in samples:
+        samples["study_site"] = "not_provided"
+    samples["study_site"] = samples["study_site"].astype("string").fillna("not_provided")
+    samples["batch_single_cell"] = (
+        samples["batch_single_cell"].astype("string").fillna("not_provided")
+    )
+    counts = (
+        samples.groupby(["study", "study_site", "batch_single_cell"], observed=True)
+        .size().rename("n_samples").reset_index()
+        .sort_values(["study", "study_site", "n_samples", "batch_single_cell"],
+                     ascending=[True, True, False, True], kind="stable")
+    )
+    counts.to_csv(analysis_dir / "technical_batch_sample_counts.csv", index=False)
+    display(Markdown(
+        "Each panel counts unique pseudobulk samples by recorded technical batch within one "
+        "study site; "
+        "full batch identifiers and counts are in "
+        "[technical_batch_sample_counts.csv](technical_batch_sample_counts.csv)."
+    ))
+
+    for (study, study_site), study_counts in counts.groupby(
+        ["study", "study_site"], sort=True, observed=True,
+    ):
+        labels = [
+            value if len(value) <= 34 else f"{value[:15]}…{value[-15:]}"
+            for value in study_counts["batch_single_cell"].astype(str)
+        ]
+        figure_height = max(3.2, min(22, 0.29 * len(study_counts) + 1.4))
+        figure, axis = plt.subplots(figsize=(11, figure_height))
+        axis.barh(
+            labels, study_counts["n_samples"], color="#4c72b0",
+            edgecolor="#38434a", linewidth=0.55,
+        )
+        axis.invert_yaxis()
+        axis.set_xlabel("Number of samples")
+        axis.set_ylabel("Technical batch")
+        axis.set_title(
+            f"{study} · {study_site}: samples per technical batch "
+            f"({len(study_counts)} batches)"
+        )
+        axis.grid(axis="x", alpha=0.25)
+        figure.tight_layout()
+        display_collapsible_figure(
+            figure, f"Technical batch sample counts · {study}",
+        )
 
 
 def annotate_residual_cluster_centroids(axis, table, label_column):
@@ -663,6 +743,31 @@ def annotate_residual_cluster_centroids(axis, table, label_column):
                   "edgecolor": "none"},
             zorder=6,
         )
+
+
+def residual_cluster_legend_order(table):
+    """Return stable residual cluster orders, largest clusters first and noise last."""
+    labels = pd.to_numeric(table["residual_cluster"], errors="coerce").dropna().astype(int)
+    counts = labels.value_counts()
+    cluster_ids = sorted(
+        (int(cluster) for cluster in counts.index if int(cluster) != -1),
+        key=lambda cluster: (-int(counts.loc[cluster]), cluster),
+    )
+    if -1 in counts.index:
+        cluster_ids.append(-1)
+    label_by_id = {
+        cluster: (
+            f"Noise (n={int(counts.loc[cluster])})" if cluster == -1
+            else f"Cluster {cluster} (n={int(counts.loc[cluster])})"
+        )
+        for cluster in cluster_ids
+    }
+    colors = sns.color_palette("tab20", n_colors=max(len(cluster_ids), 1))
+    color_by_id = dict(zip(cluster_ids, colors, strict=False))
+    color_by_label = {
+        label_by_id[cluster]: color_by_id[cluster] for cluster in cluster_ids
+    }
+    return counts, cluster_ids, label_by_id, color_by_label
 
 
 def plot_residual_cluster_alternatives(table, settings):
@@ -775,17 +880,21 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
     residual_markers = read_optional_csv(cross_residual_markers_path)
     residual_composition = read_optional_csv(cross_residual_composition_path)
     if cross_residual_support.get("n_samples_common", 0) >= minimum_umap_trajectories:
-        residual_cluster_counts = cross_residual_clusters["residual_cluster"].value_counts()
-        cross_residual_clusters["residual_cluster_label"] = cross_residual_clusters[
-            "residual_cluster"
-        ].map(lambda cluster: (
-            f"Noise (n={residual_cluster_counts[cluster]})" if int(cluster) == -1
-            else f"Cluster {cluster} (n={residual_cluster_counts[cluster]})"
+        (
+            _, residual_cluster_ids,
+            residual_cluster_label_by_id, residual_cluster_label_colors,
+        ) = residual_cluster_legend_order(cross_residual_clusters)
+        cross_residual_clusters["residual_cluster_label"] = pd.to_numeric(
+            cross_residual_clusters["residual_cluster"], errors="coerce",
+        ).map(lambda cluster: (
+            residual_cluster_label_by_id.get(int(cluster), "Unassigned")
+            if pd.notna(cluster) else "Unassigned"
         ))
         figure, axis = plt.subplots(figsize=(6.6, 4.8))
         sns.scatterplot(
             data=cross_residual_clusters, x="umap_1", y="umap_2", hue="residual_cluster_label",
-            palette="tab20", s=32, alpha=0.84, linewidth=0, ax=axis,
+            hue_order=[residual_cluster_label_by_id[cluster] for cluster in residual_cluster_ids],
+            palette=residual_cluster_label_colors, s=32, alpha=0.84, linewidth=0, ax=axis,
         )
         annotate_residual_cluster_centroids(
             axis, cross_residual_clusters, "residual_cluster"
@@ -823,7 +932,10 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
                 "study", "ethnicity", "technology", "batch_single_cell",
                 "include_intronic", "frozen",
             },
+            hidden_legends={"batch_single_cell"},
         )
+        display(Markdown("#### Technical batch sample counts by study"))
+        plot_technical_batch_sample_counts(cross_residual_clusters)
         if any(covariate in cross_residual_clusters for covariate in ("bmi", "cmv")):
             plot_residual_covariates(
                 cross_residual_clusters,
@@ -846,10 +958,18 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
                 validate="one_to_one",
             ).dropna(subset=["PC1", "PC2"])
             if not plot_data.empty:
+                plot_data["residual_cluster_label"] = pd.to_numeric(
+                    plot_data["residual_cluster"], errors="coerce",
+                ).map(lambda cluster: (
+                    residual_cluster_label_by_id.get(int(cluster), "Unassigned")
+                    if pd.notna(cluster) else "Unassigned"
+                ))
                 figure, axes = plt.subplots(1, 3, figsize=(18, 5.2))
                 sns.scatterplot(
-                    data=plot_data, x="PC1", y="PC2", hue="residual_cluster",
-                    palette="tab20", s=34, alpha=0.84, linewidth=0, ax=axes[0],
+                    data=plot_data, x="PC1", y="PC2", hue="residual_cluster_label",
+                    hue_order=[residual_cluster_label_by_id[cluster] for cluster in residual_cluster_ids],
+                    palette=residual_cluster_label_colors,
+                    s=34, alpha=0.84, linewidth=0, ax=axes[0],
                 )
                 axes[0].set_title("Residual PCA: PC1 vs. PC2")
                 axes[0].legend(title="Residual cluster", bbox_to_anchor=(1.02, 1))
@@ -885,7 +1005,8 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
             figure, axis = plt.subplots(figsize=(6.6, 4.8))
             sns.scatterplot(
                 data=cross_residual_clusters, x="umap_1", y="umap_2", hue="residual_cluster_label",
-                palette="tab20", s=32, alpha=0.84, linewidth=0, ax=axis,
+                hue_order=[residual_cluster_label_by_id[cluster] for cluster in residual_cluster_ids],
+                palette=residual_cluster_label_colors, s=32, alpha=0.84, linewidth=0, ax=axis,
             )
             annotate_residual_cluster_centroids(
                 axis, cross_residual_clusters, "residual_cluster"

@@ -19,7 +19,11 @@ from .age_trajectory import (
     prepare_age_trajectory_metadata,
 )
 from .config import AgeTrajectorySettings, config_digest, read_json
-from .covariates import categorical_levels, normalize_cmv_status
+from .covariates import (
+    categorical_levels,
+    normalize_cmv_status,
+    normalize_smoking_status,
+)
 from .utils import slugify
 
 LOGGER = logging.getLogger(__name__)
@@ -52,7 +56,10 @@ def _prepare_metadata(
     obs: pd.DataFrame, inclusion: dict, *, test_mode: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, int], list[dict]]:
     residual_metadata_columns = [
-        column for column in ("bmi", "cmv", "ethnicity", "technology", "batch_single_cell")
+        column for column in (
+            "bmi", "cmv", "smoking_status", "ethnicity", "technology",
+            "batch_single_cell",
+        )
         if column in obs
     ]
     metadata = obs[[
@@ -72,6 +79,8 @@ def _prepare_metadata(
         metadata["bmi"] = pd.to_numeric(metadata["bmi"], errors="coerce")
     if "cmv" in metadata:
         metadata["cmv"] = normalize_cmv_status(metadata["cmv"])
+    if "smoking_status" in metadata:
+        metadata["smoking_status"] = normalize_smoking_status(metadata["smoking_status"])
     minimum_age = inclusion["minimum_age_years_inclusive"]
     minimum_cells = inclusion["minimum_cells_per_pseudobulk_inclusive"]
     valid_study = metadata["study"].notna() & ~metadata["study"].str.lower().isin(_UNKNOWN)
@@ -199,7 +208,7 @@ def _fit_covariate_model(
 
     counts_df = pd.DataFrame(counts, index=metadata.index, columns=genes)
     model_metadata = metadata.copy()
-    for column in ("study_site", "sex", "cmv", "age_bin"):
+    for column in ("study_site", "sex", "cmv", "smoking_status", "age_bin"):
         if column in design and column in model_metadata:
             model_metadata[column] = pd.Categorical(
                 model_metadata[column],
@@ -255,7 +264,8 @@ def _fit_covariate_model(
             "study", "sample", "age", "sex", "total_counts", "log10_total_counts",
             *[
                 covariate for covariate in (
-                    "bmi", "cmv", "ethnicity", "technology", "batch_single_cell"
+                    "bmi", "cmv", "smoking_status", "ethnicity", "technology",
+                    "batch_single_cell",
                 ) if covariate in metadata
             ],
         ]
@@ -515,6 +525,17 @@ def _run_model(
     # indexing every fitted contrast explicitly for reports and downstream tools.
     primary_covariate = "age" if "age" in paths else next(iter(paths), None)
     details["results_by_covariate"] = paths
+    if model_name == "developmental":
+        support_columns = [
+            column for column in ("sample", "study", "study_site", "age", "sex")
+            if column in metadata
+        ]
+        support_samples = metadata[support_columns].copy()
+        support_samples.insert(0, "pseudobulk_id", metadata.index.astype(str))
+        support_path = cell_type_dir / "developmental" / "age_support_samples.csv"
+        support_path.parent.mkdir(parents=True, exist_ok=True)
+        support_samples.to_csv(support_path, index=False)
+        details["age_support_samples"] = str(support_path.relative_to(output_dir))
     if save_pearson_residuals and residuals_path is not None:
         details["pearson_residuals"] = str(residuals_path.relative_to(output_dir))
         details["pearson_residual_sample_metadata"] = str(
@@ -585,7 +606,8 @@ def _write_age_model_diagnostics(
         "log10_total_counts",
         *[
             covariate for covariate in (
-                "bmi", "cmv", "ethnicity", "technology", "batch_single_cell"
+                "bmi", "cmv", "smoking_status", "ethnicity", "technology",
+                "batch_single_cell",
             ) if covariate in metadata
         ],
     ]
@@ -614,16 +636,16 @@ def _prepare_developmental_metadata(
     metadata, exclusions, excluded = _prepare_metadata(
         obs, developmental_inclusion, test_mode=test_mode
     )
-    maximum_age = comparison["maximum_age_years_inclusive"]
-    above_maximum = metadata["age"] > maximum_age
+    maximum_age = comparison["maximum_age_years_exclusive"]
+    at_or_above_maximum = metadata["age"] >= maximum_age
     support = {
         "minimum_age_years_inclusive": comparison["minimum_age_years_inclusive"],
-        "maximum_age_years_inclusive": maximum_age,
+        "maximum_age_years_exclusive": maximum_age,
         "n_samples_before_maximum_age_filter": len(metadata),
-        "n_samples_excluded_above_maximum_age": int(above_maximum.sum()),
-        "n_samples_retained": int((~above_maximum).sum()),
+        "n_samples_excluded_at_or_above_maximum_age": int(at_or_above_maximum.sum()),
+        "n_samples_retained": int((~at_or_above_maximum).sum()),
     }
-    return metadata.loc[~above_maximum].copy(), support, exclusions, excluded
+    return metadata.loc[~at_or_above_maximum].copy(), support, exclusions, excluded
 
 
 def _load_pseudobulk(input_path: Path, pipeline: dict):
@@ -675,7 +697,9 @@ def _sample_abundance_input(
     missing = required - set(obs)
     if missing:
         raise ValueError(f"Pseudobulk observations lack abundance metadata: {sorted(missing)}")
-    columns = required | {column for column in ("sex", "bmi", "cmv") if column in obs}
+    columns = required | {
+        column for column in ("sex", "bmi", "cmv", "smoking_status") if column in obs
+    }
     result = obs.loc[:, sorted(columns)].copy()
     l2 = result["aifi_l2_majority"].astype(str)
     parents = l2.map(parent_map)
@@ -689,7 +713,10 @@ def _sample_abundance_input(
     if parent is None:
         raise ValueError(f"Missing configured AIFI L2 → L1 parent mapping for: {[cell_type]}")
 
-    metadata_columns = [column for column in ("age", "sex", "bmi", "cmv") if column in result]
+    metadata_columns = [
+        column for column in ("age", "sex", "bmi", "cmv", "smoking_status")
+        if column in result
+    ]
     grouped_samples = result.groupby(sample_keys, observed=True)
     for column in metadata_columns:
         inconsistent = grouped_samples[column].nunique(dropna=False) > 1
@@ -764,7 +791,9 @@ def _run_cell_type_differential_expression(
     )
     if diagnostics_path is not None:
         item["age_model_diagnostics"] = str(diagnostics_path.relative_to(output_dir))
-    optional_covariates = spec.get("optional_covariates", ["bmi", "cmv"])
+    optional_covariates = spec.get(
+        "optional_covariates", ["bmi", "cmv", "smoking_status"]
+    )
     for study in sorted(metadata["study"].astype(str).unique()):
         study_metadata = metadata.loc[metadata["study"].astype(str) == study].copy()
         covariates = _maximal_per_study_covariates(study_metadata, optional_covariates)
@@ -943,6 +972,7 @@ def _run_cell_type_differential_expression(
                     key: str(Path(model[key]).relative_to(slug))
                     for key in (
                         "pearson_residuals", "pearson_residual_sample_metadata",
+                        "age_support_samples",
                     ) if model.get(key)
                 }),
             }
@@ -990,7 +1020,10 @@ def _write_differential_expression_manifest(
                     }
                 if model.get("results"):
                     model["results"] = published_path(slug, model["results"])
-                for key in ("pearson_residuals", "pearson_residual_sample_metadata", "age_model_diagnostics"):
+                for key in (
+                    "pearson_residuals", "pearson_residual_sample_metadata",
+                    "age_model_diagnostics", "age_support_samples",
+                ):
                     if model.get(key):
                         model[key] = published_path(slug, model[key])
         records = published_records
@@ -1017,7 +1050,9 @@ def _write_differential_expression_manifest(
             "per_study": "genes available in that study",
             "merged": "intersection of genes available in all studies included in each cell-type fit",
         },
-        "optional_covariates": spec.get("optional_covariates", ["bmi", "cmv"]),
+        "optional_covariates": spec.get(
+            "optional_covariates", ["bmi", "cmv", "smoking_status"]
+        ),
         "sample_inclusion": spec["sample_inclusion"],
         "sample_inclusion_applied": {
             **spec["sample_inclusion"],

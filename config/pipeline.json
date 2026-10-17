@@ -32,6 +32,7 @@
   },
   "integration_benchmark": {
     "annotation_level": "l2",
+    "max_cells": 2000000,
     "methods": [
       {
         "name": "harmony",
@@ -169,7 +170,7 @@
       "umap_min_dist": 0.15,
       "random_state": 413
     },
-    "optional_covariates": ["bmi", "cmv"],
+    "optional_covariates": ["bmi", "cmv", "smoking_status"],
     "abundance": {
       "min_fraction_denominator_cells": 10,
       "fraction_model": {
@@ -179,7 +180,7 @@
     },
     "developmental_adult_comparison": {
       "minimum_age_years_inclusive": 0,
-      "maximum_age_years_inclusive": 30
+      "maximum_age_years_exclusive": 20
     },
     "alpha": 0.05,
     "sample_inclusion": {

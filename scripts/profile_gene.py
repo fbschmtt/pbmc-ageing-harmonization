@@ -175,11 +175,7 @@ def _load_or_fit_deseq2_model(
     # DeseqDataSet is an AnnData subclass.  Persisting the fitted object avoids
     # repeating dispersion fitting for every requested gene; the cached VST,
     # fitted means, and size factors are all used by the profile plots below.
-    # Pandas' nullable StringArray is not portable across AnnData versions, so
-    # materialize those metadata columns as ordinary strings before writing.
-    for column in dds.obs.columns:
-        if isinstance(dds.obs[column].dtype, pd.StringDtype):
-            dds.obs[column] = dds.obs[column].astype(object)
+    _prepare_model_for_cache(dds)
     dds.write_h5ad(temporary_dir / "fitted_model.h5ad")
     age_results.to_csv(temporary_dir / "age_results.csv", index_label="gene")
     (temporary_dir / "manifest.json").write_text(json.dumps({
@@ -197,6 +193,19 @@ def _load_or_fit_deseq2_model(
             path.unlink()
         temporary_dir.rmdir()
     return dds, age_results, cache_key, False
+
+
+def _prepare_model_for_cache(dds) -> None:
+    """Drop PyDESeq2 metadata that the fitted-profile cache does not consume."""
+    # Pandas' nullable StringArray is not portable across AnnData versions, so
+    # materialize those metadata columns as ordinary strings before writing.
+    for column in dds.obs.columns:
+        if isinstance(dds.obs[column].dtype, pd.StringDtype):
+            dds.obs[column] = dds.obs[column].astype(object)
+    # PyDESeq2 stores trend_coeffs and vst_trend_coeffs as pandas Series in
+    # ``uns``. AnnData cannot serialize Series values there. The profile cache
+    # uses fitted values from ``var``, ``obsm``, ``layers``, and ``obs`` only.
+    dds.uns.clear()
 
 
 def _fit_profile(
@@ -310,6 +319,14 @@ def _fit_profile(
                 categories=categorical_levels(column, model_metadata[column]),
             )
     design_matrix = FormulaicContrasts(model_metadata, design).design_matrix
+    # Centering age changes only the intercept parameterization, not its
+    # per-year coefficient. It avoids extrapolating the intercept to age zero
+    # during PyDESeq2's IRLS initialization, which can overflow for steep genes.
+    if "age" in design_matrix:
+        design_matrix["age"] = (
+            pd.to_numeric(design_matrix["age"], errors="coerce")
+            - float(model_metadata["age"].mean())
+        )
     numeric_design = design_matrix.to_numpy(dtype=float)
     rank = int(np.linalg.matrix_rank(numeric_design))
     if rank < numeric_design.shape[1] or numeric_design.shape[0] <= rank:
@@ -681,23 +698,17 @@ def _fit_profile(
             "The study random-slope mixed model could not be fit: "
             + "; ".join(mixed_fit_errors)
         )
-    mixed_fixed = mixed_fit.fe_params
-    mixed_confidence = mixed_fit.conf_int().loc[mixed_fixed.index]
-    mixed_standard_errors = mixed_fit.bse_fe.loc[mixed_fixed.index].copy()
-    mixed_statistics = mixed_fit.tvalues.loc[mixed_fixed.index].copy()
-    mixed_p_values = mixed_fit.pvalues.loc[mixed_fixed.index].copy()
-    mixed_uncertainty_note = "MixedLM Wald intervals"
     mixed_prediction_model = mixed_fit
     random_slope_variance = float(mixed_fit.cov_re.iloc[0, 0])
     if random_slope_variance <= 1e-10:
-        # At a zero-variance boundary MixedLM's Hessian can be singular even
-        # though the fixed-effect estimates are identifiable. Use the
-        # equivalent fixed-effects OLS fit for estimates, uncertainty, and
-        # predictions so values from the two fits are not mixed together.
+        # At a zero-variance boundary MixedLM's Hessian is singular. Do not
+        # request its standard errors or confidence intervals: statsmodels
+        # computes square roots of invalid covariance diagonals there. Use the
+        # fixed-effects OLS fit for estimates, uncertainty, and predictions.
         boundary_fixed_fit = smf.ols(
             mixed_formula, data=mixed_model_metadata,
         ).fit()
-        mixed_fixed = boundary_fixed_fit.params.loc[mixed_fixed.index]
+        mixed_fixed = boundary_fixed_fit.params
         mixed_standard_errors = boundary_fixed_fit.bse.loc[mixed_fixed.index]
         mixed_statistics = boundary_fixed_fit.tvalues.loc[mixed_fixed.index]
         mixed_p_values = boundary_fixed_fit.pvalues.loc[mixed_fixed.index]
@@ -706,19 +717,26 @@ def _fit_profile(
         mixed_uncertainty_note = (
             "Fixed-effects OLS because the random-slope variance is at its boundary"
         )
-    elif not np.isfinite(mixed_standard_errors).all():
-        # Preserve the converged mixed-model estimates and random effects;
-        # use fixed-effects OLS only to provide finite uncertainty estimates.
-        boundary_fixed_fit = smf.ols(
-            mixed_formula, data=mixed_model_metadata,
-        ).fit()
-        mixed_standard_errors = boundary_fixed_fit.bse.loc[mixed_fixed.index]
-        mixed_statistics = boundary_fixed_fit.tvalues.loc[mixed_fixed.index]
-        mixed_p_values = boundary_fixed_fit.pvalues.loc[mixed_fixed.index]
-        mixed_confidence = boundary_fixed_fit.conf_int().loc[mixed_fixed.index]
-        mixed_uncertainty_note = (
-            "Fixed-effects OLS uncertainty because mixed-model uncertainty was not finite"
-        )
+    else:
+        mixed_fixed = mixed_fit.fe_params
+        mixed_confidence = mixed_fit.conf_int().loc[mixed_fixed.index]
+        mixed_standard_errors = mixed_fit.bse_fe.loc[mixed_fixed.index].copy()
+        mixed_statistics = mixed_fit.tvalues.loc[mixed_fixed.index].copy()
+        mixed_p_values = mixed_fit.pvalues.loc[mixed_fixed.index].copy()
+        mixed_uncertainty_note = "MixedLM Wald intervals"
+        if not np.isfinite(mixed_standard_errors).all():
+            # Preserve the converged mixed-model estimates and random effects;
+            # use fixed-effects OLS only to provide finite uncertainty estimates.
+            boundary_fixed_fit = smf.ols(
+                mixed_formula, data=mixed_model_metadata,
+            ).fit()
+            mixed_standard_errors = boundary_fixed_fit.bse.loc[mixed_fixed.index]
+            mixed_statistics = boundary_fixed_fit.tvalues.loc[mixed_fixed.index]
+            mixed_p_values = boundary_fixed_fit.pvalues.loc[mixed_fixed.index]
+            mixed_confidence = boundary_fixed_fit.conf_int().loc[mixed_fixed.index]
+            mixed_uncertainty_note = (
+                "Fixed-effects OLS uncertainty because mixed-model uncertainty was not finite"
+            )
     mixed_model_result = pd.DataFrame({
         "term": mixed_fixed.index.astype(str),
         "coefficient": mixed_fixed.to_numpy(dtype=float),

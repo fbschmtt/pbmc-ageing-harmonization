@@ -64,6 +64,7 @@ def test_residual_wgcna_publishes_modules_eigengenes_and_cmv_checks() -> None:
     assert result.module_summary["n_cmv_samples"].eq(n_samples).all()
 
 
+
 def test_residual_wgcna_records_when_too_few_samples_are_available() -> None:
     residuals = pd.DataFrame(
         np.ones((3, 10)), index=["sample-1", "sample-2", "sample-3"]

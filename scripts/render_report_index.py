@@ -89,7 +89,7 @@ def render_report_index(outdir: Path) -> Path:
             rows.append(
                 "<tr>"
                 f"<th scope=\"row\">{escape(study)}</th>"
-                f"<td>{link(report, 'Open report')}</td>"
+                f"<td>{link(report, 'Harmonization QC')}</td>"
                 f"<td><code>{escape(report.parent.name)}</code></td>"
                 "</tr>"
             )
@@ -108,7 +108,7 @@ def render_report_index(outdir: Path) -> Path:
 
     benchmark_links = []
     if benchmark_report.is_file():
-        benchmark_links.append(link(benchmark_report, "Integration benchmark report (HTML)"))
+        benchmark_links.append(link(benchmark_report, "Integration benchmark"))
     if benchmark_links:
         benchmark_content = "<ul>" + "".join(
             f"<li>{item}</li>" for item in benchmark_links
@@ -118,7 +118,7 @@ def render_report_index(outdir: Path) -> Path:
 
     trajectory_links = []
     if trajectory_report.is_file():
-        trajectory_links.append(link(trajectory_report, "Cross-cell-type analysis report"))
+        trajectory_links.append(link(trajectory_report, "Cross-cell-type trajectory analysis"))
     if not trajectory_links:
         trajectory_content = "<p>No cross-cell-type analysis report is published yet.</p>"
     else:
@@ -127,29 +127,32 @@ def render_report_index(outdir: Path) -> Path:
         ) + "</ul>"
 
     if slugs:
-        report_cards = []
+        rows = []
         for slug in slugs:
             residual_report = per_type_root / slug / "analysis" / "report.html"
             de_report = per_type_root / slug / "differential_expression" / "report.html"
             report = residual_report if residual_report.is_file() else de_report
             cell_type = _report_title(report)
-            links = []
+            report_links = []
             if residual_report.is_file():
-                links.append(f"<li>{link(residual_report, 'Single cell analysis')}</li>")
+                report_links.append(link(residual_report, "Single-cell analysis"))
             if de_report.is_file():
-                links.append(
-                    f"<li>{link(de_report, 'Pseudobulk differential expression')}</li>"
-                )
-            report_cards.append(
-                '<article class="cell-type-report">'
-                f"<h3>{escape(cell_type)}</h3>"
-                f"<ul>{''.join(links)}</ul>"
-                f"<p>Output folder: <code>{escape(slug)}</code></p>"
-                "</article>"
+                report_links.append(link(de_report, "Expression & abundance"))
+            rows.append(
+                "<tr>"
+                f"<th scope=\"row\">{escape(cell_type)}</th>"
+                f"<td>{' · '.join(report_links) if report_links else '—'}</td>"
+                f"<td><code>{escape(slug)}</code></td>"
+                "</tr>"
             )
-        per_type_content = "".join(report_cards)
+        per_type_content = (
+            "<table><thead><tr><th>Cell type</th><th>Analysis</th><th>Output folder</th>"
+            "</tr></thead><tbody>"
+            + "".join(rows)
+            + "</tbody></table>"
+        )
     else:
-        per_type_content = "<p>No per-type reports are published yet.</p>"
+        per_type_content = "<p>No single-cell analysis reports are published yet.</p>"
 
     html = """<!doctype html>
 <html lang="en">
@@ -167,10 +170,6 @@ def render_report_index(outdir: Path) -> Path:
     thead { background: #eef5f8; }
     a { color: #075baf; }
     code { color: #475569; }
-    .cell-type-report { margin: 1rem 0; padding: .9rem 1.1rem; border: 1px solid #d8e1e8; border-radius: 8px; }
-    .cell-type-report h3 { margin: 0; }
-    .cell-type-report ul { margin: .5rem 0; padding-left: 1.25rem; }
-    .cell-type-report p { margin: .5rem 0 0; font-size: .9rem; }
   </style>
 </head>
 <body>
@@ -189,7 +188,7 @@ def render_report_index(outdir: Path) -> Path:
     __TRAJECTORY_LINKS__
   </section>
   <section>
-    <h2>Per-cell-type reports</h2>
+    <h2>Single-cell analysis</h2>
     __CELL_TYPE_REPORTS__
   </section>
 </body>

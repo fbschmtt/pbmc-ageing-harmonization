@@ -27,7 +27,9 @@ from .merge import _match_csr_index_dtypes
 LOGGER = logging.getLogger("pbmc_pipeline.integration_benchmark")
 
 
-def _thin_benchmark_artifact(adata, *, methods: list[dict]) -> object:
+def _thin_benchmark_artifact(
+    adata, *, methods: list[dict], sampling: dict | None = None,
+) -> object:
     """Keep labels, embeddings, and method graphs without expression data."""
     import anndata as ad
 
@@ -58,6 +60,7 @@ def _thin_benchmark_artifact(adata, *, methods: list[dict]) -> object:
         # The JSON sidecar retains the structured per-method record.
         "method_names": [method["name"] for method in methods],
         "source_matrix_retained": False,
+        "sampling": sampling or {"strategy": "none", "n_cells": int(adata.n_obs)},
     }
     _normalize_nullable_strings_for_h5ad(result)
     return result
@@ -125,14 +128,47 @@ def run_integration_benchmark(
     spec = pipeline["integration_benchmark"]
     methods = spec["methods"]
     LOGGER.info("benchmark=read_input_started path=%s", input_path)
-    adata = sc.read_h5ad(input_path)
+    source = sc.read_h5ad(input_path, backed="r")
+    try:
+        source_n_cells = int(source.n_obs)
+        max_cells = spec.get("max_cells")
+        random_seed = int(pipeline["processing"]["random_seed"])
+        if max_cells is not None and source_n_cells > max_cells:
+            sample_indices = np.sort(
+                np.random.default_rng(random_seed).choice(
+                    source_n_cells, size=max_cells, replace=False,
+                )
+            )
+            adata = source[sample_indices].to_memory()
+            sampling = {
+                "strategy": "uniform_random_without_replacement",
+                "source_n_cells": source_n_cells,
+                "n_cells": int(adata.n_obs),
+                "fraction": float(adata.n_obs / source_n_cells),
+                "seed": random_seed,
+            }
+        else:
+            adata = source.to_memory()
+            sampling = {
+                "strategy": "none",
+                "source_n_cells": source_n_cells,
+                "n_cells": int(adata.n_obs),
+                "fraction": 1.0,
+                "seed": random_seed,
+            }
+    finally:
+        source.file.close()
     adata.X = _match_csr_index_dtypes(adata.X)
     if "aifi_l2_majority" not in adata.obs:
         raise ValueError(f"{input_path}: per-study AIFI L2 labels are absent")
     adata.obs["aifi_l2_study_majority"] = adata.obs["aifi_l2_majority"].astype(str)
     LOGGER.info(
-        "benchmark=read_input_complete cells=%d genes=%d studies=%d methods=%d sparse=%s",
+        "benchmark=read_input_complete source_cells=%d sampled_cells=%d "
+        "sampling=%s seed=%d genes=%d studies=%d methods=%d sparse=%s",
+        source_n_cells,
         adata.n_obs,
+        sampling["strategy"],
+        random_seed,
         adata.n_vars,
         adata.obs["study"].nunique() if "study" in adata.obs else 0,
         len(methods),
@@ -256,7 +292,7 @@ def run_integration_benchmark(
         )
 
     LOGGER.info("benchmark=thin_artifact_started methods=%d", len(method_reports))
-    benchmark = _thin_benchmark_artifact(adata, methods=method_reports)
+    benchmark = _thin_benchmark_artifact(adata, methods=method_reports, sampling=sampling)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     LOGGER.info("benchmark=write_artifact_started path=%s", output_path)
     benchmark.write_h5ad(output_path, compression=pipeline["processing"]["output_compression"])
@@ -267,6 +303,7 @@ def run_integration_benchmark(
         "input": str(input_path),
         "output": str(output_path),
         "n_cells": int(adata.n_obs),
+        "sampling": sampling,
         "n_genes_input": int(adata.n_vars),
         "methods": method_reports,
         "artifact": "labels_embeddings_and_graphs",

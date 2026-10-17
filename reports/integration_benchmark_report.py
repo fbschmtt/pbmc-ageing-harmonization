@@ -26,6 +26,13 @@ artifact_path = Path(os.environ["INTEGRATION_BENCHMARK_H5AD"])
 run_report_path = Path(os.environ["INTEGRATION_BENCHMARK_REPORT"])
 adata = sc.read_h5ad(artifact_path)
 run_report = json.loads(run_report_path.read_text())
+sampling = run_report.get("sampling", {
+    "n_cells": adata.n_obs,
+    "source_n_cells": adata.n_obs,
+    "fraction": 1.0,
+    "strategy": "none",
+    "seed": "not recorded",
+})
 
 # %%
 display(HTML(render_report_header(
@@ -42,6 +49,15 @@ display(HTML(render_report_header(
         ("Methods", str(len(run_report["methods"]))),
     ],
 )))
+display(Markdown(
+    f"This benchmark used **{sampling['n_cells']:,} of "
+    f"{sampling['source_n_cells']:,} cells** "
+    f"({sampling['fraction']:.1%}; "
+    f"{sampling['strategy'].replace('_', ' ')}, "
+    f"seed {sampling['seed']}). All methods were evaluated on "
+    "the same sample; benchmark embeddings and metrics do not cover cells "
+    "outside it."
+))
 
 # %% [markdown]
 # ## 1. Embedding integration

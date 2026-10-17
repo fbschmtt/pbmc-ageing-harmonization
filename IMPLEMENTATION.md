@@ -99,8 +99,9 @@ The core merge writes no global normalization, embedding, graph, or prediction.
   harmonization QC, integration benchmark, the combined cross-cell-type report,
   and the residual and DE reports currently published per type.
 - `src/pbmc_pipeline/synthetic_de.py`: deterministic on-demand positive-fit
-  pseudobulk fixture generation (28 samples per study, balanced across seven
-  age decades below 90); the generated H5AD is ignored output, not a checked-in fixture.
+  pseudobulk fixture generation (36 samples per study, balanced across two
+  developmental and seven adult age decades); the generated H5AD is ignored
+  output, not a checked-in fixture.
 - `scripts/profile_gene.py`, `src/pbmc_pipeline/gene_profile_report.py`, and
   `reports/gene_profile_report.py`: standalone focused gene profiling from a
   merged pseudobulk, refitting PyDESeq2 and then fitting naive total-count
@@ -117,11 +118,12 @@ The core merge writes no global normalization, embedding, graph, or prediction.
   renders two top merged age-DE genes per cell type from the synthetic DE
   fixture. Both report workflows are included in `make run-all-test`.
 - `scripts/check_synthetic_de.py`: output-contract checks for positive
-  synthetic DE and trajectory reports. They cover planted age, sex, BMI, and
-  CMV effects; covariate-specific study selection and complete-case counts;
-  trajectory clustering exports; and report content. The fixture uses 28
-  independent samples per study, balanced over the seven age decades below 90,
-  so it meets the production trajectory support threshold.
+  synthetic DE and trajectory reports. They cover planted age, sex, BMI, CMV,
+  and smoking-status effects; covariate-specific study selection and
+  complete-case counts; trajectory clustering exports; and report content.
+  The fixture uses 36 independent samples per study, balanced over ages 0–90;
+  the seven adult trajectory decades meet the production support threshold and
+  two developmental decades support the `[0,20)` comparison.
 - `src/pbmc_pipeline/reporting.py`: testable report data transformations.
 - `reports/merge_qc_report.py`: Jupytext source for the generated merge
   notebook. Report runners materialize these Python sources in a temporary
@@ -157,13 +159,15 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/...csv` (per-study and per-type combined covariate results)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/combined/age_bin_pearson_residuals.npz` and `age_bin_pearson_residuals_samples.csv` (sample × gene residuals and sample metadata from the age-bin model)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/age_model_diagnostics.csv` (sample support and raw-count inputs for the shared age-model diagnostic figure)
+- `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/developmental/age_support_samples.csv` (samples retained by the [0,20) developmental model, used for its study-site age-support plot)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/cell_type_result.json` (per-task fit record collected into the root manifest)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/{abundance_input.tsv,report.html,fraction_model_diagnostics.tsv}` (pseudobulk abundance input and per-type DE report outputs)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/residual_wgcna/` (residual WGCNA module assignments, eigengenes, soft-threshold and sample-connectivity diagnostics, covariate associations, hub genes, and leave-one-study-out module stability)
+- `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/residual_wgcna/{module_gsea.csv,cmv_associated_module_scores.csv,smoking_associated_module_scores.csv}` (preranked GO enrichment and sample scores for the strongest exposure-associated modules)
 - `<outdir>/analysis/combined/differential_expression/differential_expression.json` (DE status and cell-type result index)
 - `<outdir>/analysis/combined/trajectory/{report.html,executed.ipynb}` (combined trajectory report)
 - `<outdir>/analysis/combined/trajectory/*.csv` (shared-bin cross-type clusters and means, gene-level DE recurrence, and cross-type pattern concordance)
-- `<outdir>/analysis/combined/trajectory/developmental_adult_age_effects.csv` (per-cell-type paired raw continuous-age coefficients, mean normalized expression, and adjusted p-values for the 0–30 developmental and ≥20 adult fits; the combined report plots genes retained by both models' independent expression filters)
+- `<outdir>/analysis/combined/trajectory/developmental_adult_age_effects.csv` (per-cell-type paired raw continuous-age coefficients, mean normalized expression, and adjusted p-values for the [0,20) developmental and ≥20 adult fits; the combined report plots genes retained by both models' independent expression filters)
 - `<outdir>/analysis/combined/trajectory/developmental_adult_age_effect_support.csv` (sample and gene support for that comparison)
 - `<outdir>/analysis/combined/trajectory/expression_atlas_*.csv` (study-balanced common-gene expression matrix, gene UMAP, depth support, and independent 3′/5′ and intronic-read sensitivity summaries)
 - `<outdir>/analysis/combined/trajectory/*_residual_{clusters,pc_scores}.csv` (per-cell-type sample cluster assignments and PCA scores)
@@ -195,10 +199,17 @@ H5AD, then writes the raw joined counts and metadata. Per-cell QC fields
 harmonization and carried through the join. The merge does not normalize the
 
 `make run-integration-benchmark` is a separate optional workflow over that
-merged H5AD. It loads the expression matrix once. The benchmark compares an
-unintegrated PCA baseline with Harmony, Scanorama, and BBKNN using a shared
-normalized HVG/PCA workspace. Harmony and Scanorama adjust embeddings, BBKNN
-balances the neighbor graph, and the unintegrated PCA graph is the baseline.
+merged H5AD. It opens the input in backed mode and materializes at most
+2,000,000 cells selected uniformly at random without replacement. The sample
+uses `processing.random_seed` and is shared across all methods; the cap is
+configured by `integration_benchmark.max_cells`. Sample size, source size,
+fraction, selection strategy, and seed are recorded in the JSON sidecar,
+artifact metadata, and report. Benchmark UMAPs and comparisons therefore
+describe only the selected cells and are not a full-data global embedding. The
+benchmark compares an unintegrated PCA baseline with Harmony, Scanorama, and
+BBKNN using the shared normalized HVG/PCA workspace. Harmony and Scanorama
+adjust embeddings, BBKNN balances the neighbor graph, and the unintegrated PCA
+graph is the baseline.
 Every method's graph supplies both CellTypist majority voting
 and its UMAP. The integration report compares graph edge overlap with
 unintegrated PCA and AIFI-L2 label concordance without applying acceptance
@@ -401,7 +412,9 @@ every remaining type reach the configured fraction of the union sample set, or
 one type remains. Its report names included and removed types, the shared sample
 count, and achieved coverage. It contains a 2 × 2 UMAP grid for model covariates
 and a second grid for BMI and CMV coverage; only the non-model grid is open by
-default. A collapsed PCA panel shows PC1 versus PC2 by cluster and the residual
+default. It also plots unique sample counts for each technical batch within
+each study site, with full counts in `technical_batch_sample_counts.csv`. A
+collapsed PCA panel shows PC1 versus PC2 by cluster and the residual
 UMAP colored by PC1 and PC2. It shows a clustering summary table and UMAP
 overlays for the K-means and two HDBSCAN alternatives; the table includes the
 tested Leiden resolution counts. Wide columns are labeled
@@ -410,9 +423,15 @@ matrices, and sample metadata are materialized for downstream analysis.
 
 Each per-type DE report runs residual WGCNA from the fitted age-bin residual
 matrix. It publishes module assignments and eigengenes together with
-soft-threshold, sample-connectivity, eigengene-covariate, hub-gene, CMV, and
-leave-one-study-out stability diagnostics. The module results are exploratory;
-the stability panel compares gene membership after omitting each study.
+soft-threshold, sample-connectivity, eigengene-covariate, hub-gene, CMV and
+smoking checks, preranked GO Biological Process enrichment, and leave-one-study-out
+stability diagnostics. CMV and smoking are checked because the residual model
+already adjusts for age bins, sex, study site, and depth but omits those plausible
+sources of remaining biological structure. These exploratory checks ask whether
+signal remains; they do not assume an effect is present or adjust the residuals.
+WGCNA color names are arbitrary module identifiers; grey is reserved for genes
+not assigned to a module and is excluded from GSEA because it is not a coherent
+module. The stability panel compares gene membership after omitting each study.
 
 ### Expression-atlas settings
 
@@ -444,9 +463,10 @@ split into technology × intronic groups. Both labels can be study-confounded,
 so neither contrast identifies a causal technical effect.
 
 The positive synthetic DE fixture must retain at least seven supported bins
-under these production settings. It therefore creates 28 independent samples
-per study and cell type: four in each of seven decades below 90 across three
-studies, giving 12 combined samples per bin before any covariate-specific exclusions.
+under these production settings. It therefore creates 36 independent samples
+per study and cell type: four in each of two developmental decades and seven
+adult decades below 90 across three studies, giving 12 combined samples per
+bin before any covariate-specific exclusions.
 The generator derives its sample count from `minimum_samples_per_bin` and the
 number of synthetic studies, then records the active trajectory settings and
 planted profiles in the fixture metadata. Keep the synthetic workflow report
@@ -540,8 +560,8 @@ do not require per-cell abundance columns in split H5ADs. The per-type DE
 inclusion filter does not exclude zero-count abundance rows.
 
 The report fits adult-only, study-specific OLS models with the existing age,
-sex, BMI, and CMV covariate rules; age effects are reported per decade, and
-forest-plot effects and residual SDs are shown in percentage points. Each
+sex, BMI, CMV, and smoking-status covariate rules; age effects are reported per
+decade, and forest-plot effects and residual SDs are shown in percentage points. Each
 fraction view independently requires at least the configured denominator
 count (currently 10 cells). The deterministic parametric binomial bootstrap
 uses 1,000 replicates and seed 0. For each sample, the OLS-fitted fraction is
@@ -549,3 +569,20 @@ held fixed as the binomial probability (clipped to `[0, 1]`), and the observed
 parent-cell count supplies the number of trials. The same covariate design is
 refit in each replicate. Counts, fractions, and model diagnostics are written
 alongside each per-type DE report.
+
+For an abundance model, a candidate term is selected within a study only when
+at least 95% of adult samples have valid values and the term varies; the fit
+then uses complete cases across all selected terms. Smoking status is valid
+only as canonical `yes` or `no`; all other values are treated as missing, and
+the report labels the contrast `yes vs no` with `no` as the reference. This
+95% coverage rule applies only to the abundance OLS models. DE optional
+covariates instead enter per-study designs when they vary and are fitted on
+complete cases, with no minimum coverage percentage.
+
+The PyDESeq2 design and contrast fitting is reusable across categorical
+covariates, but covariates are not registered in one shared list: configuration
+validation, metadata preparation, reference-level selection, and report ordering
+have explicit field lists. The abundance OLS report has its own candidate list
+and categorical handling. When adding another covariate, update each path and
+add a planted signal to the synthetic DE fixture/check so both workflows
+exercise it.

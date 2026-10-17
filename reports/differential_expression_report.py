@@ -34,12 +34,14 @@ from pbmc_pipeline.covariates import (
     categorical_contrast_label,
     categorical_levels,
     normalize_cmv_status,
+    normalize_smoking_status,
 )
 from pbmc_pipeline.reporting import (
     plot_trajectory_merge_diagnostic,
     sample_cell_type_fractions,
     signed_value_at_largest_absolute_magnitude,
 )
+from pbmc_pipeline.residual_wgcna import run_residual_wgcna, trait_associated_module_scores
 from pbmc_pipeline.trajectory_analysis import (
     cluster_sample_residuals,
     cluster_trajectory_profiles,
@@ -47,7 +49,6 @@ from pbmc_pipeline.trajectory_analysis import (
     summarize_residual_clustering,
     trajectory_merge_diagnostics,
 )
-from pbmc_pipeline.residual_wgcna import run_residual_wgcna
 
 # %%
 de_dir = Path(os.environ["DE_REPORT_DIR"])
@@ -195,6 +196,16 @@ def load_merged_cmv_results(de_dir):
     return pd.read_csv(path)
 
 
+def load_merged_smoking_results(de_dir):
+    """Load the per-cell-type merged smoking-status model when it completed."""
+    if not de_dir:
+        return None
+    path = Path(de_dir) / "combined" / "smoking_status.csv"
+    if not path.is_file():
+        return None
+    return pd.read_csv(path)
+
+
 def publish_residual_wgcna(result):
     """Publish residual-network artifacts beside the per-type report."""
     wgcna_dir = output_dir / "residual_wgcna"
@@ -248,6 +259,70 @@ def wgcna_module_membership(result, residuals):
     return assignments
 
 
+def wgcna_module_rankings(result, residuals):
+    """Rank all network genes by correlation with each non-grey eigengene."""
+    eigengenes = result.eigengenes.set_index("sample_key")
+    shared_samples = residuals.index.intersection(eigengenes.index, sort=False)
+    rankings = {}
+    for module in result.module_summary["module"].astype(str):
+        if module.lower() == "grey":
+            continue
+        eigengene_column = f"ME{module}"
+        if eigengene_column not in eigengenes:
+            continue
+        eigengene = pd.to_numeric(eigengenes.loc[shared_samples, eigengene_column], errors="coerce")
+        values = residuals.loc[shared_samples].apply(pd.to_numeric, errors="coerce")
+        membership = values.corrwith(eigengene).replace([np.inf, -np.inf], np.nan).dropna()
+        membership = membership.sort_values(ascending=False, kind="stable")
+        if not membership.empty:
+            rankings[module] = membership
+    return rankings
+
+
+def run_wgcna_module_gsea(result, residuals):
+    """Run preranked GO biological-process GSEA for every retained module."""
+    rankings = wgcna_module_rankings(result, residuals)
+    if not rankings:
+        return pd.DataFrame(), None
+    try:
+        import gseapy
+
+        gene_sets = gseapy.get_library(
+            "GO_Biological_Process_2023", organism="Human", min_size=10, max_size=500,
+        )
+        rows = []
+        for module, ranking in rankings.items():
+            ranked_genes = ranking.rename_axis("gene").reset_index(name="score")
+            prerank = gseapy.prerank(
+                rnk=ranked_genes, gene_sets=gene_sets, min_size=10, max_size=500,
+                permutation_num=1000, seed=123, threads=1, outdir=None, no_plot=True,
+                verbose=False,
+            )
+            if prerank.res2d is None or prerank.res2d.empty:
+                continue
+            module_results = prerank.res2d.rename(columns={
+                "Term": "gene_set", "ES": "enrichment_score", "NES": "normalized_enrichment_score",
+                "NOM p-val": "pvalue", "FDR q-val": "module_fdr", "Lead_genes": "leading_edge_genes",
+            }).copy()
+            module_results.insert(0, "module", module)
+            rows.append(module_results)
+        if not rows:
+            return pd.DataFrame(), None
+        results = pd.concat(rows, ignore_index=True)
+        results["pvalue"] = pd.to_numeric(results["pvalue"], errors="coerce")
+        results["global_fdr"] = np.nan
+        valid = results["pvalue"].notna()
+        if valid.any():
+            results.loc[valid, "global_fdr"] = multipletests(
+                results.loc[valid, "pvalue"], method="fdr_bh",
+            )[1]
+        return results.sort_values(
+            ["global_fdr", "module_fdr", "module"], na_position="last"
+        ).reset_index(drop=True), None
+    except Exception as exc:  # noqa: BLE001 - keep report generation resilient to library/network failures
+        return pd.DataFrame(), f"{type(exc).__name__}: {exc}"
+
+
 def wgcna_covariate_associations(result, annotations):
     """Associate module eigengenes with recorded continuous and categorical covariates."""
     eigengenes = result.eigengenes.copy()
@@ -258,7 +333,8 @@ def wgcna_covariate_associations(result, annotations):
     ]
     categorical = [
         column for column in (
-            "sex", "cmv", "study", "study_site", "technology", "batch_single_cell",
+            "sex", "cmv", "smoking_status", "study", "study_site", "technology",
+            "batch_single_cell",
             "include_intronic",
         ) if column in data
     ]
@@ -368,12 +444,15 @@ def wgcna_leave_one_study_out_stability(result, residuals, annotations, settings
     return pd.DataFrame(rows)
 
 
-def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results):
+def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results, smoking_results):
     """Show WGCNA diagnostics, covariates, hubs, and cross-study stability."""
     if result.metadata["status"] != "complete":
-        display(Markdown(
-            "_Residual WGCNA was not run: " + result.metadata.get("reason", "unknown reason") + "._"
-        ))
+        status = result.metadata["status"]
+        message = result.metadata.get("reason", "unknown reason")
+        if status == "failed":
+            display(Markdown(f"_Residual WGCNA could not be completed: {message}._"))
+        else:
+            display(Markdown(f"_Residual WGCNA was not run: {message}._"))
         return
     wgcna_dir = output_dir / "residual_wgcna"
 
@@ -423,8 +502,31 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results):
         display(Markdown("_PyWGCNA did not retain any non-grey modules._"))
         return
     display(Markdown("#### Module structure"))
+    display(Markdown(
+        "Module color names are WGCNA identifiers, not biological labels, and can change when "
+        "the network is refit; the stability check matches modules by shared genes. Grey marks "
+        "genes that were not assigned to a module. The `n_cmv_yes/no` and `n_smoking_yes/no` fields "
+        "count samples with observed yes/no status used in each eigengene association. They "
+        "repeat across modules because eigengenes use the same samples."
+    ))
+    summary_columns = [
+        "module", "n_genes", "n_cmv_associated_genes", "cmv_eigengene_correlation",
+        "cmv_eigengene_fdr", "n_smoking_associated_genes",
+        "smoking_eigengene_correlation", "smoking_eigengene_fdr",
+    ]
+    summary_display = summary[[column for column in summary_columns if column in summary]].rename(
+        columns={
+            "module": "Module", "n_genes": "Genes",
+            "n_cmv_associated_genes": "CMV-DE genes",
+            "cmv_eigengene_correlation": "CMV–ME r",
+            "cmv_eigengene_fdr": "CMV–ME FDR",
+            "n_smoking_associated_genes": "Smoking-DE genes",
+            "smoking_eigengene_correlation": "Smoking–ME r",
+            "smoking_eigengene_fdr": "Smoking–ME FDR",
+        }
+    )
     display_collapsible_table(
-        summary, "Show residual WGCNA module summary", max_height=480,
+        summary_display, "Show residual WGCNA module summary", max_height=480,
     )
     display_modules = wgcna_modules_for_display(summary)
     shown = summary.loc[summary["module"].isin(display_modules)].sort_values(
@@ -436,34 +538,105 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results):
     figure_label_suffix = (
         f" ({len(shown)} largest of {len(summary)})" if display_caption else ""
     )
-    figure, axes = plt.subplots(1, 2, figsize=(14, max(4.5, 0.36 * len(shown) + 2)))
+    figure, axes = plt.subplots(1, 3, figsize=(20, max(4.5, 0.36 * len(shown) + 2)))
     colors = [module if module in mcolors.get_named_colors_mapping() else "#4c72b0" for module in shown["module"]]
-    axes[0].barh(shown["module"], shown["n_genes"], color=colors)
+    axes[0].barh(
+        shown["module"], shown["n_genes"], color=colors,
+        edgecolor="#38434a", linewidth=0.55,
+    )
     axes[0].set(xlabel="Genes", title="Residual WGCNA module sizes" + figure_label_suffix)
-    trait_data = shown.dropna(subset=["cmv_eigengene_correlation"]).copy()
-    if trait_data.empty:
-        axes[1].text(0.5, 0.5, "CMV status is not available in both groups", ha="center", va="center")
-        axes[1].set_axis_off()
-    else:
-        trait_data["cmv_overlap_score"] = -np.log10(
-            trait_data["cmv_gene_overlap_fdr"].clip(lower=1e-300)
-        )
-        points = axes[1].scatter(
-            trait_data["cmv_eigengene_correlation"], trait_data["cmv_overlap_score"],
-            s=np.maximum(30, trait_data["n_genes"] * 3), c=trait_data["cmv_eigengene_fdr"],
+    for axis, covariate, label, de_results in (
+        (axes[1], "cmv", "CMV", cmv_results),
+        (axes[2], "smoking", "Smoking", smoking_results),
+    ):
+        correlation_column = f"{covariate}_eigengene_correlation"
+        overlap_column = f"{covariate}_gene_overlap_fdr"
+        fdr_column = f"{covariate}_eigengene_fdr"
+        trait_data = shown.dropna(subset=[correlation_column]).copy()
+        if trait_data.empty:
+            axis.text(0.5, 0.5, f"{label} status unavailable\nor no within-group variation",
+                      ha="center", va="center")
+            axis.set_axis_off()
+            continue
+        overlap_fdr = pd.to_numeric(trait_data[overlap_column], errors="coerce")
+        if de_results is None or not overlap_fdr.notna().any():
+            axis.text(
+                0.5, 0.06, f"{label}-DE gene-overlap evidence unavailable",
+                ha="center", va="bottom", transform=axis.transAxes, fontsize=8,
+            )
+            trait_data["overlap_score"] = 0.0
+        else:
+            trait_data["overlap_score"] = -np.log10(overlap_fdr.clip(lower=1e-300))
+        points = axis.scatter(
+            trait_data[correlation_column], trait_data["overlap_score"],
+            s=np.maximum(30, trait_data["n_genes"] * 3), c=trait_data[fdr_column],
             cmap="viridis_r", vmin=0, vmax=1, alpha=0.85, linewidths=0,
         )
         for row in trait_data.itertuples(index=False):
-            axes[1].annotate(row.module, (row.cmv_eigengene_correlation, row.cmv_overlap_score),
-                             xytext=(3, 3), textcoords="offset points", fontsize=8)
-        axes[1].axvline(0, color="#666666", linewidth=0.8)
-        axes[1].set(
-            xlabel="CMV-status vs eigengene correlation", ylabel="−log10(CMV-DE overlap FDR)",
-            title="CMV checks of residual modules" + figure_label_suffix,
+            axis.annotate(row.module, (getattr(row, correlation_column), row.overlap_score),
+                          xytext=(3, 3), textcoords="offset points", fontsize=8)
+        axis.axvline(0, color="#666666", linewidth=0.8)
+        axis.set(
+            xlabel=f"{label}-status vs eigengene correlation",
+            ylabel=f"−log10({label}-DE overlap FDR)",
+            title=f"{label} checks of residual modules" + figure_label_suffix,
         )
-        figure.colorbar(points, ax=axes[1], label="Eigengene–CMV FDR")
+        figure.colorbar(points, ax=axis, label=f"Eigengene–{label} FDR")
     figure.tight_layout()
     display_collapsible_figure(figure, "Residual WGCNA modules and CMV diagnostics")
+
+    for covariate, label, status_field in (
+        ("cmv", "CMV", "cmv_status"),
+        ("smoking_status", "smoking", "smoking_status"),
+    ):
+        score_data = trait_associated_module_scores(result, annotations, covariate=covariate)
+        if score_data.empty or not {"umap_1", "umap_2"}.issubset(annotations):
+            continue
+        score_data = score_data.rename(columns={"trait_status": status_field})
+        score_data = score_data.merge(
+            annotations[["sample_key", "umap_1", "umap_2"]].drop_duplicates("sample_key"),
+            on="sample_key", how="left", validate="one_to_one",
+        ).dropna(subset=["module_score", "umap_1", "umap_2"])
+        score_data.to_csv(wgcna_dir / f"{label}_associated_module_scores.csv", index=False)
+        if not score_data.empty:
+            module = score_data["module"].iloc[0]
+            figure, axes = plt.subplots(1, 2, figsize=(13, 5.2))
+            points = axes[0].scatter(
+                score_data["umap_1"], score_data["umap_2"],
+                c=score_data["module_score"], cmap="viridis", s=28, alpha=0.9,
+                linewidths=0,
+            )
+            axes[0].set(
+                xlabel="UMAP 1", ylabel="UMAP 2",
+                title=f"Residual UMAP: {label}-associated module {module}",
+            )
+            figure.colorbar(points, ax=axes[0], label="Oriented module eigengene score")
+            order = [status for status in ("no", "yes", "not provided")
+                     if status in score_data[status_field].unique()]
+            group_scores = score_data.groupby(status_field, observed=True)["module_score"]
+            means = group_scores.mean().reindex(order)
+            confidence = (1.96 * group_scores.sem()).reindex(order).fillna(0)
+            axes[1].bar(
+                order, means, yerr=confidence, color="#9ecae1", edgecolor="#38434a",
+                linewidth=0.8, capsize=4,
+            )
+            sns.stripplot(
+                data=score_data, x=status_field, y="module_score", order=order,
+                color="#315a73", alpha=0.45, size=3, jitter=0.18, ax=axes[1],
+            )
+            axes[1].set(
+                xlabel=f"{label.title()} status", ylabel="Oriented module eigengene score",
+                title=f"Module {module} mean score by {label} status\nBars: mean ± 1.96 SE; points: samples",
+            )
+            figure.suptitle(
+                f"Highest absolute eigengene–{label} correlation; score sign oriented so higher "
+                f"values correspond to {label} yes", y=1.02, fontsize=10,
+            )
+            figure.tight_layout()
+            display_collapsible_figure(
+                figure, f"Show the strongest {label}-associated module on residual UMAP",
+                open_by_default=True,
+            )
 
     eigengenes = result.eigengenes.set_index("sample_key")
     module_columns = [
@@ -488,8 +661,11 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results):
     else:
         display(Markdown(
             "Continuous covariates use Spearman correlation. Binary covariates use point-biserial "
-            "correlation; multi-level covariates use one-way ANOVA η². FDR is controlled across "
-            "all module–covariate tests."
+            "correlation (signed r; for CMV and smoking, positive means higher eigengene scores "
+            "in yes than no. Other binary covariates use sorted category coding). Multi-level covariates "
+            "use one-way ANOVA η², the fraction of eigengene variance explained by category "
+            "membership (0 to 1, unsigned). These are unadjusted, descriptive associations. FDR "
+            "is controlled across all module–covariate tests."
         ))
         plotted_associations = associations.loc[associations["module"].isin(display_modules)]
         figure, axes = plt.subplots(
@@ -533,6 +709,44 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results):
     display_collapsible_table(
         hub_genes.loc[hub_genes["module_rank"] <= 20], "Show top 20 hub genes per module", max_height=560,
     )
+    display(Markdown("#### Gene-set enrichment (preranked GSEA)"))
+    gsea_results, gsea_error = run_wgcna_module_gsea(result, residuals)
+    if gsea_error:
+        display(Markdown(
+            "_GO Biological Process GSEA could not run. The report uses GSEApy's online "
+            f"Enrichr library and could not retrieve or process it: {escape(gsea_error)}._"
+        ))
+    elif gsea_results.empty:
+        display(Markdown("_No GO Biological Process terms met the configured GSEA size limits._"))
+    else:
+        gsea_results.to_csv(wgcna_dir / "module_gsea.csv", index=False)
+        display(Markdown(
+            "Genes are ranked by their Pearson correlation with each module eigengene, using all "
+            "selected network genes. Grey/unassigned genes are excluded as modules. Results use "
+            "GO Biological Process 2023; the table includes module-level and global BH-adjusted "
+            "p-values."
+        ))
+        top_gsea = gsea_results.loc[
+            gsea_results.groupby("module", observed=True)["global_fdr"].rank(method="first") <= 10
+        ]
+        display_collapsible_table(
+            top_gsea, "Show the 10 most significant GO terms per module", max_height=560,
+        )
+        plotted_gsea = gsea_results.dropna(subset=["global_fdr"]).head(15).copy()
+        if not plotted_gsea.empty:
+            plotted_gsea["minus_log10_global_fdr"] = -np.log10(
+                plotted_gsea["global_fdr"].clip(lower=1e-300)
+            )
+            plotted_gsea["label"] = plotted_gsea["module"] + ": " + plotted_gsea["gene_set"]
+            figure, axis = plt.subplots(figsize=(10, max(4.5, 0.34 * len(plotted_gsea) + 1.5)))
+            axis.barh(
+                plotted_gsea["label"].iloc[::-1],
+                plotted_gsea["minus_log10_global_fdr"].iloc[::-1],
+                color="#7aa6c2", edgecolor="#38434a", linewidth=0.55,
+            )
+            axis.set(xlabel="−log10(global FDR)", title="Top module GO enrichments")
+            figure.tight_layout()
+            display_collapsible_figure(figure, "Show top module GO enrichments")
     if cmv_results is not None and {"gene", "log2FoldChange", "padj"}.issubset(cmv_results):
         cmv = cmv_results[["gene", "log2FoldChange", "padj"]].copy()
         cmv["log2FoldChange"] = pd.to_numeric(cmv["log2FoldChange"], errors="coerce")
@@ -565,19 +779,32 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results):
         plotted_stability = completed.loc[completed["module"].isin(display_modules)]
         figure, axis = plt.subplots(
             figsize=(
-                max(6, 0.5 * plotted_stability["module"].nunique() + 4),
-                max(4, 0.75 * plotted_stability["held_out_study"].nunique() + 2),
+                max(6, 0.9 * plotted_stability["held_out_study"].nunique() + 4),
+                max(4, 0.36 * plotted_stability["module"].nunique() + 2),
             )
         )
         matrix = plotted_stability.pivot(
-            index="held_out_study", columns="module", values="jaccard_overlap"
+            index="module", columns="held_out_study", values="jaccard_overlap"
         )
-        sns.heatmap(matrix, vmin=0, vmax=1, cmap="mako", annot=True, fmt=".2f", ax=axis,
+        best_matches = plotted_stability.pivot(
+            index="module", columns="held_out_study", values="best_refit_module"
+        ).reindex(index=matrix.index, columns=matrix.columns)
+        labels = matrix.copy().astype(object)
+        for module_name in matrix.index:
+            for study_name in matrix.columns:
+                overlap = matrix.loc[module_name, study_name]
+                match = best_matches.loc[module_name, study_name]
+                labels.loc[module_name, study_name] = (
+                    f"{match}\n{overlap:.2f}" if pd.notna(overlap) and pd.notna(match) else ""
+                )
+        sns.heatmap(matrix, vmin=0, vmax=1, cmap="mako", annot=labels, fmt="",
+                    annot_kws={"fontsize": 7}, ax=axis,
                     cbar_kws={"label": "Best refit-module Jaccard overlap"})
         axis.set(
-            xlabel="Full-data module", ylabel="Held-out study",
+            xlabel="Held-out study", ylabel="Full-data module",
             title="Leave-one-study-out module stability" + figure_label_suffix,
         )
+        axis.tick_params(axis="x", labelrotation=35)
         figure.tight_layout()
         display_collapsible_figure(figure, "Show leave-one-study-out module stability", open_by_default=True)
         display_collapsible_table(
@@ -663,7 +890,7 @@ def plot_residual_cluster_markers(residuals, annotations, settings):
             axis.barh(
                 selected["feature"].iloc[::-1],
                 selected["mean_residual_difference_vs_reference"].iloc[::-1],
-                color="#4c72b0",
+                color="#4c72b0", edgecolor="#38434a", linewidth=0.55,
             )
             axis.axvline(0, color="#555555", linewidth=0.8)
             axis.set_title(f"Cluster {cluster}: {direction} vs. largest cluster")
@@ -724,7 +951,8 @@ def plot_residual_sample_umaps(table, *, minimum_umap_samples):
 
     optional_covariates = [
         covariate for covariate in (
-            "bmi", "cmv", "ethnicity", "technology", "batch_single_cell"
+            "bmi", "cmv", "smoking_status", "ethnicity", "technology",
+            "batch_single_cell"
         ) if covariate in coordinates
     ]
     coordinates["residual_cluster"] = coordinates["residual_cluster"].map(
@@ -736,7 +964,8 @@ def plot_residual_sample_umaps(table, *, minimum_umap_samples):
             ["residual_cluster", *optional_covariates],
             "Residual clusters and non-model covariates over residual UMAP",
             categorical_covariates={
-                "residual_cluster", "cmv", "ethnicity", "technology", "batch_single_cell"
+                "residual_cluster", "cmv", "smoking_status", "ethnicity", "technology",
+                "batch_single_cell"
             },
             figsize=(18, 10.2),
             open_by_default=True,
@@ -986,7 +1215,7 @@ def fit_parent_fraction_models(
     fractions, adata, *, fraction_column, bootstrap_replicates, bootstrap_seed,
 ):
     """Fit adult-only, study-specific OLS models and residual diagnostics."""
-    candidate_covariates = ["age", "sex", "bmi", "cmv"]
+    candidate_covariates = ["age", "sex", "bmi", "cmv", "smoking_status"]
     present = [column for column in candidate_covariates if column in adata.obs]
     metadata_columns = [column for column in present if column != "age"]
     metadata = adata.obs.groupby(["study", "sample"], observed=True)[metadata_columns].first().reset_index()
@@ -999,13 +1228,19 @@ def fit_parent_fraction_models(
     data["age"] = pd.to_numeric(data["age"], errors="coerce")
     if "cmv" in present:
         data["cmv"] = normalize_cmv_status(data["cmv"])
+    if "smoking_status" in present:
+        data["smoking_status"] = normalize_smoking_status(data["smoking_status"])
     data = data.loc[data["age"] >= 20].copy()
     results = []
     residual_diagnostics = []
-    unavailable = {"", "not_provided", "unknown", "nan", "none"}
+    unavailable = {
+        "", "not_provided", "heterogeneous during bulk", "unknown", "nan", "none",
+    }
     bootstrap_rng = np.random.default_rng(bootstrap_seed)
 
     def valid_values(values, column):
+        if column == "smoking_status":
+            return normalize_smoking_status(values).notna()
         if column in {"age", "bmi"}:
             numeric = pd.to_numeric(values, errors="coerce")
             return numeric.notna() & np.isfinite(numeric)
@@ -1021,7 +1256,7 @@ def fit_parent_fraction_models(
             valid = valid_values(eligible[column], column)
             coverage = float(valid.mean()) if len(eligible) else np.nan
             if coverage >= 0.95:
-                if column in {"sex", "cmv"}:
+                if column in {"sex", "cmv", "smoking_status"}:
                     levels = categorical_levels(column, eligible.loc[valid, column])
                     variable = len(levels) >= 2
                 else:
@@ -1088,7 +1323,7 @@ def fit_parent_fraction_models(
             if term == "intercept":
                 continue
             covariate = term_covariates[term]
-            if covariate in {"sex", "cmv"}:
+            if covariate in {"sex", "cmv", "smoking_status"}:
                 levels = categorical_levels(
                     covariate,
                     model_data[covariate].astype("string").str.strip().str.lower(),
@@ -1128,7 +1363,7 @@ def plot_parent_fraction_coefficients(
     if coefficients.empty:
         display(Markdown("_No estimable adult-only study models for this fraction._"))
         return
-    covariate_order = [name for name in ["age", "sex", "bmi", "cmv"]
+    covariate_order = [name for name in ["age", "sex", "bmi", "cmv", "smoking_status"]
                        if name in coefficients["covariate"].unique()]
     studies = sorted(coefficients["study"].unique())
     residual_label = "residual_sd"
@@ -1137,7 +1372,7 @@ def plot_parent_fraction_coefficients(
     for covariate in covariate_order:
         subset = coefficients.loc[coefficients["covariate"] == covariate]
         for contrast in sorted(subset["contrast"].astype(str).unique()):
-            if covariate in {"sex", "cmv"}:
+            if covariate in {"sex", "cmv", "smoking_status"}:
                 label = categorical_contrast_label(
                     covariate, contrast.split(" vs ", maxsplit=1)[0],
                     contrast.split(" vs ", maxsplit=1)[1],
@@ -1303,11 +1538,13 @@ display(Markdown(
 # Each study has a separate ordinary least-squares model with one row per
 # eligible sample aged **20 years or older**. The response is this cell type's
 # fraction of its derived AIFI-L1 parent compartment. Age and BMI are numeric;
-# sex and CMV are categorical treatment-coded terms. A covariate is included
+# sex, CMV, and smoking status are categorical treatment-coded terms. A
+# covariate is included
 # when it is present and observed in at least 95% of adult samples in that
 # study. Models use complete cases for the included covariates, and categorical
-# contrasts use female as the sex reference and no CMV (negative, when that is
-# the source label) as the CMV reference. Age coefficients and intervals are
+# contrasts use female as the sex reference and the no CMV and no smoking-status
+# categories as references (negative CMV labels are normalized to no). Age coefficients and
+# intervals are
 # scaled to a 10-year change. The bottom row compares each model's
 # residual SD with a conditional parametric bootstrap of binomial cell-sampling
 # noise. For donor *i*, the reported OLS model supplies its fitted fraction
@@ -1728,7 +1965,8 @@ if de_dir:
             "sex": 1,
             "bmi": 2,
             "cmv": 3,
-            "log10_total_counts": 4,
+            "smoking_status": 4,
+            "log10_total_counts": 5,
         }
         ordered_combined_covariates = sorted(
             combined_results_by_covariate.items(),
@@ -1740,6 +1978,7 @@ if de_dir:
                 "sex": "Sex",
                 "bmi": "BMI",
                 "cmv": "CMV",
+                "smoking_status": "Smoking status",
                 "log10_total_counts": "log10(total_counts)",
             }.get(covariate, covariate.title())
             covariate_anchor_suffix = re.sub(
@@ -2066,7 +2305,7 @@ if de_dir:
         display(Markdown(
             "_DE interpretation: the recurrence panels emphasize agreement among available per-study "
             "models; each combined volcano summarizes eligible samples with study-site, age, sex, "
-            "and log-total-count adjustment. "
+            "and log-total-count adjustment, plus the target optional covariate when applicable. "
             "In the primary volcano, point color gives the number of available per-study fits "
             "for the same covariate and contrast with FDR-significant association for that gene "
             "(using the displayed FDR threshold); the plotted effect and adjusted p-value come "
@@ -2119,7 +2358,7 @@ if de_dir:
             per_study_summary = pd.DataFrame(per_study_covariate_summary)
             per_study_summary["_covariate_order"] = per_study_summary["covariate"].map({
                 "age": 0, "sex": 1, "bmi": 2, "cmv": 3,
-                "log10_total_counts": 4,
+                "smoking_status": 4, "log10_total_counts": 5,
             }).fillna(99)
             per_study_summary = (
                 per_study_summary
@@ -2136,8 +2375,8 @@ if de_dir:
         display(Markdown(
             "Per-study fits use one maximal available design and also adjust for site when "
             "multiple sites contribute. Missing values exclude a sample only from models whose "
-            "design includes that variable. Categorical effects use female as the sex reference "
-            "and no CMV (negative where that is the source label) as the CMV reference."
+            "design includes that variable. Categorical effects use female as the sex reference, "
+            "no CMV (negative where that is the source label), and no smoking status as references."
         ))
         if summary_rows:
             display_collapsible_table(
@@ -2154,7 +2393,7 @@ if de_dir:
                 "overlap among per-study fits; they do not show the combined-model volcano "
                 "gene universe."
             ))
-            figure, axes = plt.subplots(1, 2, figsize=(14.5, 5.8))
+            figure, axes = plt.subplots(1, 2, figsize=(14.5, 8.7))
             if recurrence.empty:
                 empty_message = (
                     "No genes were tested in every per-study model"
@@ -2207,7 +2446,7 @@ if de_dir:
                 "by every available study would remove from each study's significant-gene list. "
                 "It is a gene-universe sensitivity check, not a replication result. Each row uses "
                 "the displayed single-study design and complete-case sample count; age, sex, BMI, "
-                "and CMV coefficients from the same study therefore come from that one maximal model."
+                "CMV, and smoking-status coefficients from the same study therefore come from that one maximal model."
             ))
             display_collapsible_table(intersection_diagnostics.assign(
                 **{"outside intersection (%)": intersection_diagnostics[
@@ -2271,14 +2510,70 @@ if de_dir:
                             "developmental_effect", "adult_effect",
                             "developmental_padj", "adult_padj",
                         ])
+                        display(Markdown("### Developmental versus adult age effects"))
+                        support_path = de_dir / developmental_age_fit.get(
+                            "age_support_samples", "developmental/age_support_samples.csv",
+                        )
+                        if support_path.is_file():
+                            developmental_support_samples = pd.read_csv(support_path)
+                            if not developmental_support_samples.empty:
+                                support_column = (
+                                    "study_site"
+                                    if "study_site" in developmental_support_samples
+                                    else "study"
+                                )
+                                support_samples = developmental_support_samples.dropna(
+                                    subset=[support_column, "age"],
+                                ).copy()
+                                support_order = sorted(
+                                    support_samples[support_column].astype(str).unique()
+                                )
+                                figure, axis = plt.subplots(
+                                    figsize=(max(10, 0.42 * len(support_order) + 5), 4.8)
+                                )
+                                sns.stripplot(
+                                    data=support_samples,
+                                    x=support_column,
+                                    y="age",
+                                    hue="sex" if "sex" in support_samples else None,
+                                    order=support_order,
+                                    hue_order=(
+                                        sorted(support_samples["sex"].dropna().astype(str).unique())
+                                        if "sex" in support_samples else None
+                                    ),
+                                    dodge="sex" in support_samples,
+                                    jitter=0.18,
+                                    alpha=0.8,
+                                    ax=axis,
+                                )
+                                axis.set_xlabel(
+                                    "Study site" if support_column == "study_site" else "Study"
+                                )
+                                axis.set_ylabel("Age (years)")
+                                axis.set_title("Developmental age support by study site ([0,20) years)")
+                                axis.tick_params(axis="x", rotation=75, labelsize=7)
+                                if axis.legend_ is not None:
+                                    axis.legend(title="Sex", fontsize=8, title_fontsize=8)
+                                figure.tight_layout()
+                                display_collapsible_figure(
+                                    figure,
+                                    "Developmental age support by study site",
+                                    open_by_default=True,
+                                )
+                            else:
+                                display(Markdown("_No samples were retained for the [0,20) age-support plot._"))
+                        else:
+                            display(Markdown(
+                                "_Developmental sample-level support is unavailable; rerun the DE fit to publish it._"
+                            ))
                         display(Markdown(
-                            "### Developmental versus adult age effects\n\n"
-                            "Each point is a gene, comparing its raw age coefficient from the "
-                            "0–30-year fit with its coefficient from the adult fit (ages ≥20). "
-                            "Points require a non-missing adjusted p-value in both fits, which is "
-                            "PyDESeq2’s independent expression filter; no significance cutoff is "
-                            "used. The age ranges overlap from 20–30, so this is a descriptive "
-                            "comparison. Both panels use the same color scale."
+                            "Each point in the scatterplots is a gene, comparing its raw age "
+                            "coefficient from the [0,20)-year fit with its coefficient from the "
+                            "adult fit (ages ≥20). Points require a non-missing adjusted p-value "
+                            "in both fits, which is PyDESeq2’s independent expression filter; no "
+                            "significance cutoff is used. The developmental range is [0,20) and "
+                            "the adult range starts at 20, so the age ranges do not overlap. "
+                            "Both panels use the same color scale."
                         ))
                         if plot_age_effects.empty:
                             display(Markdown(
@@ -2336,7 +2631,7 @@ if de_dir:
                                 axis.set(
                                     xlim=(-effect_limit, effect_limit),
                                     ylim=(-effect_limit, effect_limit),
-                                    xlabel="Developmental age effect (0–30 years)\n"
+                                    xlabel="Developmental age effect ([0,20) years)\n"
                                     "raw log2 fold change per year",
                                     ylabel="Adult age effect (ages ≥20)\n"
                                     "raw log2 fold change per year",
@@ -2660,17 +2955,21 @@ if de_dir:
                 residual_clusters,
                 settings=wgcna_settings,
                 cmv_results=load_merged_cmv_results(de_dir),
+                smoking_results=load_merged_smoking_results(de_dir),
             )
             publish_residual_wgcna(residual_wgcna)
             display(Markdown(
                 "PyWGCNA fits a signed correlation network to the age-bin-model Pearson "
                 "residuals, after retaining the configured most variable genes. The residual "
                 "model already accounts for age bins, sex, study site, and pseudobulk depth. "
-                "CMV was omitted from that model, so the diagnostics below test whether CMV "
-                "is detectable in the residual modules. The module-level gene-set test uses "
-                "FDR-significant genes from the merged CMV model, with the selected network "
-                "genes as its background; the eigengene check is a point-biserial correlation "
-                "with observed yes/no CMV status. Both are descriptive checks."
+                "CMV and smoking are omitted from that model, so these checks focus on two "
+                "plausible sources of remaining biological structure in its residual modules. "
+                "When its merged model is available, the module gene-overlap check uses "
+                "FDR-significant genes from that model and the selected network genes as background; the "
+                "eigengene check is a point-biserial association with observed yes/no status. "
+                "The selected exposures are examined because they were not adjusted out of the "
+                "residual model, not because residual effects are assumed to be present. These "
+                "are exploratory, unadjusted checks."
             ))
             display(Markdown(
                 f"The network used **{residual_wgcna.metadata['n_samples']:,} samples** and "
@@ -2690,4 +2989,5 @@ if de_dir:
                 residual_clusters,
                 wgcna_settings,
                 load_merged_cmv_results(de_dir),
+                load_merged_smoking_results(de_dir),
             )

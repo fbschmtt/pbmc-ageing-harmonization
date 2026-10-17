@@ -73,8 +73,9 @@ It runs the core pipeline on available downsampled real-data fixtures, checks
 the integration benchmark, fits and checks a generated pseudobulk fixture for
 positive DE coverage, profiles two top age-associated genes per cell type,
 smoke-tests a focused gene report, and renders single cell analysis reports
-from the real merge plus per-type DE reports from the synthetic fixture. The benchmark artifact retains
-labels and UMAP coordinates without raw counts or neighbour graphs. Use
+from the real merge plus per-type DE reports from the synthetic fixture. The
+benchmark artifact retains sampled-cell labels, UMAP coordinates, and neighbour
+graphs without raw counts. Use
 `STUDIES=<list>` to select a different core-test set. Existing fixtures are preserved; use
 `TEST_DATA_OVERWRITE=true` only to refresh them.
 
@@ -381,16 +382,24 @@ explicitly unreported fields, while numeric metadata uses `NaN`. The pseudobulk 
 union retains all input counts. Shared-gene availability, hypothetical count
 loss under the all-study intersection, and the highest-count excluded gene are
 reported with the cross-cell-type expression atlas, where that intersection is
-actually used. Global UMAPs and benchmark AIFI-L2 comparisons belong to the
-separate integration benchmark.
+actually used. Cross-study UMAP and benchmark AIFI-L2 comparisons belong to the
+separate integration benchmark; they are computed on its sampled cells and do
+not provide a full-data embedding.
 The merged artifact retains per-study labels in `aifi_l2_majority` for all
 downstream grouping and splitting. Run `make run-integration-benchmark` after
 the core workflow to create a diagnostic H5AD with unintegrated PCA, Harmony,
 Scanorama, and BBKNN representations, their neighbor graphs, and CellTypist
-labels majority-voted on each graph. The artifact does not duplicate the
-merged expression matrix. The report compares graph edge overlap and per-study versus benchmark
-AIFI-L2 label concordance; these are diagnostic comparisons, not acceptance
-thresholds.
+labels majority-voted on each graph. By default, the benchmark selects at most
+2,000,000 cells uniformly at random without replacement from the merged H5AD.
+The selection uses `processing.random_seed` (42 by default) and is shared by all
+methods. Set `integration_benchmark.max_cells` in `config/pipeline.json` to
+change the cap. The report and JSON sidecar record the source and sampled cell
+counts, fraction, strategy, and seed. Consequently, its embeddings, graph
+comparisons, and label concordance describe the sample, not cells omitted from
+it. The input is opened in backed mode so only selected rows are materialized
+for analysis. The published artifact does not duplicate the merged expression
+matrix. Graph edge overlap and per-study versus benchmark AIFI-L2 label
+concordance are diagnostic comparisons, not acceptance thresholds.
 Timestamped benchmark stage progress is captured in the Nextflow task log
 (`.command.out` and `.command.err` in that task's `work/` directory), like
 other process output. The terminal shows Nextflow task progress. Set
@@ -663,6 +672,32 @@ The workflow intentionally uses different gene universes for different tasks:
 | Combined DE | Intersection across studies included in that fit | Prevents study-absent outer-join zeros from entering the model. |
 | Study-balanced expression atlas | Intersection across all studies | Makes its equally study-weighted expression values comparable. |
 
+### Covariate policy across analyses
+
+The general rule is to use the broadest adjustment set that the analysis
+population can support. For a covariate-focused estimate, use the largest
+study set with usable observations and enough variation to estimate the target
+contrast. Missing or unclear values are excluded from that model; they are not
+treated as another biological level. Each model records its design, included
+studies, and sample counts so the actual support can be checked.
+
+| Analysis | Covariate use and sample selection |
+|---|---|
+| Per-study DE | Uses age, sex, library depth, and study site when estimable, plus each optional covariate (BMI, CMV, smoking) that varies in that study. Samples missing a term in that model are excluded. This is the maximal varying optional-covariate set within each study. |
+| Combined primary age DE | Uses the configured core terms: study site when estimable, age, sex, and library depth. It does not add every optional covariate, which would unnecessarily restrict the shared age-analysis cohort when those fields are sparsely recorded. |
+| Combined covariate-focused DE | Fits one optional covariate at a time on top of the core terms. It uses complete cases and retains studies with usable observations; smoking is explicitly `yes vs no` with `no` as the reference. Unlike abundance models, DE has no 95% coverage rule. The current fit checks variation and estimability across the combined design, but does not impose a minimum sample count in each study or exposure group; inspect the recorded study counts before interpreting a focused result. |
+| Developmental versus adult age effects | Fits the developmental model on ages [0,20) and compares its gene-level age coefficients with the adult model (ages ≥20). The report shows developmental age support by study site and sex before the effect scatterplots; the two ranges meet at age 20 without overlap. |
+| Age-trajectory DE | Replaces continuous age with age bins and retains the other core terms. It uses the configured age and bin-support filters; optional covariates are not added. |
+| Abundance changes | Fits adult-only, study-specific OLS models. Within each study, an optional covariate is included only if at least 95% of adult samples have a valid value and it varies. The model then uses complete cases across its selected terms. Smoking accepts only `yes` and `no`; other values are missing. These are study-specific estimates, not a pooled abundance effect. |
+| Gene profiles | The PyDESeq2 age model uses the combined primary design. The exploratory age-bin model uses the same core adjustments; the per-study-slope and mixed models adjust for sex and library depth. These profile models do not add BMI, CMV, or smoking. |
+| Expression atlas and residual WGCNA | Atlas technology contrasts are descriptive, not covariate-adjusted DE. WGCNA's metadata associations are post-fit associations with module eigengenes, not covariate adjustment in the gene-level fit. |
+
+For a future covariate-focused analysis with a within-study support rule, define
+the minimum sample and group counts explicitly before fitting. The current
+combined DE implementation uses complete cases and global design
+estimability, so it can retain a study even when that study does not contain
+both levels of a categorical contrast.
+
 The separate `differential_expression.nf` workflow consumes the merged
 sample-level pseudobulk H5AD. It first lists retained per-study
 `aifi_l2_majority` labels, then runs one independent task per label. Each task
@@ -673,8 +708,13 @@ available optional covariates. The merged age-and-sex model uses
 `~ study_site + age + sex + log10_total_counts` across studies. `log10(total_counts)`
 from each pseudobulk is included as a technical covariate in all DE models and
 its coefficient is shown in the combined-model result tables. When
-present and variable, BMI and CMV each receive separate combined fits adjusted
-for study site, age, sex, and log10 total counts.
+present and variable, BMI, CMV, and smoking status each receive separate
+combined fits adjusted for study site, age, sex, and log10 total counts.
+DE fits have no minimum covariate-coverage percentage: an optional term enters
+a per-study design when it varies, and each fit uses complete cases for its
+own design. Smoking status is accepted only as `yes` or `no`; other labels are
+treated as missing. Its categorical contrast is `yes vs no`, with `no` as the
+reference.
 DESeq2 estimates size factors to normalize library depth, and this additional
 depth term adjusts for the age-associated pseudobulk-depth pattern observed in
 Naive CD8 T cells, in addition to size-factor normalization. It is included in
@@ -699,9 +739,15 @@ bootstrap, and plot implementation moved from the cell-type report section.
 Denominator and bootstrap settings are configured under
 `differential_expression.abundance`; diagnostics are published alongside each
 per-type DE report.
-Combined fits include studies with usable values for that covariate and report
-the studies, sites, and sample counts used. The site term is dropped when only
-one site remains. A final collector writes the result directories and manifest.
+
+The report fits adult-only (age ≥20), study-specific OLS models. A candidate
+covariate is included only when at least 95% of that study's adult samples have
+valid values and it varies; the fit then uses complete cases across all
+included covariates. Smoking status is accepted only as `yes` or `no`; other
+labels are treated as missing, and its contrast is `yes vs no` with `no` as
+the reference. This 95% rule applies to the abundance models, not the DE fits.
+The site term is dropped when only one site remains. A final collector writes
+the result directories and manifest.
 Per-type DE reports show model status and result tables, with up to 25 rows per
 fit sorted by adjusted p-value. The gene-universe table above is the canonical
 definition of which genes enter each fit. The parallel type-fitting task is
@@ -714,7 +760,9 @@ model status and result tables for available per-study and combined fits.
 summarizes shared age trajectories, cross-type recurrence, and Pearson-residual
 structure, and includes a descriptive, study-balanced expression atlas with
 gene availability, count-loss diagnostics, expression maps, and technical-
-label contrasts. These are exploratory outputs, not covariate-adjusted
+label contrasts. It also reports unique sample counts per technical batch
+within each study site to show batch-size imbalance and batch coverage. These
+are exploratory outputs, not covariate-adjusted
 estimates of absolute RNA abundance. Per-type DE results are stored under each type's
 `analysis/per_type/<cell-type-slug>/differential_expression/`; combined DE and
 cross-type artifacts are under `analysis/combined/`. See
@@ -727,8 +775,24 @@ fraction views. They do not consume the DE manifest. The residual WGCNA helper
 is run by each per-type DE report from the fitted age-bin residual matrix. The
 report includes soft-threshold and sample-connectivity diagnostics, eigengene
 structure and covariate associations, hub genes, CMV evidence, and
-leave-one-study-out module stability. Its tables are published beside the
-report under `residual_wgcna/`. To keep large networks readable, module-indexed
+leave-one-study-out module stability. Module GSEA ranks all selected network
+genes by correlation with each module eigengene and tests GO Biological Process
+2023 terms; it uses GSEApy's online Enrichr library and publishes the results
+as `module_gsea.csv`. The strongest CMV- and smoking-associated modules are
+also plotted on the residual UMAP and by observed yes/no/not-provided status.
+Binary covariate heatmap values are
+signed point-biserial correlations; multi-level categorical values are η², the
+fraction of eigengene variance explained by category membership. These are
+descriptive post-fit associations, not adjusted effects. CMV and smoking are
+checked because the residual model adjusts for age bins, sex, study site, and
+depth but omits these two plausible sources of biological residual structure.
+The checks ask whether omitted traits remain associated with modules; they do
+not assume that such effects are present. WGCNA color names are module IDs,
+not biological classes. Grey is the special unassigned-gene label, so it is
+excluded from module GSEA because those genes do not form a coherent module.
+Module colors are assigned independently when a network is fit, so color names
+are not stable across fits; leave-one-study-out matches use shared genes instead.
+The tables are published beside the report under `residual_wgcna/`. To keep large networks readable, module-indexed
 figures show at most the 25 largest modules and state when that limit applies;
 the complete module-level tables remain available in that directory.
 
@@ -810,6 +874,17 @@ VST matrix and the included sample metadata under
 `<outdir>/analysis/per_gene/<cell-type-slug>/<gene-slug>/`. VST values are
 transformed data for downstream exploration and modeling; differential
 expression inference should continue to use raw integer counts.
+
+The focused profile refits the combined primary age DESeq2 model from the
+pseudobulk input, then caches that fit under
+`<outdir>/analysis/per_gene/<cell-type-slug>/.model_fit_cache/` for other gene
+profiles of the same cell type. It does not currently reuse a fitted model
+from `run-de`; that workflow publishes coefficient tables and fit metadata,
+not a reusable fitted PyDESeq2 object. A shared fit artifact would be cleaner
+for the matching combined primary design, provided it records and matches the
+exact included samples, gene universe, design, and software version. Per-study
+fits and covariate-focused fits have different samples or designs and must not
+be substituted for that age model.
 
 To smoke-test the complete fit and report with planted synthetic expression,
 run `make run-gene-profile-synthetic-test`. It writes the pseudobulk fixture to
@@ -897,15 +972,16 @@ Each study has one maximal DE model: `study_site` when it varies, age, sex,
 log10 total counts, and every optional covariate with at least two observed
 values. All coefficients for that study therefore come from one formula and
 complete-case sample set.
-A missing BMI or CMV value
+A missing BMI, CMV, or smoking-status value
 excludes that pseudobulk only from models containing that term; one missing
 value removes one row. Combined models target one covariate at a time, using
 all complete-case samples from studies that recorded it and adjusting for
 study site, age, sex, and log10 total counts. The site term is omitted when one
-site remains. CMV
-negative/positive values are harmonized
-to no/yes. Categorical result tables name their comparison groups, including
-male versus female and yes CMV versus no CMV.
+site remains. CMV negative/positive values are harmonized to no/yes. Smoking
+status is modeled only as yes/no, with no as the reference group; other labels
+are treated as missing. Categorical result tables name their
+comparison groups, including male versus female, yes CMV versus no CMV, and
+yes versus no smoking status.
 
 ## Further reading
 

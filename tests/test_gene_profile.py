@@ -15,10 +15,37 @@ from pbmc_pipeline.gene_profile_report import (
     format_model_results,
     generate_gene_profile_report,
 )
-from scripts.profile_gene import _exploratory_infant_adult_contrast, _fit_profile
+from scripts.profile_gene import (
+    _exploratory_infant_adult_contrast,
+    _fit_profile,
+    _prepare_model_for_cache,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 PIPELINE_PATH = ROOT / "config" / "pipeline.json"
+
+
+def test_profile_model_cache_drops_series_metadata_before_h5ad_write(tmp_path) -> None:
+    obs = pd.DataFrame({"status": pd.Series(["yes", "no"], dtype="string")})
+    model = ad.AnnData(
+        X=np.array([[1], [2]], dtype=np.int64),
+        obs=obs,
+        var=pd.DataFrame(index=["GENE1"]),
+    )
+    model.layers["fitted"] = np.array([[1.1], [1.9]])
+    model.obsm["design_matrix"] = np.array([[1.0], [0.0]])
+    model.uns["trend_coeffs"] = pd.Series([1.0, 2.0])
+    model.uns["vst_trend_coeffs"] = pd.Series([3.0, 4.0])
+
+    _prepare_model_for_cache(model)
+    cache_path = tmp_path / "fitted_model.h5ad"
+    model.write_h5ad(cache_path)
+    restored = ad.read_h5ad(cache_path)
+
+    assert restored.uns == {}
+    assert restored.layers["fitted"].tolist() == [[1.1], [1.9]]
+    assert restored.obsm["design_matrix"].tolist() == [[1.0], [0.0]]
+    assert restored.obs["status"].tolist() == ["yes", "no"]
 def test_profile_gene_rejects_study_specific_gene_before_fitting(tmp_path) -> None:
     rows = []
     for study in ("synthetic_study_a", "synthetic_study_b"):

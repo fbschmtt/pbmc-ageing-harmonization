@@ -157,6 +157,7 @@ def cluster_sample_residuals(
                 metric="euclidean",
                 cluster_selection_method=settings.residual_hdbscan_cluster_selection_method,
                 allow_single_cluster=False,
+                copy=False,
             ).fit_predict(embedding)
         else:
             umap_hdbscan_labels = np.full(len(scores), -1, dtype=int)
@@ -191,6 +192,7 @@ def cluster_sample_residuals(
             metric="euclidean",
             cluster_selection_method=settings.residual_hdbscan_cluster_selection_method,
             allow_single_cluster=False,
+            copy=False,
         ).fit_predict(scores[:, :pc_hdbscan_dimensions])
     else:
         pc_hdbscan_labels = np.full(len(scores), -1, dtype=int)
@@ -218,7 +220,7 @@ def cluster_sample_residuals(
                 resolution=resolution,
                 key_added=column,
                 random_state=settings.random_state,
-                flavor="leidenalg",
+                flavor="igraph",
                 directed=False,
             )
             leiden_labels[resolution] = (
