@@ -65,7 +65,10 @@ html { scroll-behavior: smooth; scroll-padding-top: 1.25rem; }
 .report-provenance table { margin-top: .8rem; }
 .report-details { margin: .75rem 0; padding: .65rem .85rem; border: 1px solid var(--report-line); border-radius: 9px; background: var(--report-paper); }
 .report-details summary { cursor: pointer; color: var(--report-accent); font-weight: 650; }
-.report-details table { width: 100%; margin-top: .7rem; border-collapse: collapse; }
+.report-table-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
+.report-table-scroll table { width: max-content; min-width: 100%; margin-top: .7rem; border-collapse: collapse; }
+.report-table-scroll th { white-space: nowrap; }
+.report-table-scroll td { max-width: 24rem; overflow-wrap: anywhere; }
 .report-details th { background: #edf3f6; color: #263544; font-weight: 700; }
 .report-details th, .report-details td { padding: .4rem .6rem; border: 1px solid var(--report-line); vertical-align: top; }
 .report-details-figure img { display: block; max-width: 100%; height: auto; margin: .75rem auto .1rem; }

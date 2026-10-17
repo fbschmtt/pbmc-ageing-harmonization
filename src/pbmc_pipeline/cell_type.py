@@ -62,71 +62,58 @@ def add_unintegrated_umap(adata, pipeline: dict) -> str:
 
 
 def split_cell_types(input_path: Path, output_dir: Path, manifest_path: Path, pipeline: dict) -> dict:
-    """Load the global merge once and write one raw-count H5AD per AIFI L2 type."""
-    import scanpy as sc
+    """Write raw-count H5AD splits while keeping the merged matrix on disk."""
+    import anndata as ad
 
     split_by = pipeline["cell_type_analysis"]["split_by"]
-    adata = sc.read_h5ad(input_path)
-    if split_by not in adata.obs:
-        raise ValueError(f"{input_path}: split column {split_by!r} is absent")
-    labels = adata.obs[split_by].astype("string")
-    if labels.isna().any() or (labels.str.strip() == "").any():
-        raise ValueError(f"{input_path}: split column {split_by!r} contains missing labels")
-    _add_sample_cell_counts(adata, pipeline["cell_type_analysis"]["l2_parent_l1"], split_by)
+    # Backed mode keeps the large sparse expression matrix in the merged file.
+    # Only the current type's rows are materialized before writing its split.
+    adata = ad.read_h5ad(input_path, backed="r")
     output_dir.mkdir(parents=True, exist_ok=True)
     records, used_slugs = [], set()
-    for label in sorted(labels.unique().tolist()):
-        slug = slugify(str(label))
-        if slug in used_slugs:
-            raise ValueError(f"Cell-type labels produce the same output name: {label!r} -> {slug!r}")
-        used_slugs.add(slug)
-        subset = adata[labels == label].copy()
-        subset.obsm.clear()
-        subset.obsp.clear()
-        subset.uns = {
-            "pipeline_provenance": {
-                "artifact_kind": "cell_type_split",
-                "input": str(input_path),
-                "split_by": split_by,
-                "cell_type": str(label),
+    try:
+        if split_by not in adata.obs:
+            raise ValueError(f"{input_path}: split column {split_by!r} is absent")
+        # Keep the original column rather than making a second full-size string
+        # array for large merges. Check empty labels against the small unique set.
+        labels = adata.obs[split_by]
+        if labels.isna().any():
+            raise ValueError(f"{input_path}: split column {split_by!r} contains missing labels")
+        unique_labels = labels.unique().tolist()
+        if any(not str(label).strip() for label in unique_labels):
+            raise ValueError(f"{input_path}: split column {split_by!r} contains missing labels")
+        for label in sorted(unique_labels, key=str):
+            slug = slugify(str(label))
+            if slug in used_slugs:
+                raise ValueError(f"Cell-type labels produce the same output name: {label!r} -> {slug!r}")
+            used_slugs.add(slug)
+            selected = (labels == label).to_numpy(dtype=bool, na_value=False, copy=False)
+            subset = adata[selected].to_memory()
+            del selected
+            subset.obsm.clear()
+            subset.obsp.clear()
+            subset.uns = {
+                "pipeline_provenance": {
+                    "artifact_kind": "cell_type_split",
+                    "input": str(input_path),
+                    "split_by": split_by,
+                    "cell_type": str(label),
+                }
             }
-        }
-        _normalize_nullable_strings_for_h5ad(subset)
-        path = output_dir / f"{slug}.h5ad"
-        subset.write_h5ad(path, compression=pipeline["processing"]["output_compression"])
-        records.append({"cell_type": str(label), "slug": slug, "n_cells": int(subset.n_obs), "path": path.name})
+            _normalize_nullable_strings_for_h5ad(subset)
+            path = output_dir / f"{slug}.h5ad"
+            subset.write_h5ad(path, compression=pipeline["processing"]["output_compression"])
+            records.append({
+                "cell_type": str(label), "slug": slug,
+                "n_cells": int(subset.n_obs), "path": path.name,
+            })
+            del subset
+    finally:
+        adata.file.close()
     document = {"kind": "cell_type_split", "input": str(input_path), "split_by": split_by, "cell_types": records}
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(document, indent=2) + "\n")
     return document
-
-
-def _add_sample_cell_counts(adata, parent_map: dict[str, str], split_by: str) -> None:
-    """Record retained-PBMC and L2-derived parent-compartment denominators before splitting."""
-    groupby = ["study", "sample"]
-    missing = set(groupby) - set(adata.obs)
-    if missing:
-        raise ValueError(f"Sample cell counts require columns: {sorted(missing)}")
-    adata.obs["n_cells_in_sample"] = (
-        adata.obs.groupby(groupby, observed=True)["study"].transform("size").astype(int)
-    )
-    # The merged L2 annotation is the sole taxonomy source for this analysis.
-    # Do not mix in ``aifi_l1_majority``: it comes from a separate classifier
-    # pass and can disagree with the refreshed merged L2 label. Map *every*
-    # retained cell from L2 to its configured theoretical L1 parent first, then
-    # count study × sample × parent on that derived assignment.
-    parents = adata.obs[split_by].astype(str).map(parent_map)
-    if parents.isna().any():
-        unknown = sorted(adata.obs.loc[parents.isna(), split_by].astype(str).unique())
-        raise ValueError(f"Missing configured AIFI L2 → L1 parent mapping for: {unknown}")
-    adata.obs["aifi_l1_parent_for_l2"] = parents.astype(str)
-    parent_groupby = [*groupby, "aifi_l1_parent_for_l2"]
-    adata.obs["n_cells_in_sample_l1_parent"] = (
-        adata.obs.groupby(parent_groupby, observed=True)["study"].transform("size").astype(int)
-    )
-    # Future: add other L2-derived n_cells_in_sample_compartment denominators
-    # before splitting to support additional hierarchy views without external
-    # inputs. Keep all such denominators on this one derived taxonomy.
 
 
 def analyse_cell_type(input_path: Path, output_dir: Path, pipeline: dict) -> dict:
@@ -137,12 +124,18 @@ def analyse_cell_type(input_path: Path, output_dir: Path, pipeline: dict) -> dic
     spec = pipeline["cell_type_analysis"]
     output_dir.mkdir(parents=True, exist_ok=True)
     cell_types = adata.obs["aifi_l2_majority"].astype(str).unique()
-    parents = adata.obs["aifi_l1_parent_for_l2"].astype(str).unique()
-    if len(cell_types) != 1 or len(parents) != 1:
+    if len(cell_types) != 1:
         raise ValueError(f"{input_path}: expected exactly one configured L2 type and parent L1")
+    parent = spec.get("l2_parent_l1", {}).get(cell_types[0])
+    if parent is None:
+        raise ValueError(
+            f"{input_path}: no configured AIFI L2 → L1 parent mapping for {cell_types[0]!r}"
+        )
+    # Parent L1 is report metadata derived from the shipped taxonomy. Keep it
+    # out of both the raw-count split and the analysis AnnData observations.
     report = {
         "kind": "cell_type_analysis", "status": "complete", "input": str(input_path),
-        "cell_type": cell_types[0], "aifi_l1_parent": parents[0],
+        "cell_type": cell_types[0], "aifi_l1_parent": parent,
         "n_cells": int(adata.n_obs), "n_genes": int(adata.n_vars),
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
     }

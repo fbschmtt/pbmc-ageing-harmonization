@@ -47,8 +47,8 @@ def test_split_cell_types_writes_raw_count_partitions_without_global_embedding(t
     assert split.obs_names.tolist() == ["a", "b"]
     assert not split.obsm
     assert split.X.toarray().tolist() == [[1, 0], [2, 3]]
-    assert split.obs["n_cells_in_sample"].tolist() == [2, 2]
-    assert split.obs["n_cells_in_sample_l1_parent"].tolist() == [2, 2]
+    assert "n_cells_in_sample" not in split.obs
+    assert "n_cells_in_sample_l1_parent" not in split.obs
     assert json.loads((tmp_path / "cell_types.json").read_text())["split_by"] == "aifi_l2_majority"
 
 
@@ -72,7 +72,10 @@ def test_analysis_marks_small_cell_type_without_attempting_an_embedding(tmp_path
     primitive.write_h5ad(input_path)
     pipeline = {
         "processing": {"output_compression": "gzip"},
-        "cell_type_analysis": {"min_cells": 4},
+        "cell_type_analysis": {
+            "min_cells": 4,
+            "l2_parent_l1": {"Naive CD4 T cell": "T cell"},
+        },
     }
 
     report = analyse_cell_type(input_path, tmp_path / "analysis", pipeline)
@@ -171,6 +174,7 @@ def test_analysis_uses_harmony_for_local_neighbors_but_keeps_native_pcs(tmp_path
         },
         "cell_type_analysis": {
             "min_cells": 5, "clustering": {"resolution": 0.5},
+            "l2_parent_l1": {"Naive CD4 T cell": "T cell"},
             "integration": {"method": "harmony", "batch_key": "study", "adjusted_basis": "X_pca_harmony"},
         },
     }

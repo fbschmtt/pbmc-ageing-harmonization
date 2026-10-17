@@ -37,7 +37,6 @@ def generate_cell_type_report(
         "CELL_TYPE_OUTPUT_DIR": str(output_dir.resolve()),
         "CELL_TYPE_CONFIG": str(config_path.resolve()),
     })
-    env.pop("CELL_TYPE_DIFFERENTIAL_EXPRESSION_DIR", None)
     with tempfile.TemporaryDirectory(prefix="pbmc-cell-type-notebook-") as temporary_dir:
         materialized_template = Path(temporary_dir) / f"{template_path.stem}.ipynb"
         subprocess.run([sys.executable, "-m", "jupytext", "--to", "notebook", "--output", str(materialized_template), str(template_path.resolve())], check=True, env=env)

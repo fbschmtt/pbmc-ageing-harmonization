@@ -73,7 +73,7 @@ validate-study validate-test validate-full test-data download-inputs images imag
 	check-synthetic-de-results check-synthetic-de-reports check-de-prerequisites \
 	check-cell-type-prerequisites check-cell-type-analysis-test-prerequisites check-cell-type-test-prerequisites \
 	check-cell-type-render-prerequisites check-cell-type-test-render-prerequisites \
-	check-cell-type-reports-prerequisites clean clean-core-output clean-analysis-output clean-work
+	check-cell-type-reports-prerequisites
 
 help: ## Show available development commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target> [STUDIES=<comma-separated-list>]\n\n"} /^[a-zA-Z_-]+:.*## / {printf "  %-31s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -202,7 +202,7 @@ run-de-test: check-de-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Fit DE and re
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 render-de-reports: image-python ## Render per-type DE reports from existing model results
-	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) pbmc-differential-expression-report --input-dir "$(PER_TYPE_DIR)" --output-root "$(PER_TYPE_DIR)" --template reports/cell_type_report.py --config config/pipeline.json --project-root .
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) pbmc-differential-expression-report --input-dir "$(PER_TYPE_DIR)" --output-root "$(PER_TYPE_DIR)" --template reports/differential_expression_report.py --config config/pipeline.json --project-root .
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 render-de-reports-test: OUTDIR = output/test
@@ -382,15 +382,3 @@ render-cell-type-reports-test: OUTDIR = output/test
 render-cell-type-reports-test: check-cell-type-reports-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Rerender all test cell-type reports from existing artifacts
 	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --cell_type_input "$(OUTDIR)/analysis/per_type/*/split.h5ad" --cell_type_analysis_input "$(OUTDIR)/analysis/per_type/*/analysis" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
-
-clean-work: ## Delete completed Nextflow cache entries (destructive)
-	$(NXF) clean -f
-
-clean: ## Delete all published workflow outputs, including output/test; preserve Nextflow cache
-	rm -rf output
-
-clean-core-output: ## Delete all published production outputs, preserving output/test and the Nextflow cache
-	rm -rf output/harmonization output/analysis output/run_manifest.json output/prepared output/harmonized output/pseudobulk output/merged output/provenance output/harmonization_qc output/integration_benchmark output/differential_expression output/cell_type_analysis output/cell_type_splits output/gene_profiles output/synthetic_de output/gene_profile_synthetic output/top_age_gene_profiles
-
-clean-analysis-output: ## Delete all published production analysis outputs, preserving core and output/test
-	rm -rf output/analysis output/differential_expression output/cell_type_analysis output/cell_type_splits output/gene_profiles output/top_age_gene_profiles

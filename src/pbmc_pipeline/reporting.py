@@ -94,23 +94,29 @@ def pseudobulk_celltype_fractions(obs: pd.DataFrame) -> pd.DataFrame:
 
 
 def sample_cell_type_fractions(
-    adata, *, denominator: str, fraction_name: str, min_denominator_cells: int = 1
+    adata, *, denominator: str, fraction_name: str, min_denominator_cells: int = 1,
+    count_column: str | None = None,
 ) -> pd.DataFrame:
-    """Summarize eligible samples for one split type against a cell-count denominator."""
+    """Summarize sample fractions from cell rows or weighted pseudobulk rows."""
     if not isinstance(min_denominator_cells, int) or min_denominator_cells < 1:
         raise ValueError("min_denominator_cells must be a positive integer")
     required = {"study", "sample", "age", denominator}
+    if count_column is not None:
+        required.add(count_column)
     missing = required - set(adata.obs)
     if missing:
         raise ValueError(f"Sample cell-type fractions require columns: {sorted(missing)}")
     grouped = adata.obs.groupby(["study", "sample"], observed=True)
-    result = grouped.agg(
-        age=("age", "first"),
-        n_cells_type=("study", "size"),
-        denominator_cells=(denominator, "first"),
-        n_unique_ages=("age", "nunique"),
-        n_unique_denominators=(denominator, "nunique"),
-    ).reset_index()
+    aggregations = {
+        "age": ("age", "first"),
+        "denominator_cells": (denominator, "first"),
+        "n_unique_ages": ("age", "nunique"),
+        "n_unique_denominators": (denominator, "nunique"),
+    }
+    aggregations["n_cells_type"] = (
+        (count_column, "sum") if count_column is not None else ("study", "size")
+    )
+    result = grouped.agg(**aggregations).reset_index()
     if (result["n_unique_ages"] > 1).any() or (result["n_unique_denominators"] > 1).any():
         raise ValueError("Age and sample cell count must be constant within each study × sample")
     result[fraction_name] = result["n_cells_type"] / result["denominator_cells"]

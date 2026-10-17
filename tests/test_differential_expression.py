@@ -17,6 +17,7 @@ from pbmc_pipeline.differential_expression import (
     _prepare_developmental_metadata,
     _prepare_metadata,
     _run_model,
+    _sample_abundance_input,
     _write_age_model_diagnostics,
     combine_cell_type_differential_expression,
     list_pseudobulk_cell_types,
@@ -30,6 +31,41 @@ ROOT = Path(__file__).resolve().parents[1]
 TRAJECTORY_SETTINGS = AgeTrajectorySettings.from_mapping(
     read_json(ROOT / "config/pipeline.json")["differential_expression"]["age_trajectory"]
 )
+
+
+def test_sample_abundance_input_includes_zero_types_and_groups_by_study_and_sample() -> None:
+    obs = pd.DataFrame({
+        "study": ["study_a"] * 5 + ["study_b"],
+        "sample": ["shared"] * 3 + ["zero_type"] * 2 + ["shared"],
+        "age": [30] * 3 + [40] * 2 + [50],
+        "sex": ["female"] * 3 + ["male"] * 2 + ["female"],
+        "n_cells": [2, 3, 5, 4, 6, 7],
+        "aifi_l2_majority": ["T1", "T2", "Other", "T2", "Other", "Other"],
+    })
+
+    abundance = _sample_abundance_input(
+        obs,
+        {"T1": "T parent", "T2": "T parent", "Other": "Other parent"},
+        "T1",
+    ).set_index(["study", "sample"])
+
+    assert abundance["n_cells_in_sample"].to_dict() == {
+        ("study_a", "shared"): 10,
+        ("study_a", "zero_type"): 10,
+        ("study_b", "shared"): 7,
+    }
+    assert abundance["n_cells_in_sample_l1_parent"].to_dict() == {
+        ("study_a", "shared"): 5,
+        ("study_a", "zero_type"): 4,
+        ("study_b", "shared"): 0,
+    }
+    assert abundance["n_cells"].to_dict() == {
+        ("study_a", "shared"): 2,
+        ("study_a", "zero_type"): 0,
+        ("study_b", "shared"): 0,
+    }
+    assert abundance["aifi_l2_majority"].unique().tolist() == ["T1"]
+    assert abundance["aifi_l1_parent_for_l2"].unique().tolist() == ["T parent"]
 
 
 def test_developmental_covariate_results_do_not_overwrite_merged_results(tmp_path: Path) -> None:

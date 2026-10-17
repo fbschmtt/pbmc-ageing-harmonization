@@ -457,12 +457,17 @@ def validate_configuration(
             raise ConfigurationError("cell_type_analysis.split_by must be 'aifi_l2_majority'")
         if not isinstance(cell_type_analysis.get("min_cells"), int) or cell_type_analysis["min_cells"] < 3:
             raise ConfigurationError("cell_type_analysis.min_cells must be an integer of at least 3")
+        minimum_cluster_fraction_denominator = cell_type_analysis.get(
+            "min_cluster_fraction_denominator_cells"
+        )
         if (
-            not isinstance(cell_type_analysis.get("min_fraction_denominator_cells"), int)
-            or cell_type_analysis["min_fraction_denominator_cells"] < 1
+            not isinstance(minimum_cluster_fraction_denominator, int)
+            or isinstance(minimum_cluster_fraction_denominator, bool)
+            or minimum_cluster_fraction_denominator < 1
         ):
             raise ConfigurationError(
-                "cell_type_analysis.min_fraction_denominator_cells must be a positive integer"
+                "cell_type_analysis.min_cluster_fraction_denominator_cells "
+                "must be a positive integer"
             )
         clustering = cell_type_analysis.get("clustering", {})
         if clustering.get("method") != "leiden":
@@ -482,22 +487,6 @@ def validate_configuration(
         if not isinstance(residual_wgcna, dict):
             raise ConfigurationError("cell_type_analysis.residual_wgcna must be an object")
         ResidualWGCNASettings.from_mapping(residual_wgcna)
-        fraction_model = cell_type_analysis.get("fraction_model", {})
-        bootstrap_replicates = fraction_model.get("binomial_bootstrap_replicates")
-        if (
-            not isinstance(bootstrap_replicates, int)
-            or isinstance(bootstrap_replicates, bool)
-            or bootstrap_replicates < 1
-        ):
-            raise ConfigurationError(
-                "cell_type_analysis.fraction_model.binomial_bootstrap_replicates "
-                "must be a positive integer"
-            )
-        bootstrap_seed = fraction_model.get("binomial_bootstrap_seed")
-        if not isinstance(bootstrap_seed, int) or isinstance(bootstrap_seed, bool):
-            raise ConfigurationError(
-                "cell_type_analysis.fraction_model.binomial_bootstrap_seed must be an integer"
-            )
         parent_map = cell_type_analysis.get("l2_parent_l1")
         if not isinstance(parent_map, dict) or not parent_map or not all(
             isinstance(l2, str) and l2 and isinstance(l1, str) and l1
@@ -529,6 +518,34 @@ def validate_configuration(
             )
         if differential_expression.get("age_term") != "age":
             raise ConfigurationError("differential_expression.age_term must be 'age'")
+        abundance = differential_expression.get("abundance", {})
+        minimum_fraction_denominator = abundance.get("min_fraction_denominator_cells")
+        if (
+            not isinstance(minimum_fraction_denominator, int)
+            or isinstance(minimum_fraction_denominator, bool)
+            or minimum_fraction_denominator < 1
+        ):
+            raise ConfigurationError(
+                "differential_expression.abundance.min_fraction_denominator_cells "
+                "must be a positive integer"
+            )
+        fraction_model = abundance.get("fraction_model", {})
+        bootstrap_replicates = fraction_model.get("binomial_bootstrap_replicates")
+        if (
+            not isinstance(bootstrap_replicates, int)
+            or isinstance(bootstrap_replicates, bool)
+            or bootstrap_replicates < 1
+        ):
+            raise ConfigurationError(
+                "differential_expression.abundance.fraction_model."
+                "binomial_bootstrap_replicates must be a positive integer"
+            )
+        bootstrap_seed = fraction_model.get("binomial_bootstrap_seed")
+        if not isinstance(bootstrap_seed, int) or isinstance(bootstrap_seed, bool):
+            raise ConfigurationError(
+                "differential_expression.abundance.fraction_model."
+                "binomial_bootstrap_seed must be an integer"
+            )
         age_trajectory = differential_expression.get("age_trajectory")
         if not isinstance(age_trajectory, dict):
             raise ConfigurationError(

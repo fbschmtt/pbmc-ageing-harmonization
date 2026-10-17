@@ -667,6 +667,56 @@ def _cell_type_index(labels: pd.Series) -> list[tuple[str, str]]:
     return cell_types
 
 
+def _sample_abundance_input(
+    obs: pd.DataFrame, parent_map: dict[str, str], cell_type: str,
+) -> pd.DataFrame:
+    """Create one abundance row per observed sample, including zero-count types."""
+    required = {"study", "sample", "age", "n_cells", "aifi_l2_majority"}
+    missing = required - set(obs)
+    if missing:
+        raise ValueError(f"Pseudobulk observations lack abundance metadata: {sorted(missing)}")
+    columns = required | {column for column in ("sex", "bmi", "cmv") if column in obs}
+    result = obs.loc[:, sorted(columns)].copy()
+    l2 = result["aifi_l2_majority"].astype(str)
+    parents = l2.map(parent_map)
+    if parents.isna().any():
+        unknown = sorted(l2.loc[parents.isna()].unique())
+        raise ValueError(f"Missing configured AIFI L2 → L1 parent mapping for: {unknown}")
+    result["aifi_l1_parent_for_l2"] = parents.astype(str)
+    result["n_cells"] = pd.to_numeric(result["n_cells"], errors="raise")
+    sample_keys = ["study", "sample"]
+    parent = parent_map.get(cell_type)
+    if parent is None:
+        raise ValueError(f"Missing configured AIFI L2 → L1 parent mapping for: {[cell_type]}")
+
+    metadata_columns = [column for column in ("age", "sex", "bmi", "cmv") if column in result]
+    grouped_samples = result.groupby(sample_keys, observed=True)
+    for column in metadata_columns:
+        inconsistent = grouped_samples[column].nunique(dropna=False) > 1
+        if inconsistent.any():
+            raise ValueError(f"{column} must be constant within each study × sample")
+    sample_metadata = grouped_samples[metadata_columns].first()
+    sample_metadata["n_cells_in_sample"] = grouped_samples["n_cells"].sum().astype(int)
+
+    parent_counts = (
+        result.loc[result["aifi_l1_parent_for_l2"] == parent]
+        .groupby(sample_keys, observed=True)["n_cells"]
+        .sum().astype(int).rename("n_cells_in_sample_l1_parent")
+    )
+    type_counts = (
+        result.loc[l2 == cell_type]
+        .groupby(sample_keys, observed=True)["n_cells"]
+        .sum().astype(int).rename("n_cells")
+    )
+    abundance = sample_metadata.join(parent_counts).join(type_counts)
+    abundance[["n_cells_in_sample_l1_parent", "n_cells"]] = abundance[
+        ["n_cells_in_sample_l1_parent", "n_cells"]
+    ].fillna(0).astype(int)
+    abundance["aifi_l2_majority"] = cell_type
+    abundance["aifi_l1_parent_for_l2"] = parent
+    return abundance.reset_index()
+
+
 def list_pseudobulk_cell_types(input_path: Path, pipeline: dict) -> list[tuple[str, str]]:
     """List configured split labels without creating any per-type pseudobulk files."""
     _, _, labels = _load_pseudobulk(input_path, pipeline)
@@ -680,6 +730,7 @@ def _run_cell_type_differential_expression(
     output_dir: Path,
     *,
     cell_type: str,
+    parent_map: dict[str, str],
     cpus: int,
     test_mode: bool,
     synthetic_test_data: bool,
@@ -689,7 +740,10 @@ def _run_cell_type_differential_expression(
     selected = labels == cell_type
     type_adata = adata[selected.to_numpy(), :]
     type_obs = type_adata.obs.copy()
-    (output_dir / slug).mkdir(parents=True, exist_ok=True)
+    type_output_dir = output_dir / slug
+    type_output_dir.mkdir(parents=True, exist_ok=True)
+    abundance_obs = _sample_abundance_input(adata.obs, parent_map, cell_type)
+    abundance_obs.to_csv(type_output_dir / "abundance_input.tsv", sep="\t", index=False)
     metadata, exclusions, excluded_samples = _prepare_metadata(
         type_obs, spec["sample_inclusion"], test_mode=test_mode
     )
@@ -1091,6 +1145,7 @@ def run_differential_expression(
         _run_cell_type_differential_expression(
             adata, spec, labels, output_dir,
             cell_type=cell_type,
+            parent_map=pipeline["cell_type_analysis"]["l2_parent_l1"],
             cpus=cpus,
             test_mode=test_mode,
             synthetic_test_data=synthetic_test_data,
@@ -1122,6 +1177,7 @@ def run_cell_type_differential_expression(
     return _run_cell_type_differential_expression(
         adata, spec, labels, output_dir,
         cell_type=cell_type,
+        parent_map=pipeline["cell_type_analysis"]["l2_parent_l1"],
         cpus=cpus,
         test_mode=test_mode,
         synthetic_test_data=synthetic_test_data,

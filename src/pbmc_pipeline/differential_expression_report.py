@@ -1,7 +1,8 @@
-"""Render the established pseudobulk-DE portion of the cell-type report."""
+"""Execute and export the per-cell-type pseudobulk DE report."""
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import subprocess
@@ -34,78 +35,11 @@ def _run_report_command(command, *, cwd: Path, env: dict[str, str], log_path: Pa
         )
 
 
-def _de_notebook_source(template_path: Path) -> str:
-    """Keep the split report's DE cells identical to the original report.
-
-    ``reports/cell_type_report.py`` remains the canonical source for these
-    helpers and the pseudobulk-DE section. The bootstrap supplies the state
-    that the DE section previously received from the combined notebook.
-    """
-    source = template_path.read_text(encoding="utf-8")
-    setup_end = source.index("primitive = sc.read_h5ad")
-    helpers_start = source.index("def display_collapsible_table")
-    helpers_end = source.index("def natural_sort_key", helpers_start)
-    de_start = source.index("if de_dir:", helpers_end)
-    imports = source[:setup_end]
-    helpers = source[helpers_start:helpers_end]
-    de_section = source[de_start:]
-    # The combined report imports Scanpy for its single-cell sections. The DE
-    # section never uses it, and importing it in this standalone notebook can
-    # trigger an irrelevant Numba cache failure in read-only containers.
-    imports = imports.replace("import scanpy as sc\n", "")
-    imports = imports.replace(
-        "from pbmc_pipeline.cell_type import add_unintegrated_umap\n", ""
-    )
-    bootstrap = '''# %%
-de_dir = Path(os.environ["DE_REPORT_DIR"])
-output_dir = Path(os.environ["DE_REPORT_OUTPUT_DIR"])
-output_dir.mkdir(parents=True, exist_ok=True)
-pipeline = read_json(Path(os.environ["DE_REPORT_CONFIG"]))
-trajectory_settings = AgeTrajectorySettings.from_mapping(
-    pipeline["differential_expression"]["age_trajectory"]
-)
-de_metadata_path = de_dir / "run_metadata.json"
-de_run_metadata = read_json(de_metadata_path) if de_metadata_path.is_file() else {}
-result_record_path = de_dir / "cell_type_result.json"
-result_record = read_json(result_record_path) if result_record_path.is_file() else {}
-cell_type_name = str(
-    de_run_metadata.get("cell_type")
-    or result_record.get("cell_type")
-    or de_dir.parent.name.replace("-", " ").title()
-)
-completed_models = [
-    model for model in de_run_metadata.get("models", [])
-    if model.get("status") == "complete"
-]
-summary_metrics = [
-    ("Pseudobulk samples", str(result_record.get("n_pseudobulks", "—"))),
-    ("Completed models", str(len(completed_models))),
-    ("Analysis mode", str(de_run_metadata.get("analysis_mode", "unknown")).replace("_", " ").title()),
-]
-display(HTML(render_report_header(
-    title=cell_type_name,
-    eyebrow="PBMC ageing · pseudobulk differential expression",
-    subtitle=(
-        "Sample-level pseudobulk differential-expression models, age-bin trajectories, "
-        "and residual structure for this cell type."
-    ),
-    metrics=summary_metrics,
-)))
-if de_run_metadata.get("analysis_mode") == "test_only":
-    display(Markdown(
-        "> **TEST OUTPUT — NOT FOR BIOLOGICAL INTERPRETATION.** "
-        + de_run_metadata["interpretation_warning"]
-    ))
-
-'''
-    return imports + bootstrap + helpers + "\n# %%\n" + de_section
-
-
 def generate_differential_expression_report(
     *, result_dir: Path, output_dir: Path, template_path: Path, config_path: Path,
     project_root: Path,
 ) -> Path:
-    """Execute the original DE report section as a standalone notebook report."""
+    """Execute a standalone Jupytext template and export its HTML report."""
     for path in (result_dir, template_path, config_path, project_root):
         if not path.exists():
             raise FileNotFoundError(path)
@@ -148,20 +82,16 @@ def generate_differential_expression_report(
         environment["MPLCONFIGDIR"] = str(matplotlib_cache)
         environment["JUPYTER_DATA_DIR"] = str(jupyter_data)
         environment["NUMBA_CACHE_DIR"] = str(numba_cache)
-        materialized_source = temporary_path / "differential_expression_report.py"
-        materialized_source.write_text(_de_notebook_source(template_path), encoding="utf-8")
         materialized_notebook = temporary_path / "differential_expression_report.ipynb"
         _run_report_command([
             sys.executable, "-m", "jupytext", "--to", "notebook",
-            "--output", str(materialized_notebook), str(materialized_source),
+            "--output", str(materialized_notebook), str(template_path),
         ], cwd=project_root, env=environment, log_path=render_log)
         _run_report_command([
             sys.executable, "-m", "jupyter", "nbconvert", "--execute", "--to", "notebook",
             "--ExecutePreprocessor.timeout=-1", f"--output={output_notebook.name}",
             f"--output-dir={output_dir}", str(materialized_notebook),
         ], cwd=project_root, env=environment, log_path=render_log)
-
-    import json
 
     metadata_path = result_dir / "run_metadata.json"
     metadata = json.loads(metadata_path.read_text()) if metadata_path.is_file() else {}
@@ -200,7 +130,7 @@ def render_per_type_reports(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Render per-cell-type pseudobulk DE reports")
     parser.add_argument("--input-dir", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--template", type=Path, required=True)

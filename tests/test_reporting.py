@@ -79,6 +79,32 @@ def test_sample_cell_type_fractions_uses_retained_pbmc_denominator():
     assert fractions["fraction_of_retained_pbmc"].tolist() == [0.2, 0.25]
 
 
+def test_sample_cell_type_fractions_weights_pseudobulks_and_keeps_zero_counts():
+    adata = type("Adata", (), {})()
+    adata.obs = pd.DataFrame({
+        "study": ["one", "one", "one", "one"],
+        "sample": ["positive", "positive", "zero", "below_cutoff"],
+        "age": [30.0, 30.0, 40.0, 50.0],
+        "n_cells_in_sample_l1_parent": [10, 10, 12, 9],
+        "n_cells": [2, 3, 0, 4],
+    })
+
+    fractions = sample_cell_type_fractions(
+        adata,
+        denominator="n_cells_in_sample_l1_parent",
+        fraction_name="fraction_within_parent",
+        min_denominator_cells=10,
+        count_column="n_cells",
+    )
+
+    by_sample = fractions.set_index("sample")
+    assert by_sample["n_cells_type"].to_dict() == {"positive": 5, "zero": 0}
+    assert by_sample["fraction_within_parent"].to_dict() == {
+        "positive": 0.5,
+        "zero": 0.0,
+    }
+
+
 def test_sample_cluster_fractions_are_within_the_split_cell_type():
     adata = type("Adata", (), {})()
     adata.obs = pd.DataFrame({
