@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import gc
 import json
 import logging
 import platform
 import re
 import time
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
@@ -14,7 +16,7 @@ import pandas as pd
 
 from .config import config_digest
 from .preparation import normalize_metadata_frame, read_prepared_cells
-from .source import read_study_input
+from .source import read_study_counts_as_x
 from .validation import validate_counts, validate_output
 
 LOGGER = logging.getLogger(__name__)
@@ -102,32 +104,31 @@ def harmonize_study(
     warnings: list[str] = []
     LOGGER.info("study=%s step=start input=%s validate_only=%s", study_id, input_path, validate_only)
     started = time.perf_counter()
-    adata = read_study_input(root, input_path, study)
+    adata = read_study_counts_as_x(root, input_path, study)
     _log_step(study_id, "read_input", started, cells=adata.n_obs, genes=adata.n_vars)
     if study["counts_source"] == "raw":
-        started = time.perf_counter()
-        if adata.raw is None:
-            raise ValueError(f"{study_id}: configured raw counts are absent")
-        original_obs = adata.obs.copy()
-        adata = adata.raw.to_adata()
-        adata.obs = original_obs.loc[adata.obs_names].copy()
+        if adata.raw is not None:
+            started = time.perf_counter()
+            original_obs = adata.obs.copy()
+            adata = adata.raw.to_adata()
+            adata.obs = original_obs.loc[adata.obs_names].copy()
+        else:
+            started = time.perf_counter()
         _log_step(study_id, "select_counts", started, source="raw")
     elif study["counts_source"] == "X":
         LOGGER.info("study=%s step=select_counts source=X", study_id)
     elif study["counts_source"].startswith("layer:"):
         layer = study["counts_source"].removeprefix("layer:")
-        if not layer or layer not in adata.layers:
-            raise ValueError(f"{study_id}: configured count layer is absent: {layer!r}")
         started = time.perf_counter()
-        adata.X = adata.layers[layer].copy()
+        if layer in adata.layers:
+            adata.X = adata.layers[layer].copy()
         _log_step(study_id, "select_counts", started, source=f"layer:{layer}")
     else:
         raise ValueError(f"Unsupported counts_source: {study['counts_source']}")
 
     # The harmonized artifact is a count matrix, not a source-object archive.
-    # A source H5AD can retain normalized X/raw/layer matrices alongside the
-    # configured counts; remove every alternate expression representation once
-    # the selected counts are in X so none can be mistaken for analysis input.
+    # H5AD inputs are opened through a temporary count-as-X view, so alternate
+    # expression representations are already absent here.
     discarded_layers = list(adata.layers)
     had_raw = adata.raw is not None
     adata.raw = None
@@ -182,8 +183,38 @@ def harmonize_study(
     _add_raw_qc_metrics(adata)
     _log_step(study_id, "raw_qc_metrics", started)
     annotation = study["annotation"]
+    suffix = ".test" if test else ""
+    if output_path is None:
+        output_path = root / pipeline["output_dir"] / f"{study_id}{suffix}.h5ad"
+    output_written_with_counts = annotation["method"] == "celltypist" and not validate_only
+    if output_written_with_counts:
+        # Persist the final counts matrix first. CellTypist can then normalize
+        # the in-memory matrix without a second full-size raw-count backup.
+        validate_counts(adata)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        adata.uns["pipeline_provenance"] = {
+            "artifact_kind": "harmonized",
+            "study": study_id,
+            "configuration_sha256": config_digest(study, pipeline, schema),
+            "input": str(input_path),
+            "pipeline_version": "0.1.0",
+        }
+        _normalize_nullable_strings_for_h5ad(adata)
+        started = time.perf_counter()
+        adata.write_h5ad(
+            output_path,
+            compression=pipeline["processing"]["output_compression"],
+        )
+        _log_step(study_id, "write_counts_h5ad", started, path=output_path)
+
     if annotation["method"] == "celltypist" and not validate_only:
-        _annotate_celltypist(adata, annotation, pipeline, root, study_id)
+        _annotate_celltypist(
+            adata, annotation, pipeline, root, study_id, restore_counts=False
+        )
+        # The output file already contains the raw counts. Release the
+        # normalized expression matrix before writing updated metadata to it.
+        adata.X = None
+        gc.collect()
     elif annotation["method"] == "celltypist":
         LOGGER.info("study=%s step=annotate_celltypist status=skipped_validate_only", study_id)
         for level in annotation["levels"]:
@@ -194,7 +225,8 @@ def harmonize_study(
         LOGGER.info("study=%s step=annotate status=existing_labels", study_id)
 
     started = time.perf_counter()
-    validate_counts(adata)
+    if not output_written_with_counts:
+        validate_counts(adata)
     summary = validate_output(adata, schema)
     _log_step(study_id, "validate_output", started, cells=adata.n_obs, genes=adata.n_vars)
     report = {
@@ -217,7 +249,6 @@ def harmonize_study(
             "scanpy": version("scanpy"),
         },
     }
-    suffix = ".test" if test else ""
     if report_path is None:
         report_path = root / pipeline["report_dir"] / f"{study_id}{suffix}.json"
     started = time.perf_counter()
@@ -225,23 +256,25 @@ def harmonize_study(
     report_path.write_text(json.dumps(report, indent=2) + "\n")
     _log_step(study_id, "write_run_report", started, path=report_path)
     if not validate_only:
-        if output_path is None:
-            output_path = root / pipeline["output_dir"] / f"{study_id}{suffix}.h5ad"
         started = time.perf_counter()
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        adata.uns["pipeline_provenance"] = {
-            "artifact_kind": "harmonized",
-            "study": study_id,
-            "configuration_sha256": report["configuration_sha256"],
-            "input": str(input_path),
-            "pipeline_version": "0.1.0",
-        }
         _normalize_nullable_strings_for_h5ad(adata)
-        adata.write_h5ad(
-            output_path,
-            compression=pipeline["processing"]["output_compression"],
-        )
-        _log_step(study_id, "write_h5ad", started, path=output_path)
+        if output_written_with_counts:
+            _write_h5ad_metadata(output_path, adata)
+            _log_step(study_id, "update_h5ad_metadata", started, path=output_path)
+        else:
+            adata.uns["pipeline_provenance"] = {
+                "artifact_kind": "harmonized",
+                "study": study_id,
+                "configuration_sha256": report["configuration_sha256"],
+                "input": str(input_path),
+                "pipeline_version": "0.1.0",
+            }
+            adata.write_h5ad(
+                output_path,
+                compression=pipeline["processing"]["output_compression"],
+            )
+            _log_step(study_id, "write_h5ad", started, path=output_path)
     _log_step(study_id, "complete", total_started, status=report["status"])
     return report
 
@@ -274,6 +307,35 @@ def _normalize_nullable_strings_for_h5ad(adata) -> None:
             series = frame[column]
             if isinstance(series.dtype, pd.StringDtype):
                 frame[column] = series.astype(object).where(series.notna(), None)
+
+
+def _write_h5ad_metadata(path: Path, adata) -> None:
+    """Replace metadata and embeddings in an H5AD while preserving its X on disk."""
+    import anndata as ad
+    import h5py
+
+    elements = ("obs", "var", "uns", "obsm", "obsp", "varm", "varp")
+    with h5py.File(path, "r+") as handle:
+        for key in elements:
+            if key in handle:
+                del handle[key]
+            value = getattr(adata, key)
+            if key == "uns":
+                value = _plain_h5ad_mappings(value)
+            elif key in {"obsm", "obsp", "varm", "varp"}:
+                value = dict(value.items())
+            ad.io.write_elem(handle, key, value)
+
+
+def _plain_h5ad_mappings(value):
+    """Convert OrderedDict mappings to plain dictionaries for AnnData's writer."""
+    if isinstance(value, Mapping):
+        return {key: _plain_h5ad_mappings(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_plain_h5ad_mappings(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_plain_h5ad_mappings(item) for item in value)
+    return value
 
 
 def _ensure_study_doi_categorical(adata, *, expected_doi: str | None = None) -> None:
@@ -368,31 +430,30 @@ def _annotate_celltypist(
     embedding_genes: pd.Index | None = None,
     harmony_basis: str = "X_pca_harmony",
     label_prefix: str = "",
-    counts_backup=None,
     restore_counts: bool = True,
     compute_umap: bool = True,
 ) -> dict[str, object]:
     import scanpy as sc
 
-    # Callers that already need to retain raw counts across multiple
-    # predictions can share that backup instead of duplicating the full matrix.
-    raw_counts = None
-    if restore_counts:
-        raw_counts = adata.X.copy() if counts_backup is None else counts_backup
-    started = time.perf_counter()
-    sc.pp.normalize_total(adata, target_sum=pipeline["processing"]["target_sum"])
-    sc.pp.log1p(adata)
-    _log_step(study_id, "normalize_log1p", started)
-    embedding = _compute_embedding(
-        adata,
-        pipeline,
-        study_id,
-        batch_key=embedding_batch_key,
-        embedding_genes=embedding_genes,
-        harmony_basis=harmony_basis,
-        compute_umap=compute_umap,
-    )
-    _predict_celltypist(adata, annotation, pipeline, root, study_id, label_prefix=label_prefix)
+    def analyze_normalized_data() -> dict[str, object]:
+        started = time.perf_counter()
+        sc.pp.normalize_total(adata, target_sum=pipeline["processing"]["target_sum"])
+        sc.pp.log1p(adata)
+        _log_step(study_id, "normalize_log1p", started)
+        embedding = _compute_embedding(
+            adata,
+            pipeline,
+            study_id,
+            batch_key=embedding_batch_key,
+            embedding_genes=embedding_genes,
+            harmony_basis=harmony_basis,
+            compute_umap=compute_umap,
+        )
+        _predict_celltypist(adata, annotation, pipeline, root, study_id, label_prefix=label_prefix)
+        return embedding
+
+    raw_counts = adata.X.copy() if restore_counts else None
+    embedding = analyze_normalized_data()
     if restore_counts:
         adata.X = raw_counts
     return embedding

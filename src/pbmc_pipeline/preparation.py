@@ -9,7 +9,7 @@ from typing import Any
 
 import pandas as pd
 
-from .source import read_study_input
+from .source import read_study_obs
 
 
 class PreparationError(ValueError):
@@ -30,9 +30,8 @@ def prepare_study(
     source_obs_output_path: Path | None = None,
 ) -> dict[str, Any]:
     """Run one named adapter and write canonical plus source-metadata cell tables."""
-    source = read_study_input(root, expression_path, study)
-    source_obs = source.obs.copy()
-    source_ids = pd.Index(source.obs_names.astype(str), name="cell_id")
+    source_obs = read_study_obs(root, expression_path, study)
+    source_ids = pd.Index(source_obs.index.astype(str), name="cell_id")
     source_obs.index = source_ids
 
     adapter_name = study["preparation"]["adapter"]
