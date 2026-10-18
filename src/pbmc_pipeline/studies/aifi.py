@@ -27,7 +27,7 @@ def prepare_cells(source, root):
         "disease_status": {"constant": "healthy"},
         "study_site": {"constant": "aifi"},
         "country": {"constant": "usa"},
-        "batch_single_cell": {"source": "well_id"},
+        "batch_single_cell": {"source": "pool_id", "prefix": "aifi_"},
         "aifi_l1_majority": {"source": "AIFI_L1"},
         "aifi_l2_majority": {"source": "AIFI_L2"},
         "aifi_l3_majority": {"source": "AIFI_L3"},

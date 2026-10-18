@@ -14,7 +14,7 @@
   },
   "processing": {
     "target_sum": 10000,
-    "hvg": {"min_mean": 0.0125, "max_mean": 3.0, "min_disp": 0.5},
+    "hvg": {"min_mean": 0.0125, "min_disp": 0.5},
     "exclude_vdj_regex": "^(?:TRA[VDJ]|TRB[VDJ]|IGL[VDJ]|IGH[VDJ])",
     "neighbors": {"n_neighbors": 50, "n_pcs": 30},
     "random_seed": 42,
@@ -32,7 +32,7 @@
   },
   "integration_benchmark": {
     "annotation_level": "l2",
-    "max_cells": 2000000,
+    "max_cells": 20000000,
     "methods": [
       {
         "name": "harmony",
@@ -44,14 +44,6 @@
         "name": "unintegrated_pca",
         "method": "none",
         "basis": "X_pca"
-      },
-      {
-        "name": "scanorama",
-        "method": "scanorama",
-        "batch_key": "study",
-        "basis": "X_pca",
-        "adjusted_basis": "X_scanorama",
-        "batch_size": 5000
       },
       {
         "name": "bbknn",
@@ -185,7 +177,10 @@
     "alpha": 0.05,
     "sample_inclusion": {
       "minimum_age_years_inclusive": 20,
-      "minimum_cells_per_pseudobulk_inclusive": 10
+      "minimum_cells_per_pseudobulk_inclusive": 10,
+      "exclude_subject_prefixes_by_study": {
+        "aida25": ["LONZA"]
+      }
     }
   }
 }

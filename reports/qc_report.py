@@ -26,6 +26,7 @@ from IPython.display import HTML, Markdown, display
 from scipy import sparse
 
 from pbmc_pipeline.report_theme import render_report_header
+from pbmc_pipeline.reporting import distinct_sample_batch_assignments
 
 with warnings.catch_warnings():
     warnings.filterwarnings(
@@ -97,6 +98,42 @@ plt.tight_layout(); plt.show()
 print(f"Subjects: {obs['subject'].nunique():,}; samples: {obs['sample'].nunique():,}; batches: {obs['batch_single_cell'].nunique():,}")
 
 # %% [markdown]
+# ## Technical batch distribution
+#
+# Bars count distinct samples assigned to each recorded technical batch.
+
+# %%
+sample_batch_assignments = distinct_sample_batch_assignments(obs)
+batch_group = ["batch_single_cell"]
+if "study_site" in sample_batch_assignments:
+    batch_group.append("study_site")
+batch_sample_counts = (
+    sample_batch_assignments.groupby(batch_group, observed=True, dropna=False)
+    .agg(n_samples=("sample", "nunique"))
+    .reset_index()
+)
+if not batch_sample_counts.empty:
+    figure_width = min(30, max(10, 0.3 * batch_sample_counts["batch_single_cell"].nunique()))
+    fig, ax = plt.subplots(figsize=(figure_width, 5))
+    sns.barplot(
+        data=batch_sample_counts,
+        x="batch_single_cell",
+        y="n_samples",
+        hue="study_site" if "study_site" in batch_sample_counts else None,
+        ax=ax,
+    )
+    ax.set_xlabel("Single-cell technical batch")
+    ax.set_ylabel("Distinct samples")
+    ax.tick_params(axis="x", rotation=90, labelsize=7)
+    ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    if "study_site" in batch_sample_counts:
+        ax.legend(title="Study site", bbox_to_anchor=(1.02, 1), loc="upper left")
+    fig.tight_layout()
+    plt.show()
+else:
+    display(Markdown("_No technical-batch sample assignments were available._"))
+
+# %% [markdown]
 # ## Cell-type composition
 
 # %%
@@ -117,6 +154,54 @@ plt.tight_layout(h_pad=3.0); plt.show()
 # %%
 adata = adata_backed.to_memory()
 adata_backed.file.close()
+
+# %% [markdown]
+# ### Highly variable genes
+#
+# The ranking uses Scanpy's normalized mean-dispersion method. VDJ genes are
+# excluded from the highlighted set, matching embedding selection.
+
+# %%
+required_hvg_columns = {"means", "dispersions_norm", "highly_variable"}
+if required_hvg_columns <= set(adata.var.columns):
+    hvg = adata.var.loc[:, sorted(required_hvg_columns)].copy()
+    hvg = hvg.replace([np.inf, -np.inf], np.nan).dropna(subset=["means", "dispersions_norm"])
+    hvg = hvg.loc[(hvg["means"] > 0) & (hvg["dispersions_norm"] > 0)]
+    selected_hvg = hvg["highly_variable"].astype(bool)
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.scatter(hvg.loc[~selected_hvg, "means"], hvg.loc[~selected_hvg, "dispersions_norm"],
+               s=5, alpha=0.22, color="#9aa0a6", rasterized=True, label="Not selected")
+    ax.scatter(hvg.loc[selected_hvg, "means"], hvg.loc[selected_hvg, "dispersions_norm"],
+               s=9, alpha=0.75, color="#c44e52", rasterized=True, label="Selected for embedding")
+    ax.set_xscale("log")
+    ax.set_xlabel("Mean normalized expression (log scale)")
+    ax.set_ylabel("Normalized dispersion")
+    ax.set_title(f"Highly variable genes ({int(selected_hvg.sum()):,} selected)")
+    ax.legend(frameon=False)
+    plt.tight_layout(); plt.show()
+
+    top_hvg = (
+        adata.var.loc[:, ["dispersions_norm", "means"]]
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna(subset=["dispersions_norm"])
+        .sort_values("dispersions_norm", ascending=False)
+        .head(20)
+        .rename_axis("Gene")
+        .reset_index()
+    )
+    top_hvg["Selected"] = top_hvg["Gene"].isin(adata.var_names[adata.var["highly_variable"].astype(bool)])
+    display(HTML(
+        "<details><summary>Top 20 genes by normalized dispersion</summary>"
+        + top_hvg.to_html(index=False, float_format=lambda value: f"{value:.4g}")
+        + "</details>"
+    ))
+else:
+    display(Markdown("_HVG diagnostics are unavailable in this harmonized file._"))
+
+# %% [markdown]
+# ### Count depth and detected genes
+
+# %%
 values = adata.X
 total_counts = np.asarray(values.sum(axis=1)).ravel()
 detected_genes = np.asarray((values > 0).sum(axis=1)).ravel() if sparse.issparse(values) else (values > 0).sum(axis=1)
@@ -127,6 +212,9 @@ sns.histplot(detected_genes, bins=40, ax=axes[1], color="#55a868")
 axes[1].set_xlabel("Detected genes")
 fig.suptitle(f"Count-depth checks ({adata.n_obs:,} cells)")
 plt.tight_layout(); plt.show()
+
+# %% [markdown]
+# ### Stored UMAP embeddings
 
 # %%
 umap_columns = [column for column in ["study_celltype", "aifi_l1_majority", "aifi_l2_majority"] if column in adata.obs]

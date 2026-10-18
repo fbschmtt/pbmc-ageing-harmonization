@@ -141,7 +141,7 @@ def test_single_cell_embedding_uses_shared_genes_then_harmony_neighbors(monkeypa
         adata,
         {
             "processing": {
-                "hvg": {"min_mean": 0.0125, "max_mean": 3.0, "min_disp": 0.0},
+                "hvg": {"min_mean": 0.0125, "min_disp": 0.5},
                 "exclude_vdj_regex": "^VDJ",
                 "neighbors": {"n_neighbors": 10, "n_pcs": 5},
                 "random_seed": 42,

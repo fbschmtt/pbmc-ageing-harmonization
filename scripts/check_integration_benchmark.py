@@ -21,14 +21,19 @@ def main() -> None:
         raise SystemExit(f"Missing integration benchmark artifacts under {directory}")
 
     artifact = ad.read_h5ad(artifact_path)
+    pipeline_path = Path(__file__).resolve().parents[1] / "config" / "pipeline.json"
+    pipeline = json.loads(pipeline_path.read_text())
     expected_methods = {
-        "harmony", "unintegrated_pca", "scanorama", "bbknn",
+        method["name"] for method in pipeline["integration_benchmark"]["methods"]
     }
     report = json.loads(report_path.read_text())
     method_records = report.get("methods", [])
     methods = {method["name"] for method in method_records}
-    if methods != expected_methods:
-        raise SystemExit(f"Integration benchmark has unexpected methods: {sorted(methods)}")
+    if len(method_records) != len(methods) or methods != expected_methods:
+        raise SystemExit(
+            "Integration benchmark methods do not match the active configuration: "
+            f"expected={sorted(expected_methods)}, observed={sorted(methods)}"
+        )
     required_columns = {"aifi_l2_study_majority"} | {
         method["label_column"] for method in method_records
     }

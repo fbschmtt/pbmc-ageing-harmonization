@@ -29,7 +29,8 @@
         "technology": "obs.assay; values report 10x 5' v2",
         "frozen": "reported_in_legacy",
         "include_intronic": "obs.intronic_reads_counted",
-        "ethnicity": "confirmed_broad_mapping",
+        "ethnicity": "self_reported_ethnicity explicitly maps European to caucasian and the observed Asian, Indian, Japanese, Korean, Singaporean Chinese/Indian/Malay, and Thai categories to asian; other values are not_provided.",
+        "model_inclusion": "LONZA-prefixed subject IDs are source-identified European reference controls. They remain in harmonized and pseudobulk data for calibration and are excluded from differential-expression model sample inclusion.",
         "disease_status": "inferred healthy from the project's current cohort-inclusion scope; validate against source metadata before disease-comparative use"
       }
     },
@@ -51,6 +52,7 @@
       "provenance": {
         "celltypes": "native_AIFI_labels",
         "sample": "specimen.specimenGuid; one sample per donor in the configured 108-sample Atlas reference, although sample.visitName varies between donors",
+        "batch_single_cell": "obs.pool_id; source-defined cell-hashing pool, the lowest grouping shared by samples that remains one-to-one at the sample level. Each sample maps to one pool; a batch_id can contain multiple pools, and samples can span wells.",
         "technology": "inferred 10X 3-prime from the source protocol; no assay field is present in obs",
         "frozen": "inferred from the AIFI source processing workflow",
         "include_intronic": "not provided in source obs",
@@ -82,6 +84,7 @@
         "metadata": "embedded H5AD obs fields; CIMA_Sample_Information_Metadata.csv matches every retained obs sample and is not a workflow dependency",
         "celltypes": "obs.cell_type_l4, the highest-resolution published CIMA label",
         "sample": "obs.sample; no separate specimen or longitudinal timepoint field is available",
+        "batch_single_cell": "obs.RNA_experiment; date-coded RNA processing experiment grouping multiple samples. The local H5AD metadata has one RNA_experiment per retained sample.",
         "subject": "obs.sample",
         "technology": "paper methods: DNBelab C Series",
         "aligner": "paper methods: STAR v2.7.2b",

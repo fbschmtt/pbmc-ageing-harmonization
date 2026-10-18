@@ -32,5 +32,5 @@ def prepare_cells(source, root):
         "disease_status": {"constant": "healthy"},
         "study_site": {"constant": "cima"},
         "country": {"constant": "china"},
-        "batch_single_cell": {"source": "library", "prefix": "cima_"},
+        "batch_single_cell": {"source": "RNA_experiment", "prefix": "cima_"},
     })

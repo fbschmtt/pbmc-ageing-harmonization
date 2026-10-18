@@ -106,25 +106,19 @@ def render_report_index(outdir: Path) -> Path:
     else:
         harmonization_content = "<p>No harmonization QC reports are published yet.</p>"
 
-    benchmark_links = []
+    merged_analysis_links = []
     if benchmark_report.is_file():
-        benchmark_links.append(link(benchmark_report, "Integration benchmark"))
-    if benchmark_links:
-        benchmark_content = "<ul>" + "".join(
-            f"<li>{item}</li>" for item in benchmark_links
-        ) + "</ul>"
-    else:
-        benchmark_content = "<p>No integration benchmark report is published yet.</p>"
-
-    trajectory_links = []
+        merged_analysis_links.append(link(benchmark_report, "Integration benchmark"))
     if trajectory_report.is_file():
-        trajectory_links.append(link(trajectory_report, "Cross-cell-type trajectory analysis"))
-    if not trajectory_links:
-        trajectory_content = "<p>No cross-cell-type analysis report is published yet.</p>"
-    else:
-        trajectory_content = "<ul>" + "".join(
-            f"<li>{item}</li>" for item in trajectory_links
+        merged_analysis_links.append(
+            link(trajectory_report, "Cross-cell-type DE & trajectory analysis")
+        )
+    if merged_analysis_links:
+        merged_analysis_content = "<ul>" + "".join(
+            f"<li>{item}</li>" for item in merged_analysis_links
         ) + "</ul>"
+    else:
+        merged_analysis_content = "<p>No merged-analysis reports are published yet.</p>"
 
     if slugs:
         rows = []
@@ -133,26 +127,23 @@ def render_report_index(outdir: Path) -> Path:
             de_report = per_type_root / slug / "differential_expression" / "report.html"
             report = residual_report if residual_report.is_file() else de_report
             cell_type = _report_title(report)
-            report_links = []
-            if residual_report.is_file():
-                report_links.append(link(residual_report, "Single-cell analysis"))
-            if de_report.is_file():
-                report_links.append(link(de_report, "Expression & abundance"))
             rows.append(
                 "<tr>"
                 f"<th scope=\"row\">{escape(cell_type)}</th>"
-                f"<td>{' · '.join(report_links) if report_links else '—'}</td>"
+                f"<td>{link(residual_report, 'Single-cell') if residual_report.is_file() else '—'}</td>"
+                f"<td>{link(de_report, 'DE & abundance') if de_report.is_file() else '—'}</td>"
                 f"<td><code>{escape(slug)}</code></td>"
                 "</tr>"
             )
         per_type_content = (
-            "<table><thead><tr><th>Cell type</th><th>Analysis</th><th>Output folder</th>"
+            "<table><thead><tr><th>Cell type</th><th>Single-cell</th>"
+            "<th>DE &amp; abundance</th><th>Output folder</th>"
             "</tr></thead><tbody>"
             + "".join(rows)
             + "</tbody></table>"
         )
     else:
-        per_type_content = "<p>No single-cell analysis reports are published yet.</p>"
+        per_type_content = "<p>No per-cell-type reports are published yet.</p>"
 
     html = """<!doctype html>
 <html lang="en">
@@ -180,22 +171,18 @@ def render_report_index(outdir: Path) -> Path:
     __HARMONIZATION_REPORTS__
   </section>
   <section>
-    <h2>Integration benchmark</h2>
-    __BENCHMARK_REPORTS__
+    <h2>Merged analysis</h2>
+    __MERGED_ANALYSIS_REPORTS__
   </section>
   <section>
-    <h2>Cross-cell-type analysis</h2>
-    __TRAJECTORY_LINKS__
-  </section>
-  <section>
-    <h2>Single-cell analysis</h2>
+    <h2>Per-cell-type analysis</h2>
     __CELL_TYPE_REPORTS__
   </section>
 </body>
 </html>
 """.replace("__HARMONIZATION_REPORTS__", harmonization_content).replace(
-        "__BENCHMARK_REPORTS__", benchmark_content
-    ).replace("__TRAJECTORY_LINKS__", trajectory_content).replace(
+        "__MERGED_ANALYSIS_REPORTS__", merged_analysis_content
+    ).replace(
         "__CELL_TYPE_REPORTS__", per_type_content
     )
     index_path = outdir / "index.html"

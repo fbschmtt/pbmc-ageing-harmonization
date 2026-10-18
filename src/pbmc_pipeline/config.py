@@ -636,6 +636,18 @@ def validate_configuration(
                 "differential_expression.sample_inclusion.minimum_cells_per_pseudobulk_inclusive "
                 "must be a positive integer"
             )
+        excluded_subject_prefixes = inclusion.get("exclude_subject_prefixes_by_study", {})
+        if not isinstance(excluded_subject_prefixes, dict) or any(
+            study_id not in studies["studies"]
+            or not isinstance(prefixes, list)
+            or not prefixes
+            or any(not isinstance(prefix, str) or not prefix for prefix in prefixes)
+            for study_id, prefixes in excluded_subject_prefixes.items()
+        ):
+            raise ConfigurationError(
+                "differential_expression.sample_inclusion.exclude_subject_prefixes_by_study "
+                "must map configured study IDs to non-empty lists of subject prefixes"
+            )
 
     for study_id, study in studies["studies"].items():
         missing_keys = {"input", "test_input", "publication_doi", "counts_source", "preparation", "annotation"} - study.keys()

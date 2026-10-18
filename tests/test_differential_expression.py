@@ -179,6 +179,34 @@ def test_test_mode_bypasses_cell_count_cutoff_but_keeps_adult_filter() -> None:
     assert excluded[0]["reasons"] == ["age_below_minimum"]
 
 
+def test_configured_subject_prefix_exclusion_removes_all_aida_lonza_site_samples() -> None:
+    obs = pd.DataFrame(
+        {
+            "study": ["aida25", "aida25", "aida25", "cima"],
+            "study_site": ["aida_JP", "aida_SG", "aida_JP", "cima"],
+            "sample": ["aida_JP_LONZA1", "aida_SG_LONZA1", "aida_JP_DONOR1", "cima_LONZA1"],
+            "subject": ["LONZA1", "LONZA1", "DONOR1", "LONZA1"],
+            "age": [30, 30, 45, 40],
+            "sex": ["male"] * 4,
+            "n_cells": [20] * 4,
+            "total_counts": [1000] * 4,
+        },
+        index=["lonza_jp", "lonza_sg", "aida_donor", "cima_donor"],
+    )
+    inclusion = {
+        "minimum_age_years_inclusive": 20,
+        "minimum_cells_per_pseudobulk_inclusive": 10,
+        "exclude_subject_prefixes_by_study": {"aida25": ["LONZA"]},
+    }
+
+    retained, exclusion_counts, excluded = _prepare_metadata(obs, inclusion)
+
+    assert retained["sample"].tolist() == ["aida_JP_DONOR1", "cima_LONZA1"]
+    assert exclusion_counts["configured_sample_exclusion"] == 2
+    assert [item["pseudobulk_id"] for item in excluded] == ["lonza_jp", "lonza_sg"]
+    assert all(item["reasons"] == ["configured_sample_exclusion"] for item in excluded)
+
+
 def test_developmental_metadata_uses_a_half_open_age_range() -> None:
     obs = pd.DataFrame(
         {

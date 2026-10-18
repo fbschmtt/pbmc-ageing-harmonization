@@ -81,6 +81,24 @@ def _prepare_metadata(
         metadata["cmv"] = normalize_cmv_status(metadata["cmv"])
     if "smoking_status" in metadata:
         metadata["smoking_status"] = normalize_smoking_status(metadata["smoking_status"])
+    excluded_by_subject_prefix = pd.Series(False, index=metadata.index)
+    excluded_subject_prefixes = inclusion.get("exclude_subject_prefixes_by_study", {})
+    if excluded_subject_prefixes:
+        if "subject" not in obs.columns:
+            configured_studies_present = metadata["study"].isin(excluded_subject_prefixes)
+            if configured_studies_present.any():
+                raise ValueError(
+                    "subject metadata is required to apply configured DE sample exclusions"
+                )
+        else:
+            subject = obs["subject"].astype("string").str.strip().str.upper()
+            for study, prefixes in excluded_subject_prefixes.items():
+                study_mask = metadata["study"] == study
+                if study_mask.any():
+                    normalized_prefixes = tuple(str(prefix).upper() for prefix in prefixes)
+                    excluded_by_subject_prefix |= study_mask & subject.str.startswith(
+                        normalized_prefixes, na=False
+                    )
     minimum_age = inclusion["minimum_age_years_inclusive"]
     minimum_cells = inclusion["minimum_cells_per_pseudobulk_inclusive"]
     valid_study = metadata["study"].notna() & ~metadata["study"].str.lower().isin(_UNKNOWN)
@@ -103,7 +121,7 @@ def _prepare_metadata(
         valid_study & valid_study_site & valid_sample & adult & valid_sex & valid_cells
         & valid_total_counts
     )
-    valid = valid_other_metadata & (enough_cells | test_mode)
+    valid = valid_other_metadata & (enough_cells | test_mode) & ~excluded_by_subject_prefix
     excluded = []
     for position in np.flatnonzero(~valid.to_numpy(dtype=bool)):
         row = metadata.iloc[position]
@@ -126,6 +144,8 @@ def _prepare_metadata(
             reasons.append("n_cells_below_minimum")
         if not valid_total_counts.iloc[position]:
             reasons.append("missing_or_nonpositive_total_counts")
+        if excluded_by_subject_prefix.iloc[position]:
+            reasons.append("configured_sample_exclusion")
         excluded.append(
             {
                 "pseudobulk_id": str(metadata.index[position]),
@@ -147,6 +167,7 @@ def _prepare_metadata(
         "n_cells_filter_bypassed": int(
             (valid_other_metadata & ~enough_cells).sum() if test_mode else 0
         ),
+        "configured_sample_exclusion": int(excluded_by_subject_prefix.sum()),
         "eligible_before_duplicate_check": int(valid.sum()),
     }
     metadata = metadata.loc[valid].copy()

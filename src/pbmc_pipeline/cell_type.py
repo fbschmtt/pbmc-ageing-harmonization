@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
-import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,7 +12,12 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 from .config import read_json
-from .harmonize import _harmony_integrate, _normalize_nullable_strings_for_h5ad
+from .embedding import prepare_sparse_pca
+from .harmonize import (
+    _harmony_integrate,
+    _normalize_nullable_strings_for_h5ad,
+    _write_h5ad_metadata,
+)
 from .utils import slugify
 
 
@@ -146,29 +151,18 @@ def analyse_cell_type(input_path: Path, output_dir: Path, pipeline: dict) -> dic
         (output_dir / "report.json").write_text(json.dumps(report, indent=2) + "\n")
         return report
 
-    raw_counts = adata.X.copy()
+    output_path = output_dir / "analysis.h5ad"
+    _normalize_nullable_strings_for_h5ad(adata)
+    adata.write_h5ad(output_path, compression=pipeline["processing"]["output_compression"])
+
     sc.pp.normalize_total(adata, target_sum=pipeline["processing"]["target_sum"])
     sc.pp.log1p(adata)
-    sc.pp.highly_variable_genes(adata, **pipeline["processing"]["hvg"])
-    excluded = adata.var_names.to_series().str.contains(pipeline["processing"]["exclude_vdj_regex"], case=False, regex=True)
-    selected = adata.var["highly_variable"].to_numpy() & ~excluded.to_numpy()
-    if selected.sum() < 2:
-        selected = ~excluded.to_numpy()
-    working = adata[:, selected].copy()
+    working, selected, excluded, n_comps = prepare_sparse_pca(
+        adata, pipeline, str(input_path)
+    )
     # Native PCA is retained for the exploratory PC--age correlations below.
     # A future analysis may reasonably prefer the Harmony-adjusted PCs there,
     # but that choice should be made deliberately rather than implicitly.
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message="zero-centering a sparse array/matrix densifies it.",
-            category=UserWarning,
-        )
-        sc.pp.scale(working, max_value=10)
-    n_comps = min(pipeline["processing"]["neighbors"]["n_pcs"], working.n_obs - 1, working.n_vars - 1)
-    if n_comps < 2:
-        raise ValueError(f"{input_path}: too few cells or genes for PCA")
-    sc.tl.pca(working, n_comps=n_comps, random_state=pipeline["processing"]["random_seed"])
     integration = spec["integration"]
     batch_key = integration["batch_key"]
     neighbor_rep = "X_pca"
@@ -212,6 +206,7 @@ def analyse_cell_type(input_path: Path, output_dir: Path, pipeline: dict) -> dic
     sc.tl.rank_genes_groups(marker_input, groupby="cluster", method="wilcoxon", use_raw=False)
     markers = _marker_table(sc.get.rank_genes_groups_df(marker_input, group=None), marker_input.obs["cluster"])
     markers.to_csv(output_dir / "markers.tsv", sep="\t", index=False)
+    del marker_input
     adata.obsm["X_pca"] = working.obsm["X_pca"]
     adata.uns["pca"] = working.uns["pca"].copy()
     # Retain loadings in the full-gene coordinate system so reports can use
@@ -228,14 +223,16 @@ def analyse_cell_type(input_path: Path, output_dir: Path, pipeline: dict) -> dic
     adata.obsp["connectivities"] = working.obsp["connectivities"]
     adata.uns["neighbors"] = working.uns["neighbors"]
     adata.obs["cluster"] = working.obs["cluster"].astype(str)
-    adata.X = raw_counts
+    del working
     composition = adata.obs.groupby(["cluster", "study"], observed=True).size().rename("n_cells").reset_index()
     composition.to_csv(output_dir / "cluster_study_composition.tsv", sep="\t", index=False)
     pc_age = _pc_age_correlations(adata)
     pc_age.to_csv(output_dir / "pc_age_correlations.tsv", sep="\t", index=False)
     report.update({"n_clusters": int(adata.obs["cluster"].nunique()), "clustering": spec["clustering"], "embedding": {"n_hvg": int(selected.sum()), "n_vdj_genes_excluded": int(excluded.sum()), "n_pcs": n_comps, "neighbors_use_rep": neighbor_rep, "integration": integration_report}})
     _normalize_nullable_strings_for_h5ad(adata)
-    adata.write_h5ad(output_dir / "analysis.h5ad", compression=pipeline["processing"]["output_compression"])
+    adata.X = None
+    gc.collect()
+    _write_h5ad_metadata(output_path, adata)
     (output_dir / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
 

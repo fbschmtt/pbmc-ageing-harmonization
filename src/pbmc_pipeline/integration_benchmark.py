@@ -196,7 +196,6 @@ def run_integration_benchmark(
                 embedding_genes=adata.var_names,
                 harmony_basis=method["adjusted_basis"],
                 label_prefix=label_prefix,
-                restore_counts=False,
                 compute_umap=True,
             )
             method_report = _retain_current_method(

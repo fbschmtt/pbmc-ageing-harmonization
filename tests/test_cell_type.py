@@ -168,7 +168,7 @@ def test_analysis_uses_harmony_for_local_neighbors_but_keeps_native_pcs(tmp_path
     pipeline = {
         "processing": {
             "output_compression": "gzip", "target_sum": 10_000,
-            "hvg": {"min_mean": 0.0125, "max_mean": 3.0, "min_disp": 0.5},
+            "hvg": {"min_mean": 0.0125, "min_disp": 0.5},
             "exclude_vdj_regex": "^$", "neighbors": {"n_neighbors": 10, "n_pcs": 5},
             "random_seed": 42,
         },

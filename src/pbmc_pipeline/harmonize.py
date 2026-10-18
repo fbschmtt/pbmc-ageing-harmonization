@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from .config import config_digest
+from .embedding import prepare_sparse_pca
 from .preparation import normalize_metadata_frame, read_prepared_cells
 from .source import read_study_counts_as_x
 from .validation import validate_counts, validate_output
@@ -209,7 +210,7 @@ def harmonize_study(
 
     if annotation["method"] == "celltypist" and not validate_only:
         _annotate_celltypist(
-            adata, annotation, pipeline, root, study_id, restore_counts=False
+            adata, annotation, pipeline, root, study_id
         )
         # The output file already contains the raw counts. Release the
         # normalized expression matrix before writing updated metadata to it.
@@ -430,7 +431,6 @@ def _annotate_celltypist(
     embedding_genes: pd.Index | None = None,
     harmony_basis: str = "X_pca_harmony",
     label_prefix: str = "",
-    restore_counts: bool = True,
     compute_umap: bool = True,
 ) -> dict[str, object]:
     import scanpy as sc
@@ -452,10 +452,7 @@ def _annotate_celltypist(
         _predict_celltypist(adata, annotation, pipeline, root, study_id, label_prefix=label_prefix)
         return embedding
 
-    raw_counts = adata.X.copy() if restore_counts else None
     embedding = analyze_normalized_data()
-    if restore_counts:
-        adata.X = raw_counts
     return embedding
 
 
@@ -506,8 +503,8 @@ def _compute_embedding(
 
     When ``embedding_genes`` is supplied, feature selection is deliberately
     confined to that intersection before HVG calculation. Only the selected
-    HVGs are copied for scaling/PCA, keeping the full raw count matrix out of
-    the embedding path.
+    HVGs are copied for scaling/PCA, keeping the full matrix out of the
+    embedding path.
     """
     import scanpy as sc
 
@@ -522,42 +519,25 @@ def _compute_embedding(
         raise ValueError(f"{study_id}: Harmony batch key {batch_key!r} is absent")
     embedding_input_genes = int(embedding_input.n_vars)
 
-    hvg = pipeline["processing"]["hvg"]
+    embedding, selected, _, n_comps = prepare_sparse_pca(embedding_input, pipeline, study_id)
     started = time.perf_counter()
-    sc.pp.highly_variable_genes(embedding_input, **hvg)
-    vdj = embedding_input.var_names.to_series().str.contains(
-        pipeline["processing"]["exclude_vdj_regex"], regex=True
+    # Keep the conventional mean-dispersion diagnostics with the harmonized
+    # study so its QC report can show the same ranking used for the PCA.
+    hvg_columns = [
+        column for column in (
+            "means", "dispersions", "dispersions_norm", "highly_variable_nbatches",
+        )
+        if column in embedding_input.var
+    ]
+    for column in hvg_columns:
+        adata.var[column] = embedding_input.var[column].reindex(adata.var_names)
+    selected_by_gene = pd.Series(selected, index=embedding_input.var_names).reindex(
+        adata.var_names, fill_value=False
     )
-    selected = embedding_input.var["highly_variable"].to_numpy() & ~vdj.to_numpy()
-    embedding = embedding_input[:, selected].copy()
-    if embedding.n_vars == 0:
-        raise ValueError(f"{study_id}: no non-VDJ highly variable genes were selected")
-    # Use float32 and only reach this point after feature selection to bound the
-    # embedding working set.
-    embedding.X = embedding.X.astype(np.float32, copy=False)
-    _log_step(
-        study_id,
-        "select_embedding_features",
-        started,
-        input_features=embedding_input.n_vars,
-        selected_features=int(selected.sum()),
-    )
+    adata.var["highly_variable"] = selected_by_gene.astype(bool)
+    _log_step(study_id, "select_hvg_metadata", started, input_features=embedding_input.n_vars)
     if embedding is not adata and embedding_input is not adata:
         del embedding_input
-    started = time.perf_counter()
-    import warnings
-
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message="zero-centering a sparse array/matrix densifies it.",
-            category=UserWarning,
-        )
-        sc.pp.scale(embedding)
-    _log_step(study_id, "scale_embedding", started)
-    started = time.perf_counter()
-    sc.tl.pca(embedding, svd_solver="arpack", random_state=pipeline["processing"]["random_seed"])
-    _log_step(study_id, "pca", started, components=embedding.obsm["X_pca"].shape[1])
     neighbor_rep = "X_pca"
     integration_details: dict[str, object] | None = None
     if batch_key is not None:
@@ -599,7 +579,7 @@ def _compute_embedding(
         "basis": "X_umap",
         "input_genes": embedding_input_genes,
         "hvg_genes": int(embedding.n_vars),
-        "n_pcs": int(embedding.obsm["X_pca"].shape[1]),
+        "n_pcs": int(n_comps),
         "neighbors_n_pcs": effective_n_pcs,
         "neighbors_use_rep": neighbor_rep,
         "integration": None if batch_key is None else {

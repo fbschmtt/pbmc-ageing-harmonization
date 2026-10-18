@@ -5,6 +5,18 @@ import numpy as np
 import pandas as pd
 
 
+def distinct_sample_batch_assignments(obs: pd.DataFrame) -> pd.DataFrame:
+    """Return one row per study, sample, and recorded single-cell batch."""
+    required = {"study", "sample", "batch_single_cell"}
+    missing = required - set(obs.columns)
+    if missing:
+        raise ValueError(f"Observation metadata are missing columns: {sorted(missing)}")
+    columns = ["study", "sample", "batch_single_cell"]
+    if "study_site" in obs:
+        columns.append("study_site")
+    return obs.loc[:, columns].drop_duplicates().reset_index(drop=True)
+
+
 def plot_trajectory_merge_diagnostic(axis, merge_diagnostics, *, max_clusters: int) -> None:
     """Plot final hierarchical merges and highlight the configured trajectory cut."""
     if merge_diagnostics.empty:

@@ -44,7 +44,9 @@ def test_onek_adapter_materializes_exactly_one_canonical_row_per_cell(tmp_path):
     assert summary["n_cells"] == 2
     assert prepared.index.tolist() == ["cell_a", "cell_b"]
     assert prepared["sample"].tolist() == ["d1", "d2"]
-    assert prepared["batch_single_cell"].tolist() == ["onek1k_1", "onek1k_2"]
+    assert prepared["batch_single_cell"].tolist() == [
+        "onek1k__sample__d1", "onek1k__sample__d2"
+    ]
     assert prepared["technology"].tolist() == ["10X3'v2", "10X3'v2"]
     assert prepared["study"].tolist() == ["onek1k", "onek1k"]
     assert prepared["study_doi"].tolist() == ["10.1126/science.abf3041"] * 2
@@ -84,6 +86,7 @@ def test_cima_adapter_uses_embedded_metadata_and_highest_resolution_label():
             "cell_type_l4": ["CD8_Tem_CCR7neg"], "sample": ["CIMA_H001"],
             "age": [42], "sex": ["Female"], "BMI": [22.5],
             "smoking_ststus": ["past"], "library": ["CIMA_RNA_H001_1"],
+            "RNA_experiment": [20230113],
         }, index=["cell_a"],
     )
 
@@ -93,7 +96,7 @@ def test_cima_adapter_uses_embedded_metadata_and_highest_resolution_label():
     assert prepared.loc["cell_a", "sample"] == "CIMA_H001"
     assert prepared.loc["cell_a", "technology"] == "DNBelab C Series"
     assert prepared.loc["cell_a", "smoking_status"] == "no"
-    assert prepared.loc["cell_a", "batch_single_cell"] == "cima_CIMA_RNA_H001_1"
+    assert prepared.loc["cell_a", "batch_single_cell"] == "cima_20230113"
     assert prepared.loc["cell_a", "aligner"] == "STAR 2.7.2b"
     assert prepared.loc["cell_a", "genome"] == "GRCh38"
     assert prepared.loc["cell_a", "frozen"] == "not_provided"

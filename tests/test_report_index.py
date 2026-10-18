@@ -53,9 +53,12 @@ def test_report_index_links_published_reports_from_output_root(tmp_path: Path) -
     assert 'href="analysis/per_type/cd14-monocyte/analysis/report.html"' in html
     assert 'href="analysis/per_type/cd14-monocyte/differential_expression/report.html"' in html
     assert 'href="analysis/per_type/naive-cd4-t-cell/differential_expression/report.html"' in html
-    assert "Single-cell analysis" in html
-    assert "Expression & abundance" in unescape(html)
-    assert "<table><thead><tr><th>Cell type</th><th>Analysis</th>" in html
+    assert "Per-cell-type analysis" in html
+    assert "DE & abundance" in unescape(html)
+    assert (
+        "<table><thead><tr><th>Cell type</th><th>Single-cell</th>"
+        "<th>DE &amp; abundance</th>"
+    ) in html
     assert "Integration benchmark report (HTML)" not in html
     assert "Open report" not in html
     assert ".ipynb" not in html

@@ -8,9 +8,11 @@ import platform
 import tempfile
 import time
 from collections.abc import Iterable
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -53,13 +55,7 @@ def _matrix_nnz_by_row(matrix) -> np.ndarray:
 
 
 def _match_csr_index_dtypes(matrix):
-    """Make CSR index arrays compatible with Scanpy's Numba normalizer.
-
-    ``concat_on_disk`` can write an ``int32`` ``indices`` array alongside an
-    ``int64`` ``indptr`` array. Scanpy requires both arrays to share a dtype
-    when normalizing a CSR matrix. Prefer downcasting the much smaller pointer
-    array; retain 64-bit pointers when the matrix has too many nonzeros.
-    """
+    """Make in-memory CSR indices compatible with Scanpy's Numba operations."""
     if not sparse.isspmatrix_csr(matrix) or matrix.indices.dtype == matrix.indptr.dtype:
         return matrix
     if int(matrix.indptr[-1]) <= np.iinfo(matrix.indices.dtype).max:
@@ -67,6 +63,80 @@ def _match_csr_index_dtypes(matrix):
     else:
         matrix.indices = matrix.indices.astype(matrix.indptr.dtype, copy=False)
     return matrix
+
+
+def _normalize_h5ad_csr_index_dtypes(path: Path) -> None:
+    """Use one safe integer width for an on-disk CSR matrix's indices.
+
+    On-disk concatenation can produce 32-bit ``indices`` with 64-bit
+    ``indptr``. Scanpy's sparse operations expect matching widths. Keep 32-bit
+    indices when the matrix dimensions and nonzero count fit; otherwise use
+    64-bit. The conversion is chunked, so the count matrix stays on disk.
+    """
+    import h5py
+
+    with h5py.File(path, "r+") as handle:
+        if "X" not in handle or not isinstance(handle["X"], h5py.Group):
+            return
+        matrix = handle["X"]
+        if "indices" not in matrix or "indptr" not in matrix:
+            return
+        indices = matrix["indices"]
+        indptr = matrix["indptr"]
+        if indices.dtype == indptr.dtype:
+            return
+
+        shape = tuple(int(value) for value in matrix.attrs["shape"])
+        nnz = int(indptr[-1])
+        use_int32 = (
+            nnz <= np.iinfo(np.int32).max
+            and max(shape, default=0) <= np.iinfo(np.int32).max
+        )
+        target_dtype = np.dtype(np.int32 if use_int32 else np.int64)
+        if indices.dtype == target_dtype:
+            name = "indptr"
+        elif indptr.dtype == target_dtype:
+            name = "indices"
+        else:
+            # For uncommon input widths, preserve the larger existing width.
+            target_dtype = np.result_type(indices.dtype, indptr.dtype)
+            name = "indices" if indices.dtype != target_dtype else "indptr"
+
+        source = matrix[name]
+        temporary_name = f"_{name}_dtype_update"
+        options = {
+            "shape": source.shape,
+            "dtype": target_dtype,
+            "chunks": source.chunks,
+            "compression": source.compression,
+            "compression_opts": source.compression_opts,
+            "shuffle": source.shuffle,
+            "fletcher32": source.fletcher32,
+            "fillvalue": source.fillvalue,
+        }
+        if source.scaleoffset is not None:
+            options["scaleoffset"] = source.scaleoffset
+        updated = matrix.create_dataset(temporary_name, **options)
+        for key, value in source.attrs.items():
+            updated.attrs[key] = value
+        chunk_size = 1_000_000
+        for start in range(0, source.shape[0], chunk_size):
+            stop = min(start + chunk_size, source.shape[0])
+            updated[start:stop] = source[start:stop].astype(target_dtype, copy=False)
+        del matrix[name]
+        matrix.move(temporary_name, name)
+
+
+def _write_single_cell_merge_metadata(path: Path, obs, var, uns: dict) -> None:
+    """Replace H5AD metadata slots while preserving the on-disk count matrix."""
+    import anndata as ad
+    import h5py
+
+    with h5py.File(path, "r+") as handle:
+        for key, value in (("obs", obs), ("var", var), ("uns", uns)):
+            if key in handle:
+                del handle[key]
+            ad.io.write_elem(handle, key, value)
 
 
 def pseudobulk_study(
@@ -292,12 +362,13 @@ def merge_single_cells(
         "study=%s step=start inputs=%d gene_join=%s",
         study_id, len(paths), spec["gene_join"],
     )
-    # Read only the small obs/var metadata in backed mode. concat_on_disk
-    # streams the large expression matrices into one temporary H5AD, avoiding
-    # the previous peak of all source matrices plus a full in-memory concat.
+    # Keep only source metadata in memory; expression data remains backed.
     started = _start_step(study_id, "read_input_metadata", inputs=len(paths))
-    parts = [ad.read_h5ad(path, backed="r") for path in paths]
+    parts = []
+    concat_temp = None
+    merged = None
     try:
+        parts = [ad.read_h5ad(path, backed="r") for path in paths]
         shared_genes = _shared_gene_names(parts)
         if shared_genes.empty:
             raise ValueError("Studies have no shared genes for single-cell merge")
@@ -319,11 +390,12 @@ def merge_single_cells(
             inputs=len(paths), shared_genes=len(shared_genes),
         )
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        # Keep this temporary concat alive as the raw-count checkpoint.
+        # Temporary lean inputs live beside the final artifact. The on-disk
+        # concat writes directly to output_path, so the merged matrix is never
+        # copied from an intermediate H5AD to the published output.
         concat_temp = tempfile.TemporaryDirectory(
             prefix=".single-cell-concat-", dir=output_path.parent
         )
-        concat_path = Path(concat_temp.name) / "merged.h5ad"
         concat_inputs = []
         csc_inputs = [
             index for index, part in enumerate(parts)
@@ -357,61 +429,90 @@ def merge_single_cells(
         started = _start_step(
             study_id, "concat_on_disk", inputs=len(paths), gene_join=spec["gene_join"]
         )
-        ad.experimental.concat_on_disk(
-            concat_inputs,
-            concat_path,
-            join=spec["gene_join"],
-            merge="same",
-            index_unique="::",
-            label="source_study",
-            # The AnnData default can load roughly 400 MB of sparse data at
-            # once. Smaller chunks reduce concat's working set on RAM-limited
-            # production machines.
-            max_loaded_elems=10_000_000,
-        )
+        # concat_on_disk has a one-input fast path that copies its input file.
+        # Pass an open group in that case so external links in the lean view
+        # are resolved into a self-contained final H5AD.
+        with ExitStack() as stack:
+            concat_sources = concat_inputs
+            if len(concat_inputs) == 1:
+                import h5py
+
+                concat_sources = [stack.enter_context(h5py.File(concat_inputs[0], "r"))]
+            # concat_on_disk does not expose a compression option. Writing its
+            # result directly avoids a full read and compressed rewrite.
+            ad.experimental.concat_on_disk(
+                concat_sources,
+                output_path,
+                join=spec["gene_join"],
+                merge="same",
+                index_unique="::",
+                label="source_study",
+                # The AnnData default can load roughly 400 MB of sparse data at
+                # once. Smaller chunks reduce concat's working set on RAM-limited
+                # production machines.
+                max_loaded_elems=10_000_000,
+            )
         _log_step(study_id, "concat_on_disk", started)
-        started = _start_step(study_id, "load_merged_matrix", path=concat_path)
-        merged = sc.read_h5ad(concat_path)
-        merged.X = _match_csr_index_dtypes(merged.X)
-        _log_step(
-            study_id, "load_merged_matrix", started,
-            cells=merged.n_obs, genes=merged.n_vars,
+        started = _start_step(study_id, "normalize_csr_index_dtypes", path=output_path)
+        _normalize_h5ad_csr_index_dtypes(output_path)
+        _log_step(study_id, "normalize_csr_index_dtypes", started)
+
+        # Open the final H5AD backed. Its obs/var tables are loaded for
+        # metadata work, while X remains on disk throughout finalization.
+        started = _start_step(study_id, "read_merged_metadata", path=output_path)
+        merged = ad.read_h5ad(output_path, backed="r")
+        n_obs, n_vars = merged.n_obs, merged.n_vars
+        if n_vars == 0:
+            raise ValueError("Studies have no shared genes for single-cell merge")
+        metadata = SimpleNamespace(
+            obs=merged.obs,
+            var=merged.var,
+            uns=dict(merged.uns),
+            n_obs=n_obs,
+            n_vars=n_vars,
         )
+        merged.file.close()
+        merged = None
+        _log_step(
+            study_id, "read_merged_metadata", started,
+            cells=n_obs, genes=n_vars,
+        )
+
+        # The shipped configuration uses an inner join. Keep provenance if a
+        # caller opts into an outer join, where missing features become zeros.
+        if spec["gene_join"] == "outer":
+            started = _start_step(study_id, "gene_availability")
+            _annotate_gene_availability(metadata, parts)
+            _log_step(study_id, "gene_availability", started)
+        metadata.uns["pipeline_provenance"] = _merge_provenance(
+            "single_cell_merge", paths, pipeline, gene_join=spec["gene_join"]
+        )
+        _ensure_study_doi_categorical(metadata)
+        _normalize_nullable_strings_for_h5ad(metadata)
+
+        started = _start_step(study_id, "write_merge_metadata", output=output_path)
+        _write_single_cell_merge_metadata(
+            output_path, metadata.obs, metadata.var, metadata.uns,
+        )
+        _log_step(study_id, "write_merge_metadata", started)
+
+        started = _start_step(study_id, "write_merge_report", output=report_path)
+        report = _merge_report("single_cell_merge", metadata, paths, pipeline)
+        report["gene_join_accounting"] = gene_join_accounting
+        report["integration_benchmark"] = {
+            "status": "not_run",
+            "message": "Run the separate integration benchmark workflow to compute global embeddings and diagnostic CellTypist labels.",
+        }
+        _write_report(report_path, report)
+        _log_step(study_id, "write_merge_report", started)
+        return report
     finally:
+        if merged is not None:
+            merged.file.close()
         for part in parts:
             part.file.close()
-    if merged.n_vars == 0:
-        raise ValueError("Studies have no shared genes for single-cell merge")
-    # Per-study embeddings are not part of the raw merged artifact. Global
-    # integration diagnostics are computed by the separate benchmark workflow.
-    merged.obsm.clear()
-    # The shipped configuration uses an inner join.  Keep provenance available
-    # if a caller explicitly opts into an outer join, where fill_value=0 creates
-    # synthetic rather than observational zeros.
-    if spec["gene_join"] == "outer":
-        started = _start_step(study_id, "gene_availability")
-        _annotate_gene_availability(merged, parts)
-        _log_step(study_id, "gene_availability", started)
-    del parts
-    merged.uns["pipeline_provenance"] = _merge_provenance(
-        "single_cell_merge", paths, pipeline, gene_join=spec["gene_join"]
-    )
-    _ensure_study_doi_categorical(merged)
-    _normalize_nullable_strings_for_h5ad(merged)
-    started = _start_step(study_id, "write_merged_h5ad", output=output_path)
-    merged.write_h5ad(output_path, compression=pipeline["processing"]["output_compression"])
-    _log_step(study_id, "write_merged_h5ad", started)
-    started = _start_step(study_id, "write_merge_report", output=report_path)
-    report = _merge_report("single_cell_merge", merged, paths, pipeline)
-    report["gene_join_accounting"] = gene_join_accounting
-    report["integration_benchmark"] = {
-        "status": "not_run",
-        "message": "Run the separate integration benchmark workflow to compute global embeddings and diagnostic CellTypist labels.",
-    }
-    _write_report(report_path, report)
-    _log_step(study_id, "write_merge_report", started)
-    concat_temp.cleanup()
-    return report
+        if concat_temp is not None:
+            concat_temp.cleanup()
 
 
 def _distribution(values: pd.Series) -> dict[str, float]:

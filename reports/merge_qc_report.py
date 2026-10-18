@@ -14,7 +14,10 @@ from matplotlib.ticker import MaxNLocator
 from scipy import sparse
 
 from pbmc_pipeline.report_theme import render_report_header
-from pbmc_pipeline.reporting import pseudobulk_celltype_fractions
+from pbmc_pipeline.reporting import (
+    distinct_sample_batch_assignments,
+    pseudobulk_celltype_fractions,
+)
 
 sns.set_theme(style="whitegrid")
 
@@ -91,6 +94,57 @@ def show_technical_covariates(adata):
     ))
     fig.tight_layout()
     plt.show()
+
+
+def show_technical_batch_distribution(adata):
+    """Compare sample counts across technical batches within each study."""
+    required = {"study", "sample", "batch_single_cell"}
+    if not required.issubset(adata.obs):
+        display(Markdown("_Technical-batch metadata are unavailable._"))
+        return
+
+    sample_batches = distinct_sample_batch_assignments(adata.obs)
+    batch_counts = (
+        sample_batches.groupby(["study", "batch_single_cell"], observed=True)
+        .agg(n_samples=("sample", "nunique"))
+        .reset_index()
+    )
+    if batch_counts.empty:
+        display(Markdown("_No technical-batch sample counts were available._"))
+        return
+
+    studies = sorted(batch_counts["study"].astype(str).unique())
+    n_columns = min(4, len(studies))
+    n_rows = int(np.ceil(len(studies) / n_columns))
+    figure, axes = plt.subplots(
+        n_rows, n_columns, figsize=(4.4 * n_columns, 3.8 * n_rows),
+        squeeze=False, sharey=False,
+    )
+    for axis, study in zip(axes.flat, studies):
+        study_batches = batch_counts.loc[batch_counts["study"].astype(str) == study]
+        sns.boxplot(
+            data=study_batches, y="n_samples", color="#c6dceb",
+            showfliers=False, ax=axis,
+        )
+        sns.stripplot(
+            data=study_batches, y="n_samples", color="#4c72b0",
+            alpha=0.75, jitter=0.22, size=4, ax=axis,
+        )
+        axis.set_title(f"{study} · {len(study_batches):,} batches")
+        axis.set_xlabel("Each point is one technical batch")
+        axis.set_ylabel("Distinct samples")
+        axis.set_xticks([])
+        axis.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    for axis in axes.flat[len(studies):]:
+        axis.set_axis_off()
+    figure.suptitle("Samples per technical batch by study")
+    figure.tight_layout()
+    plt.show()
+    display(Markdown(
+        "_Each point represents one study × technical-batch pair; its height is "
+        "the number of distinct samples assigned to that batch. A sample "
+        "appearing in multiple batches is counted once in each batch._"
+    ))
 
 
 def show_covariate_completeness(adata):
@@ -209,6 +263,22 @@ plt.xlabel("AIFI L2")
 plt.ylabel("Study")
 plt.tight_layout()
 plt.show()
+
+# %% [markdown]
+# ## Technical Batch Distribution
+#
+# Within each study, each point represents a technical batch and its height is
+# the number of distinct samples assigned to that batch.
+
+# %%
+if single_cell_available:
+    show_technical_batch_distribution(single_cell)
+else:
+    display(Markdown(
+        "_Exact sample-to-batch assignments are unavailable in the pseudobulk "
+        "merge because a sample can span multiple technical batches. Enable "
+        "the global single-cell merge to show this plot._"
+    ))
 
 # %% [markdown]
 # ## Global Single-Cell Merge

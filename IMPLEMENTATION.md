@@ -60,6 +60,10 @@ The core merge writes no global normalization, embedding, graph, or prediction.
   Its run report records feature-label provenance metrics, including the counts
   of symbol-like labels, Ensembl-like identifiers, missing labels, and duplicate
   labels before repair.
+- `src/pbmc_pipeline/embedding.py`: the shared `prepare_sparse_pca` function
+  owns normalized mean-dispersion HVG selection, V(D)J exclusion and fallback,
+  sparse scaling, and implicitly centered ARPACK PCA for harmonization and
+  per-cell-type analysis.
 - `src/pbmc_pipeline/merge.py`: creates raw-count pseudobulks, outer-joins
   pseudobulk genes, and runs the optional single-cell merge.
 - `modules/*.nf`: conversion, harmonization, merge, QC, and manifest process
@@ -184,6 +188,10 @@ the configured unnormalized integer count matrix. `.raw` is `None` and
 `.layers` is empty. Normalized matrices may be created transiently for
 annotation or embeddings, but are never retained in the output. This prevents
 an alternate normalized matrix from being mistaken for analysis input.
+For CellTypist harmonization, the validated count object is written to the final
+H5AD before normalization. Analysis then uses the in-memory `.X`; after
+annotation, that normalized matrix is released and the H5AD's metadata and
+embeddings are updated in place while preserving the saved count matrix.
 
 Merged pseudobulk `.var` records per-study gene availability. A gene absent
 from an input study is represented by an outer-join zero only for that study;
@@ -193,23 +201,35 @@ synthetic zeros from observed zero counts.
 
 The `--merge_single_cell` branch writes
 `merged/single_cell_merged.h5ad`. The supported `make run` target enables it by
-default; set `MERGE_SINGLE_CELL=false` to skip the merge. An on-disk concat streams source matrices into a temporary
-H5AD, then writes the raw joined counts and metadata. Per-cell QC fields
+default; set `MERGE_SINGLE_CELL=false` to skip the merge. On-disk concat streams
+the source matrices directly into the planned output H5AD. Temporary concat
+inputs omit unused source embeddings and analysis metadata; non-CSC inputs use
+external-link views, while CSC inputs are converted to CSR one at a time.
+Per-cell QC fields
 (`total_counts`, `n_genes_by_counts`, and `percent_mito`) are computed during
 harmonization and carried through the join. The merge does not normalize the
 
 `make run-integration-benchmark` is a separate optional workflow over that
-merged H5AD. It opens the input in backed mode and materializes at most
-2,000,000 cells selected uniformly at random without replacement. The sample
-uses `processing.random_seed` and is shared across all methods; the cap is
-configured by `integration_benchmark.max_cells`. Sample size, source size,
+merged H5AD. It opens the input in backed mode and defaults to processing all
+cells up to `integration_benchmark.max_cells` (20,000,000). Above that cap, it
+materializes a uniform random sample without replacement using
+`processing.random_seed`, shared across all methods. Sample size, source size,
 fraction, selection strategy, and seed are recorded in the JSON sidecar,
 artifact metadata, and report. Benchmark UMAPs and comparisons therefore
-describe only the selected cells and are not a full-data global embedding. The
-benchmark compares an unintegrated PCA baseline with Harmony, Scanorama, and
-BBKNN using the shared normalized HVG/PCA workspace. Harmony and Scanorama
-adjust embeddings, BBKNN balances the neighbor graph, and the unintegrated PCA
-graph is the baseline.
+describe all input cells unless the configured cap is exceeded. The active
+benchmark configuration compares an unintegrated PCA baseline with Harmony
+and BBKNN using one normalized HVG/PCA workspace; Scanorama is temporarily
+disabled because its correction step can allocate large dense arrays. Its PCA preparation is shared
+through `pbmc_pipeline.embedding.prepare_sparse_pca`: mean-dispersion HVGs are
+selected using the configured minimum mean and dispersion cutoffs with no
+maximum mean cutoff, and V(D)J genes are excluded case-insensitively,
+and if fewer than two genes remain, all non-V(D)J genes are used. The selected
+matrix is cast to float32 and scaled with centering disabled to preserve
+sparsity; ARPACK PCA applies centering implicitly. PCA computes up to
+`processing.neighbors.n_pcs`, capped by the available cells and selected genes.
+Harmony adjusts embeddings, BBKNN balances the neighbor graph, and the
+unintegrated PCA graph is the baseline. The benchmark implementation still
+supports Scanorama if it is re-enabled in the configuration.
 Every method's graph supplies both CellTypist majority voting
 and its UMAP. The integration report compares graph edge overlap with
 unintegrated PCA and AIFI-L2 label concordance without applying acceptance
@@ -236,8 +256,16 @@ observation metadata into memory, and the largest individual type must fit in
 memory during the write. The split retains raw counts and canonical metadata.
 Per-sample abundance denominators are derived later from the merged pseudobulk
 object.
-The analysis task computes the type-specific PCA, Harmony neighbours/UMAP,
-Leiden clusters, and marker tables. During report execution, the notebook also
+The analysis task writes raw counts to the planned `analysis/analysis.h5ad`
+before normalizing `.X` in memory. After PCA, Harmony neighbours/UMAP, Leiden
+clustering, and marker ranking, it releases the normalized `.X` and updates
+metadata and embeddings in that H5AD, preserving the on-disk counts without an
+in-memory raw-count copy. PCA preparation uses the shared
+`pbmc_pipeline.embedding.prepare_sparse_pca` function described above. Stage
+orchestration, graph construction, Harmony, clustering, and markers are in
+`pbmc_pipeline.cell_type.analyse_cell_type`; harmonization orchestration is in
+`pbmc_pipeline.harmonize._compute_embedding`.
+During report execution, the notebook also
 computes a comparison UMAP from the saved native PCs; it is not persisted back
 to the analysis H5AD.
 It excludes configured V(D)J genes from local feature selection, uses

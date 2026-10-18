@@ -45,6 +45,8 @@ def prepare_study(
     prepared["study_doi"] = pd.Categorical(
         prepared["study_doi"], categories=[study["publication_doi"]]
     )
+    sample_batches = prepared[["sample", "batch_single_cell"]].drop_duplicates()
+    fallback_prefix = f"{study_id}__sample__"
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     prepared.to_csv(output_path, index_label="cell_id", compression="infer")
@@ -63,6 +65,14 @@ def prepare_study(
         "n_cells": len(prepared),
         "excluded_n_cells": len(source_ids) - len(prepared),
         "columns": list(prepared.columns),
+        "technical_batch": {
+            "n_batches": int(sample_batches["batch_single_cell"].nunique()),
+            "n_sample_specific_fallbacks": int(
+                sample_batches["batch_single_cell"].astype("string")
+                .str.startswith((fallback_prefix, f"{study_id}__sample_fallback__"))
+                .sum()
+            ),
+        },
         "source_obs_output": None if source_obs_output_path is None else str(source_obs_output_path),
         "source_obs_columns": list(source_obs.columns),
     }
@@ -122,7 +132,69 @@ def validate_prepared_cells(
         values = result[column]
         if values.isna().any() or values.astype("string").str.strip().eq("").any():
             raise PreparationError(f"Prepared metadata has missing biological identifier {column}")
-    return normalize_metadata_frame(result, schema)
+    result = normalize_metadata_frame(result, schema)
+    result = normalize_sample_nested_batch(result)
+    batch_counts = result.groupby("sample", observed=True)["batch_single_cell"].nunique()
+    if batch_counts.gt(1).any():
+        raise PreparationError(
+            "Technical batch assignment must be constant within each sample"
+        )
+    return result
+
+
+def normalize_sample_nested_batch(frame: pd.DataFrame) -> pd.DataFrame:
+    """Make batch_single_cell a sample-nested technical grouping.
+
+    Keep source batch values when each sample has one unambiguous value and
+    the source identifies at least one batch shared by multiple samples.
+    Samples with missing or conflicting batch values receive a sample-specific
+    fallback. If the source has no shared grouping (including a study-wide
+    constant or one unique value per sample), every sample becomes its own
+    batch.
+    """
+    result = frame.copy()
+    sample = result["sample"].astype("string").str.strip()
+    batch = result["batch_single_cell"].astype("string").str.strip()
+    unknown = {"", "nan", "none", "null", "not_provided", "unknown", "unclear"}
+    source_batch = batch.mask(batch.str.lower().isin(unknown))
+
+    pairs = pd.DataFrame({"sample": sample, "batch": source_batch}).dropna().drop_duplicates()
+    values_by_sample = pairs.groupby("sample", observed=True)["batch"].agg(list)
+    assigned: dict[str, str] = {}
+    fallback_samples: set[str] = set()
+    existing_fallbacks: set[str] = set()
+    for sample_id in sample.drop_duplicates().astype(str):
+        values = values_by_sample.get(sample_id, [])
+        if len(values) == 1:
+            assigned[sample_id] = str(values[0])
+            if str(values[0]) in {
+                f"{result['study'].iloc[0]}__sample__{sample_id}",
+                f"{result['study'].iloc[0]}__sample_fallback__{sample_id}",
+            }:
+                existing_fallbacks.add(sample_id)
+        else:
+            fallback_samples.add(sample_id)
+
+    # A source field that never groups distinct samples contributes no shared
+    # technical correlation information; represent those samples directly.
+    assigned_counts = pd.Series(list(assigned.values()), dtype="string").value_counts()
+    has_shared_source_batch = assigned_counts.gt(1).any()
+    if not has_shared_source_batch:
+        fallback_samples.update(assigned)
+
+    study = str(result["study"].iloc[0])
+    source_values = set(source_batch.dropna().astype(str))
+    for sample_id in fallback_samples:
+        if sample_id in existing_fallbacks:
+            continue
+        fallback = f"{study}__sample__{sample_id}"
+        if fallback in source_values:
+            fallback = f"{study}__sample_fallback__{sample_id}"
+        assigned[sample_id] = fallback
+    result["batch_single_cell"] = sample.map(assigned).astype("string")
+    if result["batch_single_cell"].isna().any():
+        raise PreparationError("Could not assign a technical batch to every sample")
+    return result
 
 
 def normalize_metadata_frame(frame: pd.DataFrame, schema: dict[str, Any]) -> pd.DataFrame:

@@ -174,6 +174,54 @@ def plot_umap_split_by_study(adata):
     display_collapsible_figure(figure, "Show local UMAP split by study")
 
 
+def plot_hvg_selection(adata):
+    """Show the conventional normalized mean-dispersion HVG ranking."""
+    required = {
+        "means", "dispersions_norm", "used_for_local_pca",
+    }
+    if not required <= set(adata.var.columns):
+        display(Markdown("_HVG diagnostics are unavailable._"))
+        return
+
+    hvg = adata.var.loc[:, sorted(required)].replace([np.inf, -np.inf], np.nan)
+    hvg = hvg.dropna(subset=["means", "dispersions_norm"])
+    hvg = hvg.loc[(hvg["means"] > 0) & (hvg["dispersions_norm"] > 0)]
+    selected = hvg["used_for_local_pca"].astype(bool)
+
+    figure, axis = plt.subplots(figsize=(9, 5.5))
+    axis.scatter(
+        hvg.loc[~selected, "means"], hvg.loc[~selected, "dispersions_norm"],
+        color="#9aa0a6", s=7, alpha=0.4, linewidths=0, rasterized=True,
+        label="Not selected",
+    )
+    axis.scatter(
+        hvg.loc[selected, "means"], hvg.loc[selected, "dispersions_norm"],
+        color="#d55e00", s=12, alpha=0.75, linewidths=0,
+        rasterized=True, label="Selected for PCA after VDJ exclusion",
+    )
+    axis.set_xscale("log")
+    axis.set_xlabel("Mean normalized expression (log scale)")
+    axis.set_ylabel("Normalized dispersion")
+    axis.set_title("Highly variable gene selection")
+    axis.legend(frameon=False, loc="best")
+    figure.tight_layout()
+    display_collapsible_figure(figure, "Show HVG selection versus mean")
+
+    top_hvg = (
+        adata.var.loc[:, ["dispersions_norm", "means"]]
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna(subset=["dispersions_norm"])
+        .sort_values("dispersions_norm", ascending=False)
+        .head(20)
+        .rename_axis("Gene")
+        .reset_index()
+    )
+    top_hvg["Used for local PCA"] = top_hvg["Gene"].isin(
+        adata.var_names[adata.var["used_for_local_pca"].astype(bool)]
+    )
+    display_collapsible_table(top_hvg, "Top 20 genes by normalized dispersion")
+
+
 def has_age_span(data, *, min_samples=2):
     return len(data) >= min_samples and data["age"].nunique() >= 2
 
@@ -449,26 +497,61 @@ plt.show()
 # ## Local Embedding and Clusters
 #
 # This is a type-specific exploratory embedding. PCA is calculated from the
-# local highly variable genes after normalization, log transformation, and
-# scaling; configured V(D)J genes are excluded. When more than one study is
-# represented, Harmony corrects these PCs by study. The configured local
+# local highly variable genes selected from normalized, log-transformed
+# expression and then scaled; configured V(D)J genes are excluded. When more
+# than one study is represented, Harmony corrects these PCs by study. The configured local
 # neighbor graph, UMAP, and Leiden clusters are calculated from the
 # Harmony-adjusted PCs; native PCs are retained below for diagnostic plots.
 # Integration can also change biological structure, so study colouring and
 # sample-level cluster composition should be reviewed before interpreting a
 # cluster as a biological state.
 
+# %% [markdown]
+# ### Highly Variable Gene Selection
+#
+# The plot and ranking table show the mean-dispersion features used for this
+# type's PCA after V(D)J exclusion.
+
 # %%
 if report["status"] != "complete":
     display(Markdown("_Too few cells for a type-specific embedding and clustering._"))
 else:
     unintegrated_basis = add_unintegrated_umap(adata, pipeline)
+    plot_hvg_selection(adata)
+
+# %% [markdown]
+# ### Unintegrated UMAP
+#
+# Cluster IDs are from the Harmony-integrated analysis and are shown here on
+# the unintegrated coordinates for comparison.
+
+# %%
+if report["status"] == "complete":
     plot_umap(
         adata, color="study", basis=unintegrated_basis.removeprefix("X_"),
-        title="Local UMAP without study integration",
+        title="Unintegrated UMAP: study",
         marker_area_scale=4.0,
     )
-    plot_umap(adata, color="cluster", title="Local UMAP: cluster IDs", label_clusters=True)
+    plot_umap(
+        adata, color="cluster", basis=unintegrated_basis.removeprefix("X_"),
+        title="Unintegrated UMAP: Harmony-derived cluster IDs",
+        label_clusters=True,
+    )
+
+# %% [markdown]
+# ### Harmony-Integrated UMAP
+#
+# The local clusters, UMAP, and neighbor graph were calculated from the
+# Harmony-adjusted PCs. This cluster-ID plot therefore shows the integrated
+# UMAP coordinates used by the analysis.
+
+# %%
+if report["status"] == "complete":
+    plot_umap(
+        adata, color="cluster",
+        title="Harmony-integrated UMAP: cluster IDs",
+        label_clusters=True,
+    )
     plot_umap_split_by_study(adata)
     colors = ["study", "age"]
     if "aifi_l3_majority" in adata.obs:
