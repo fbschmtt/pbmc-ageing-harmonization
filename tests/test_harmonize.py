@@ -31,7 +31,7 @@ def _prepared_metadata(schema, index):
     return pd.DataFrame(metadata, index=pd.Index(index, name="cell_id"))
 
 
-def test_harmonized_output_keeps_only_selected_counts_in_x(tmp_path):
+def test_harmonized_output_keeps_only_selected_counts_in_x(tmp_path, monkeypatch):
     source = ad.AnnData(
         X=np.array([[0.1, 0.2], [0.3, 0.4]], dtype=np.float32),
         obs=pd.DataFrame(index=["cell_a", "cell_b"]),
@@ -50,13 +50,15 @@ def test_harmonized_output_keeps_only_selected_counts_in_x(tmp_path):
     prepared["study_doi"] = "10.0000/test"
     prepared.to_csv(prepared_path, compression="infer")
     output = tmp_path / "harmonized.h5ad"
+    monkeypatch.setattr("pbmc_pipeline.harmonize._annotate_celltypist", lambda *args: {})
     harmonize_study(
         ROOT,
         "test",
         {
             "publication_doi": "10.0000/test", "counts_source": "layer:counts",
             "features": {"duplicate_policy": "error"},
-            "preparation": {"allow_cell_subset": False}, "annotation": {"method": "existing"},
+            "preparation": {"allow_cell_subset": False},
+            "annotation": {"method": "celltypist", "levels": ["l3"]},
         },
         {"processing": {"output_compression": "gzip"}},
         schema,

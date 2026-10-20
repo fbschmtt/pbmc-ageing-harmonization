@@ -16,6 +16,7 @@ from pbmc_pipeline.covariates import categorical_levels
 from pbmc_pipeline.differential_expression import (
     _UNKNOWN,
     _availability_mask,
+    _center_continuous_design_columns,
     _has_covariate_variation,
     _load_pseudobulk,
     _matrix_to_counts,
@@ -61,6 +62,156 @@ def _finite_or_none(value) -> float | None:
     """Convert finite estimates to JSON-safe floats."""
     number = float(value)
     return number if np.isfinite(number) else None
+
+
+def _annotate_study_slope_coefficients(
+    coefficients: pd.DataFrame, study_slopes: pd.DataFrame, study_levels: list[str],
+) -> pd.DataFrame:
+    """Explain the reference-plus-deviation coding and check derived slopes."""
+    annotated = coefficients.copy()
+    annotated["parameter_role"] = "Other model coefficient"
+    annotated["study"] = ""
+    annotated["interpretation"] = ""
+    reference_study = str(study_levels[0])
+    age_row = annotated.loc[annotated["term"] == "age"]
+    if len(age_row) != 1:
+        raise ValueError("Study-slope model must contain exactly one age coefficient")
+    reference_slope = float(age_row["coefficient"].iloc[0])
+    annotated.loc[annotated["term"] == "age", [
+        "parameter_role", "study", "interpretation",
+    ]] = [
+        "Per-year slope for the reference study", reference_study,
+        "This is the complete slope for the reference study.",
+    ]
+
+    reported = study_slopes.set_index("study")["slope"]
+    for study in study_levels:
+        study = str(study)
+        if study not in reported:
+            raise ValueError(f"The per-study slope table is missing {study!r}")
+        if study == reference_study:
+            expected_slope = reference_slope
+        else:
+            term = f"age:study[T.{study}]"
+            interaction = annotated.loc[annotated["term"] == term, "coefficient"]
+            if len(interaction) != 1:
+                raise ValueError(f"Study-slope model is missing interaction {term!r}")
+            deviation = float(interaction.iloc[0])
+            expected_slope = reference_slope + deviation
+            annotated.loc[annotated["term"] == term, [
+                "parameter_role", "study", "interpretation",
+            ]] = [
+                "Difference from the reference-study per-year slope", study,
+                f"Add this deviation to the {reference_study!r} age coefficient; it is not a standalone slope.",
+            ]
+        if not np.isclose(float(reported.loc[study]), expected_slope, rtol=1e-10, atol=1e-12):
+            raise ValueError(
+                f"Reported slope for {study!r} does not equal its fitted coefficient contrast"
+            )
+    return annotated
+
+
+_CROSS_TRAJECTORY_COLUMNS = [
+    "cell_type", "gene", "age_bin", "log2FoldChange", "lfcSE", "pvalue", "padj",
+    "omnibus_padj",
+]
+_CROSS_TRAJECTORY_SUPPORT_COLUMNS = ["cell_type", "status", "reason", "source"]
+
+
+def _collect_cross_cell_type_trajectories(
+    differential_expression_dir: Path | None, gene: str,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Read the completed per-type age-bin DE outputs for one selected gene."""
+    if differential_expression_dir is None:
+        return (
+            pd.DataFrame(columns=_CROSS_TRAJECTORY_COLUMNS),
+            pd.DataFrame([{
+                "cell_type": "", "status": "unavailable",
+                "reason": "No differential-expression directory was supplied.", "source": "",
+            }]),
+        )
+    if not differential_expression_dir.is_dir():
+        return (
+            pd.DataFrame(columns=_CROSS_TRAJECTORY_COLUMNS),
+            pd.DataFrame([{
+                "cell_type": "", "status": "unavailable",
+                "reason": "The differential-expression directory does not exist.",
+                "source": str(differential_expression_dir),
+            }]),
+        )
+
+    trajectories = []
+    support = []
+    for metadata_path in sorted(differential_expression_dir.rglob("run_metadata.json")):
+        metadata = json.loads(metadata_path.read_text())
+        cell_type = str(metadata.get("cell_type", metadata_path.parent.parent.name))
+        fit = next(
+            (model for model in metadata.get("models", [])
+             if model.get("purpose") == "age_trajectory"),
+            None,
+        )
+        if fit is None:
+            support.append({
+                "cell_type": cell_type, "status": "unavailable",
+                "reason": "No age-trajectory fit is recorded.", "source": str(metadata_path),
+            })
+            continue
+        if fit.get("status") != "complete":
+            support.append({
+                "cell_type": cell_type, "status": "unavailable",
+                "reason": str(fit.get("reason", "Age-trajectory fit did not complete.")),
+                "source": str(metadata_path),
+            })
+            continue
+        relative_path = fit.get("results_by_covariate", {}).get("age_bin")
+        result_path = metadata_path.parent / relative_path if relative_path else (
+            metadata_path.parent / "combined" / "age_bin.csv"
+        )
+        if not result_path.is_file():
+            support.append({
+                "cell_type": cell_type, "status": "unavailable",
+                "reason": "Completed age-trajectory CSV is missing.", "source": str(result_path),
+            })
+            continue
+        result = pd.read_csv(result_path)
+        required = {"gene", "age_bin", "log2FoldChange", "omnibus_padj"}
+        if not required.issubset(result):
+            support.append({
+                "cell_type": cell_type, "status": "unavailable",
+                "reason": "Age-trajectory CSV has an unsupported schema.", "source": str(result_path),
+            })
+            continue
+        selected = result.loc[result["gene"].astype(str) == gene].copy()
+        if selected.empty:
+            support.append({
+                "cell_type": cell_type, "status": "gene not tested",
+                "reason": "The selected gene is absent from this cell type's age-bin fit.",
+                "source": str(result_path),
+            })
+            continue
+        # Age-bin output is produced both before and after the cell-type field
+        # was added to the DE result schema.  The result directory's metadata is
+        # authoritative, so normalize either schema to the same value.
+        if "cell_type" in selected.columns:
+            selected["cell_type"] = cell_type
+        else:
+            selected.insert(0, "cell_type", cell_type)
+        selected = selected.reindex(columns=_CROSS_TRAJECTORY_COLUMNS)
+        trajectories.append(selected)
+        support.append({
+            "cell_type": cell_type, "status": "complete", "reason": "",
+            "source": str(result_path),
+        })
+    trajectory_table = (
+        pd.concat(trajectories, ignore_index=True)
+        if trajectories else pd.DataFrame(columns=_CROSS_TRAJECTORY_COLUMNS)
+    )
+    if not trajectory_table.empty:
+        starts = trajectory_table["age_bin"].str.split("-", n=1).str[0].astype(int)
+        trajectory_table = trajectory_table.assign(_age_bin_start=starts).sort_values(
+            ["cell_type", "_age_bin_start"], kind="stable",
+        ).drop(columns="_age_bin_start")
+    return trajectory_table, pd.DataFrame(support, columns=_CROSS_TRAJECTORY_SUPPORT_COLUMNS)
 
 
 def _exploratory_infant_adult_contrast(
@@ -210,7 +361,7 @@ def _prepare_model_for_cache(dds) -> None:
 
 def _fit_profile(
     *, input_path: Path, config_path: Path, cell_type: str, gene: str,
-    output_dir: Path, cpus: int,
+    output_dir: Path, cpus: int, differential_expression_dir: Path | None = None,
 ) -> Path:
     import statsmodels.api as sm
     from formulaic_contrasts import FormulaicContrasts
@@ -318,15 +469,9 @@ def _fit_profile(
                 model_metadata[column],
                 categories=categorical_levels(column, model_metadata[column]),
             )
-    design_matrix = FormulaicContrasts(model_metadata, design).design_matrix
-    # Centering age changes only the intercept parameterization, not its
-    # per-year coefficient. It avoids extrapolating the intercept to age zero
-    # during PyDESeq2's IRLS initialization, which can overflow for steep genes.
-    if "age" in design_matrix:
-        design_matrix["age"] = (
-            pd.to_numeric(design_matrix["age"], errors="coerce")
-            - float(model_metadata["age"].mean())
-        )
+    design_matrix = _center_continuous_design_columns(
+        FormulaicContrasts(model_metadata, design).design_matrix,
+    )
     numeric_design = design_matrix.to_numpy(dtype=float)
     rank = int(np.linalg.matrix_rank(numeric_design))
     if rank < numeric_design.shape[1] or numeric_design.shape[0] <= rank:
@@ -647,6 +792,9 @@ def _fit_profile(
             "fitted_expression": line_design @ np.asarray(study_slope_fit.params),
         }))
     study_slope_result = pd.DataFrame(study_slope_rows)
+    study_slope_model_result = _annotate_study_slope_coefficients(
+        study_slope_model_result, study_slope_result, study_levels,
+    )
     study_slope_predictions = pd.concat(study_slope_lines, ignore_index=True)
 
     # Keep study baselines as fixed effects while partially pooling age slopes
@@ -986,6 +1134,9 @@ def _fit_profile(
     gene_samples["mixed_model_residual"] = mixed_model_residuals
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    cross_cell_type_trajectories, cross_cell_type_trajectory_support = (
+        _collect_cross_cell_type_trajectories(differential_expression_dir, gene)
+    )
     gene_samples.to_csv(output_dir / "gene_sample_counts.csv", index=False)
     gene_result.to_csv(output_dir / "gene_age_result.csv", index=False)
     infant_adult_comparison = (
@@ -1020,6 +1171,12 @@ def _fit_profile(
     study_slope_result.to_csv(output_dir / "naive_study_slopes.csv", index=False)
     study_slope_predictions.to_csv(
         output_dir / "naive_study_slope_predictions.csv", index=False,
+    )
+    cross_cell_type_trajectories.to_csv(
+        output_dir / "cross_cell_type_age_trajectories.csv", index=False,
+    )
+    cross_cell_type_trajectory_support.to_csv(
+        output_dir / "cross_cell_type_age_trajectory_support.csv", index=False,
     )
     fit_diagnostics = pd.DataFrame(fit_diagnostics_rows)
     fit_diagnostics.to_csv(output_dir / "model_fit_diagnostics.csv", index=False)
@@ -1118,6 +1275,8 @@ def _fit_profile(
             "age_bin_residual_correlations.csv", "age_bin_correlated_gene_residuals.csv",
             "naive_study_slope_model_result.csv", "naive_study_slopes.csv",
             "naive_study_slope_predictions.csv",
+            "cross_cell_type_age_trajectories.csv",
+            "cross_cell_type_age_trajectory_support.csv",
             "naive_mixed_model_fixed_effects.csv", "naive_mixed_model_study_slopes.csv",
             "naive_mixed_model_predictions.csv",
             "gene_residual_correlations.csv", "top_correlated_gene_residuals.csv",
@@ -1146,11 +1305,16 @@ def main() -> None:
     parser.add_argument("--input", type=Path, default=Path("output/harmonization/merged/pseudobulk_merged.h5ad"))
     parser.add_argument("--config", type=Path, default=Path("config/pipeline.json"))
     parser.add_argument("--output-dir", type=Path, default=Path("output/analysis/per_gene"))
+    parser.add_argument(
+        "--differential-expression-dir", type=Path,
+        help="Completed per-cell-type DE directory from run-de (optional)",
+    )
     parser.add_argument("--cpus", type=int, default=1)
     args = parser.parse_args()
     report = _fit_profile(
         input_path=args.input, config_path=args.config, cell_type=args.cell_type,
         gene=args.gene, output_dir=args.output_dir, cpus=args.cpus,
+        differential_expression_dir=args.differential_expression_dir,
     )
     print(report)
 

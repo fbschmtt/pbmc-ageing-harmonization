@@ -53,6 +53,7 @@ def show_study_coverage(adata):
         sns.boxplot(data=adata.obs, x="study", y="n_cells", ax=axes[1])
         axes[1].set_yscale("log")
         axes[1].set_title("Cells represented by each pseudobulk")
+        axes[1].tick_params(axis="x", rotation=90)
     else:
         adata.obs.groupby("study", observed=True)["sample"].nunique().sort_values().plot.barh(ax=axes[1], color="#55a868")
         axes[1].set_title("Distinct samples by study")

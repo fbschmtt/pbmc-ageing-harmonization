@@ -27,6 +27,7 @@
           "source_page": {"type": "string", "format": "uri"},
           "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
           "expected_size_bytes": {"type": "integer", "minimum": 1},
+          "gzip_after_download": {"type": "boolean"},
           "local_subset_allowed": {"type": "boolean"},
           "note": {"type": "string", "minLength": 1}
         },

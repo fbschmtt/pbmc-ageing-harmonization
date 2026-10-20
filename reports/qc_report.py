@@ -43,6 +43,8 @@ input_path = Path(os.environ["QC_INPUT_H5AD"])
 run_report_path = Path(os.environ["QC_RUN_REPORT"])
 study = os.environ["QC_STUDY"]
 run_report = json.loads(run_report_path.read_text())
+adata_backed = sc.read_h5ad(input_path, backed="r")
+obs = adata_backed.obs.copy()
 display(HTML(render_report_header(
     title=study,
     eyebrow="PBMC ageing · per-study QC",
@@ -51,6 +53,8 @@ display(HTML(render_report_header(
         ("Status", str(run_report.get("status", "unknown"))),
         ("Cells", f"{run_report.get('n_cells', 0):,}"),
         ("Genes", f"{run_report.get('n_genes', 0):,}"),
+        ("Distinct donors", f"{obs['subject'].nunique():,}"),
+        ("Distinct samples", f"{obs['sample'].nunique():,}"),
         ("Excluded input cells", f"{run_report.get('excluded_input_cells', 0):,}"),
     ],
 )))
@@ -64,8 +68,6 @@ display(pd.DataFrame({"value": [run_report.get(key) for key in summary_keys]}, i
 display(Markdown("**Warnings:** " + ("; ".join(run_report.get("warnings", [])) or "none")))
 display(Markdown("**Recorded assumptions/provenance:**"))
 display(pd.Series(run_report.get("provenance", {}), name="value").to_frame())
-adata_backed = sc.read_h5ad(input_path, backed="r")
-obs = adata_backed.obs.copy()
 print(f"Stored object: {adata_backed.n_obs:,} cells × {adata_backed.n_vars:,} genes")
 
 # %% [markdown]

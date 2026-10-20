@@ -169,6 +169,8 @@ Focused gene profiles are stored under output/analysis/per_gene/<type>/<gene>/
 
 All immutable local inputs belong under `input_data/`. Generated conversions,
 reports, and harmonized outputs are kept outside it and ignored by Git.
+This includes the pipeline-wide GO enrichment files in `input_data/go/`, as
+well as study-specific data.
 
 Published outputs are organized under `output/harmonization/` for preparation,
 harmonized data, pseudobulk, merged inputs, QC reports, and integration
@@ -313,8 +315,8 @@ fixtures are generated under the ignored `test_data/` directory.
 
 ## Download inputs
 
-> **Strictly opt-in and potentially large.** Only `make download-inputs` and
-> `make download-inputs-strict` retrieve data; `make install`, test targets,
+> **Strictly opt-in and potentially large.** Only `make download-inputs`,
+> `make download-go-inputs`, and `make download-inputs-strict` retrieve data; `make install`, test targets,
 > and production workflow targets never do. Before it starts, the downloader
 > warns about pending artifacts and their recorded size where available. A
 > selected study can require multi-gigabyte source files.
@@ -328,7 +330,15 @@ reported for best-effort acquisition:
 ```bash
 make download-inputs STUDIES=aifi
 make download-inputs STUDIES=nehar_belaid26
+make download-go-inputs
 ```
+
+Study selections include the small pipeline-wide GO enrichment inputs in
+`input_data/go/`; use `make download-go-inputs` to retrieve only those files.
+Their source files can change upstream, so the
+registry intentionally has no fixed checksum or release requirement; the
+download manifest and each report's enrichment provenance record the exact
+SHA-256 values used, along with the GO ontology `data-version`.
 
 The downloader prints each artifact's position in the run and its associated
 study name. During a transfer it also shows bytes downloaded, transfer rate,
@@ -450,7 +460,7 @@ which validation to run.
 | Nextflow workflow or configuration change | `make workflow-lint` | Add `make run-test STUDIES=<study>` when task wiring must execute. |
 | One single cell analysis report | `make run-cell-type-test CELL_TYPE=<slug>` (requires an existing split; create test splits with `make split-cell-types-test`) | Use `make render-cell-type-test CELL_TYPE=<slug>` to rerender one report from existing analysis artifacts, or `make render-cell-type-reports-test` to rerender all test reports. |
 | Rerender single cell analysis reports from existing analysis artifacts | `make render-cell-type-reports[-test]` | Use `make render-cell-type[-test] CELL_TYPE=<slug>` to refresh one report. |
-| Rerender per-type pseudobulk DE reports from existing model results | `make render-de-reports[-test]` | Requires current per-type model outputs and `abundance_input.tsv`; rendering also executes abundance models, residual clustering, and WGCNA. It does not refit PyDESeq2. Rerun `make run-de[-test]` to regenerate missing abundance inputs. |
+| Rerender per-type pseudobulk DE reports from existing model results | `make render-de-reports[-test]` | Runs one render task per cell type. Requires current per-type model outputs and `abundance_input.tsv`; rendering also executes abundance models, residual clustering, and WGCNA. It does not refit PyDESeq2. Rerun `make run-de[-test]` to regenerate missing abundance inputs. |
 | Rebuild the central report index | `make render-report-index` | It is also refreshed automatically after core, integration-benchmark, DE, and cell-type workflow targets. |
 | Cell-type splitting or shared analysis | `make run-test`, then `make run-cell-type-analysis-test` | Use `make run-all-test` when the complete ordered test workflow is needed. |
 | Positive pseudobulk DE fitting | `make run-de-synthetic-test` and `make check-synthetic-de-results` | This fixture is independent of the core merge and renders per-type DE plus cross-cell-type reports. To check single cell analysis reports too, run `make run-test`, `make run-cell-type-analysis-test`, and `make check-synthetic-de-reports`. |
@@ -516,7 +526,7 @@ browse manifests and structured report tables rather than parse notebook HTML.
 
 #### Automatic table of contents
 
-Cell-type, merge-QC, integration-benchmark, DE, and gene-profile reports share
+Cell-type, merge-QC, integration-benchmark, DE, combined trajectory, and gene-profile reports share
 their reader-facing header and styles from
 [`src/pbmc_pipeline/report_theme.py`](src/pbmc_pipeline/report_theme.py). Their
 navigation lists are generated from the final rendered HTML after notebook
@@ -530,8 +540,6 @@ the TOC; do not maintain a separate list of TOC links. Give headings explicit
 IDs when their anchors need to remain stable across heading text changes.
 
 The report runners call these helpers after notebook execution and HTML export.
-The combined trajectory report has its own report layout and is not currently
-part of this shared header/TOC path.
 
 ## Single cell analysis reports
 
@@ -749,6 +757,17 @@ from each pseudobulk is included as a technical covariate in all DE models and
 its coefficient is shown in the combined-model result tables. When
 present and variable, BMI, CMV, and smoking status each receive separate
 combined fits adjusted for study site, age, sex, and log10 total counts.
+Before PyDESeq2 fitting, continuous design columns are centered within each
+fit. This changes the intercept parameterization, while preserving the
+interpretation of reported slopes and contrasts and improving optimizer stability.
+For each merged age contrast, the report also runs preranked enrichment against
+the downloaded GO Biological Process 2023 collection. It ranks all tested genes by
+their signed Wald statistic when complete; otherwise it uses signed
+`−log10(p-value)`. Positive normalized enrichment scores indicate terms among
+genes increasing with age and negative scores terms among genes decreasing with
+age. The collapsible summary uses the native GSEA FDR q-value and shows each
+term's leading-edge gene count plus the first twelve ranked leading-edge genes;
+the complete untruncated list remains in the CSV.
 DE fits have no minimum covariate-coverage percentage: an optional term enters
 a per-study design when it varies, and each fit uses complete cases for its
 own design. Smoking status is accepted only as `yes` or `no`; other labels are
@@ -816,8 +835,12 @@ report includes soft-threshold and sample-connectivity diagnostics, eigengene
 structure and covariate associations, hub genes, CMV evidence, and
 leave-one-study-out module stability. Module GSEA ranks all selected network
 genes by correlation with each module eigengene and tests GO Biological Process
-2023 terms; it uses GSEApy's online Enrichr library and publishes the results
-as `module_gsea.csv`. The strongest CMV- and smoking-associated modules are
+2023 terms from the downloaded `input_data/go/` library. It publishes complete results as
+`module_gsea.csv`, a hierarchy-aware specific-term summary, and a provenance
+manifest recording the library and ontology files actually used. The summary uses the
+native GSEA FDR q-value within each module and collapses a GO parent only when
+a same-direction descendant has at least 0.5 leading-edge Jaccard overlap.
+The strongest CMV- and smoking-associated modules are
 also plotted on the residual UMAP and by observed yes/no/not-provided status.
 Binary covariate heatmap values are
 signed point-biserial correlations; multi-level categorical values are η², the
@@ -834,6 +857,12 @@ are not stable across fits; leave-one-study-out matches use shared genes instead
 The tables are published beside the report under `residual_wgcna/`. To keep large networks readable, module-indexed
 figures show at most the 25 largest modules and state when that limit applies;
 the complete module-level tables remain available in that directory.
+
+The current enrichment scope is GO Biological Process only. Molecular Function
+and Cellular Component are not tested or combined into the reported FDR family.
+The reusable runner accepts a caller-provided gene-set collection when a future
+analysis needs one, and records that collection's content hash in its output
+provenance.
 
 Samples must be age 20 or older and have at least 10 cells in that
 sample × cell-type pseudobulk. Samples missing required metadata or covariates,
@@ -925,6 +954,13 @@ exact included samples, gene universe, design, and software version. Per-study
 fits and covariate-focused fits have different samples or designs and must not
 be substituted for that age model.
 
+When completed `run-de` results are available, each focused profile also shows
+the selected gene's existing age-bin trajectories across cell types. These are
+the adjusted log2 fold changes relative to each cell type's own reference age
+bin, so they describe within-type trajectories and do not compare expression
+abundance between cell types. The report publishes the displayed rows and a
+per-cell-type availability table beside the profile.
+
 To smoke-test the complete fit and report with planted synthetic expression,
 run `make run-gene-profile-synthetic-test`. It writes the pseudobulk fixture to
 `output/test/analysis/combined/gene_profile_synthetic/` and the checked report artifacts to
@@ -995,7 +1031,8 @@ Run the workflow after creating the pseudobulk merge:
 make run-de
 ```
 
-`make run-de` also renders the cross-cell-type analysis report. If a report
+`make run-de` renders one per-type DE report task for each completed fit,
+alongside the separate combined cross-cell-type analysis report. If a report
 template changes, Nextflow resume reuses completed DE fits and reruns the
 affected downstream report tasks.
 

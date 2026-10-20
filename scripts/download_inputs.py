@@ -7,6 +7,7 @@ sources clearly visible to the caller.
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import http.client
 import json
@@ -263,8 +264,20 @@ def extract(archive: Path, member: str, destination: Path) -> None:
             shutil.copyfileobj(source, target)
 
 
+def gzip_download(source: Path, destination: Path) -> None:
+    """Compress a downloaded plain-text input at its configured destination."""
+    with source.open("rb") as input_handle, gzip.open(destination, "wb") as output_handle:
+        shutil.copyfileobj(input_handle, output_handle)
+    source.unlink()
+
+
 def selected_artifacts(document: dict, studies: set[str]):
     return [item for item in document["artifacts"] if studies.intersection(item["studies"])]
+
+
+def selected_artifacts_by_id(document: dict, artifact_ids: set[str]) -> list[dict]:
+    """Select configured artifacts directly, preserving manifest order."""
+    return [item for item in document["artifacts"] if item["id"] in artifact_ids]
 
 
 def format_size(size_bytes: int) -> str:
@@ -306,7 +319,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Best-effort download of configured public inputs")
     parser.add_argument("--project-root", type=Path, default=Path.cwd())
     parser.add_argument("--manifest", type=Path, default=Path("config/input_sources.json"))
-    parser.add_argument("--studies", default="all", help="Comma-separated study IDs or all")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--studies", help="Comma-separated study IDs or all (default: all)")
+    selection.add_argument("--artifacts", help="Comma-separated artifact IDs")
     parser.add_argument("--force", action="store_true", help="Redownload files that already exist")
     parser.add_argument(
         "--require-all",
@@ -318,12 +333,26 @@ def main() -> None:
     root = args.project_root.resolve()
     document = json.loads((root / args.manifest).read_text())
     all_studies = {study for item in document["artifacts"] for study in item["studies"]}
-    studies = all_studies if args.studies == "all" else {value.strip() for value in args.studies.split(",") if value.strip()}
-    unknown = studies - all_studies
-    if unknown:
-        parser.error(f"unknown studies: {', '.join(sorted(unknown))}")
-
-    artifacts = selected_artifacts(document, studies)
+    if args.artifacts is not None:
+        artifact_ids = {value.strip() for value in args.artifacts.split(",") if value.strip()}
+        if not artifact_ids:
+            parser.error("--artifacts must name at least one artifact")
+        known_artifact_ids = {item["id"] for item in document["artifacts"]}
+        unknown_artifacts = artifact_ids - known_artifact_ids
+        if unknown_artifacts:
+            parser.error(f"unknown artifacts: {', '.join(sorted(unknown_artifacts))}")
+        artifacts = selected_artifacts_by_id(document, artifact_ids)
+        studies = set()
+    else:
+        study_selection = args.studies or "all"
+        studies = (
+            all_studies if study_selection == "all"
+            else {value.strip() for value in study_selection.split(",") if value.strip()}
+        )
+        unknown = studies - all_studies
+        if unknown:
+            parser.error(f"unknown studies: {', '.join(sorted(unknown))}")
+        artifacts = selected_artifacts(document, studies)
     warn_about_pending_downloads(artifacts, root, args.force)
     records = []
     study_order = list(dict.fromkeys(
@@ -331,9 +360,14 @@ def main() -> None:
     ))
     for overall_index, item in enumerate(artifacts, start=1):
         associated_studies = [study for study in study_order if study in item["studies"]]
+        selection_label = (
+            f"study: {', '.join(associated_studies)}"
+            if args.artifacts is None
+            else "explicit artifact selection"
+        )
         print(
             f"\n[{overall_index}/{len(artifacts)}] {item['id']} "
-            f"(study: {', '.join(associated_studies)})",
+            f"({selection_label})",
             flush=True,
         )
         destination = root / item["path"]
@@ -360,10 +394,17 @@ def main() -> None:
                     extract(archive, item["archive_member"], destination)
                     archive.unlink()
                 else:
+                    download_destination = (
+                        destination.with_suffix("")
+                        if item.get("gzip_after_download")
+                        else destination
+                    )
                     transfer = download(
-                        item["url"], destination, item.get("expected_size_bytes"),
+                        item["url"], download_destination, item.get("expected_size_bytes"),
                         item.get("sha256"),
                     )
+                    if item.get("gzip_after_download"):
+                        gzip_download(download_destination, destination)
                 record.update({"status": "downloaded", "transfer": transfer})
             except (
                 OSError, ValueError, http.client.HTTPException, tarfile.TarError,

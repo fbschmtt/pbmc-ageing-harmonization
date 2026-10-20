@@ -55,6 +55,17 @@ derived from the much larger published `all_pbmcs_metadata.csv` by
 compact lookup, first place the original file at
 `input_data/terekhova23/all_pbmcs_metadata.csv` and run the preparation script.
 
+## GO enrichment inputs
+
+| Required path | Role and source | Integrity handling |
+|---|---|---|
+| `input_data/go/go_biological_process_2023.gmt` | [Enrichr GO Biological Process 2023](https://maayanlab.cloud/Enrichr/#libraries) gene-set library | Downloaded by `make download-go-inputs` or a study selection; the downloader and each report record the observed SHA-256, without requiring a fixed release checksum. |
+| `input_data/go/go-basic.obo.gz` | [Gene Ontology basic OBO](https://geneontology.org/docs/download-ontology), compressed locally after download | The report records its observed SHA-256 and `data-version`; it does not require a fixed ontology release. |
+
+These are pipeline-wide immutable inputs, not study-specific files. They are
+included in every `STUDIES=` selection. Use `make download-go-inputs` when
+only the resources needed to render DE reports are missing.
+
 ## CellTypist models
 
 Download the models from the [Allen Institute Immune Health Atlas model

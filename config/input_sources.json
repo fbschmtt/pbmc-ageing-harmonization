@@ -217,6 +217,29 @@
       "manual_url": "https://www.synapse.org/Synapse:syn49637038",
       "source_page": "https://doi.org/10.1016/j.immuni.2023.10.013",
       "note": "Large source metadata file hosted through Synapse; login or access terms must be handled manually. It generates cell_to_tube.csv.gz and is retained for provenance and lookup regeneration, not read by the normal workflow."
+    },
+    {
+      "id": "go_biological_process_gene_sets",
+      "studies": [
+        "aida25", "aifi", "cima", "fachrul26", "nehar_belaid26",
+        "onek1k", "perez22", "terekhova23", "terekhova26", "wang25"
+      ],
+      "path": "input_data/go/go_biological_process_2023.gmt",
+      "url": "https://maayanlab.cloud/Enrichr/geneSetLibrary?mode=text&libraryName=GO_Biological_Process_2023",
+      "source_page": "https://maayanlab.cloud/Enrichr/#libraries",
+      "note": "Pipeline-wide GO Biological Process gene-set input for DE report enrichment. The downloader records the retrieved file hash in input_data/download_manifest.json; report provenance records the hash actually used."
+    },
+    {
+      "id": "go_ontology",
+      "studies": [
+        "aida25", "aifi", "cima", "fachrul26", "nehar_belaid26",
+        "onek1k", "perez22", "terekhova23", "terekhova26", "wang25"
+      ],
+      "path": "input_data/go/go-basic.obo.gz",
+      "url": "https://purl.obolibrary.org/obo/go/go-basic.obo",
+      "gzip_after_download": true,
+      "source_page": "https://geneontology.org/docs/download-ontology",
+      "note": "Pipeline-wide GO hierarchy for reducing redundant enrichment terms. The downloader compresses the retrieved OBO locally; report provenance records its observed data version and hash."
     }
   ]
 }

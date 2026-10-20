@@ -57,7 +57,7 @@ PYTHON_CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),image-python
 MERGE_ARGS = $(if $(filter true 1 yes,$(MERGE_SINGLE_CELL)),--merge_single_cell,)
 
 .PHONY: help install lint workflow-lint docs-check docs-update test-unit verify run-all-test \
-validate-study validate-test validate-full test-data download-inputs images image-python \
+validate-study validate-test validate-full test-data download-inputs download-go-inputs images image-python \
 	download-inputs-strict check-download-inputs \
 	image-r run run-test run-all split-cell-types split-cell-types-test \
 	run-cell-type-analysis run-cell-type-analysis-test \
@@ -148,6 +148,9 @@ test-data: $(TEST_DATA_CONTAINER_PREREQS) ## Create missing 200-cell H5AD and RD
 download-inputs: image-python ## Best-effort public input download; never runs implicitly
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/download_inputs.py --project-root /work --studies "$(STUDIES)" $(if $(filter 1 true yes,$(DOWNLOAD_FORCE)),--force,)
 
+download-go-inputs: image-python ## Download the GO enrichment inputs only
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/download_inputs.py --project-root /work --artifacts "go_biological_process_gene_sets,go_ontology" $(if $(filter 1 true yes,$(DOWNLOAD_FORCE)),--force,)
+
 download-inputs-strict: image-python ## Explicit download preflight; fail unless every selected artifact is present and valid
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/download_inputs.py --project-root /work --studies "$(STUDIES)" $(if $(filter 1 true yes,$(DOWNLOAD_FORCE)),--force,) --require-all
 
@@ -202,7 +205,7 @@ run-de-test: check-de-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Fit DE and re
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 render-de-reports: image-python ## Render per-type DE reports from existing model results
-	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) pbmc-differential-expression-report --input-dir "$(PER_TYPE_DIR)" --output-root "$(PER_TYPE_DIR)" --template reports/differential_expression_report.py --config config/pipeline.json --project-root .
+	$(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression -work-dir $(WORK_DIR) --outdir $(OUTDIR) --per_type_de_dir "$(PER_TYPE_DIR)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 render-de-reports-test: OUTDIR = output/test
@@ -215,7 +218,7 @@ render-report-index: ## Rebuild the central HTML index for the reports currently
 profile-gene: image-python check-de-prerequisites ## Refit merged DESeq2 for one cell type and profile one gene; set CELL_TYPE and GENE
 	@test -n "$(CELL_TYPE)" || { echo "Set CELL_TYPE to a cell-type label or slug" >&2; exit 2; }
 	@test -n "$(GENE)" || { echo "Set GENE to a gene identifier" >&2; exit 2; }
-	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/profile_gene.py --input "$(PSEUDOBULK_INPUT)" --config config/pipeline.json --cell-type "$(CELL_TYPE)" --gene "$(GENE)" --output-dir "$(GENE_PROFILE_DIR)"
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/profile_gene.py --input "$(PSEUDOBULK_INPUT)" --config config/pipeline.json --cell-type "$(CELL_TYPE)" --gene "$(GENE)" --output-dir "$(GENE_PROFILE_DIR)" --differential-expression-dir "$(PER_TYPE_DIR)"
 
 check-top-age-profile-prerequisites: check-de-prerequisites
 	@if ! find "$(PER_TYPE_DIR)" -mindepth 3 -maxdepth 3 -name merged.csv -print -quit 2>/dev/null | grep -q .; then \

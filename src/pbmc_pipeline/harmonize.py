@@ -220,10 +220,8 @@ def harmonize_study(
         LOGGER.info("study=%s step=annotate_celltypist status=skipped_validate_only", study_id)
         for level in annotation["levels"]:
             adata.obs[f"aifi_{level}_majority"] = "not_run"
-    elif annotation["method"] != "existing":
-        raise ValueError(f"Unknown annotation method: {annotation['method']}")
     else:
-        LOGGER.info("study=%s step=annotate status=existing_labels", study_id)
+        raise ValueError(f"Unknown annotation method: {annotation['method']}")
 
     started = time.perf_counter()
     if not output_written_with_counts:

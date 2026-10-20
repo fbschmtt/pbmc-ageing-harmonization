@@ -1,6 +1,7 @@
 """Explicit local contract check for the opt-in input downloader."""
 from __future__ import annotations
 
+import gzip
 import hashlib
 import http.server
 import json
@@ -86,6 +87,18 @@ def main() -> None:
         ):
             raise SystemExit(f"direct-download check failed:\n{direct.stdout}{direct.stderr}")
 
+        write_manifest(manifest, [{
+            "id": "gzip_fixture", "studies": ["demo"],
+            "path": "input_data/demo/fixture.txt.gz", "url": source.as_uri(),
+            "gzip_after_download": True,
+        }])
+        compressed = run_downloader(project_root, manifest, "--artifacts", "gzip_fixture", "--require-all")
+        compressed_path = project_root / "input_data/demo/fixture.txt.gz"
+        with gzip.open(compressed_path, "rb") as handle:
+            decompressed = handle.read()
+        if compressed.returncode or decompressed != source.read_bytes():
+            raise SystemExit(f"gzip-download check failed:\n{compressed.stdout}{compressed.stderr}")
+
         payload = b"range-resume-fixture"
         server, handler = start_range_server(payload)
         try:
@@ -130,7 +143,7 @@ def main() -> None:
         manual = run_downloader(project_root, manifest, "--studies", "demo", "--require-all")
         if manual.returncode != 1:
             raise SystemExit(f"strict manual-input check failed:\n{manual.stdout}{manual.stderr}")
-    print("Downloader local contract checks passed, including interrupted range resume.")
+    print("Downloader local contract checks passed, including gzip conversion and interrupted range resume.")
 
 
 if __name__ == "__main__":

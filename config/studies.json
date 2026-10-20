@@ -47,10 +47,15 @@
         "dependencies": []
       },
       "annotation": {
-        "method": "existing"
+        "method": "celltypist",
+        "levels": [
+          "l1",
+          "l2",
+          "l3"
+        ]
       },
       "provenance": {
-        "celltypes": "native_AIFI_labels",
+        "celltypes": "CellTypist AIFI L1/L2/L3 predictions; native AIFI labels are retained as source metadata for audit, not used as harmonized labels",
         "sample": "specimen.specimenGuid; one sample per donor in the configured 108-sample Atlas reference, although sample.visitName varies between donors",
         "batch_single_cell": "obs.pool_id; source-defined cell-hashing pool, the lowest grouping shared by samples that remains one-to-one at the sample level. Each sample maps to one pool; a batch_id can contain multiple pools, and samples can span wells.",
         "technology": "inferred 10X 3-prime from the source protocol; no assay field is present in obs",

@@ -16,6 +16,8 @@ from pbmc_pipeline.gene_profile_report import (
     generate_gene_profile_report,
 )
 from scripts.profile_gene import (
+    _annotate_study_slope_coefficients,
+    _collect_cross_cell_type_trajectories,
     _exploratory_infant_adult_contrast,
     _fit_profile,
     _prepare_model_for_cache,
@@ -23,6 +25,51 @@ from scripts.profile_gene import (
 
 ROOT = Path(__file__).resolve().parents[1]
 PIPELINE_PATH = ROOT / "config" / "pipeline.json"
+
+
+def test_study_slope_coefficient_annotations_match_reported_contrasts() -> None:
+    coefficients = pd.DataFrame({
+        "term": ["Intercept", "age", "age:study[T.study_b]"],
+        "coefficient": [1.0, 0.2, -0.05],
+    })
+    slopes = pd.DataFrame({"study": ["study_a", "study_b"], "slope": [0.2, 0.15]})
+
+    annotated = _annotate_study_slope_coefficients(
+        coefficients, slopes, ["study_a", "study_b"],
+    )
+
+    assert annotated.loc[annotated["term"] == "age", "parameter_role"].item() == (
+        "Per-year slope for the reference study"
+    )
+    interaction = annotated.loc[annotated["term"] == "age:study[T.study_b]"].iloc[0]
+    assert interaction["parameter_role"] == "Difference from the reference-study per-year slope"
+    assert "not a standalone slope" in interaction["interpretation"]
+
+
+def test_cross_cell_type_trajectories_read_completed_age_bin_fits(tmp_path) -> None:
+    de_dir = tmp_path / "per_type"
+    output_dir = de_dir / "cd14-monocyte" / "differential_expression"
+    (output_dir / "combined").mkdir(parents=True)
+    (output_dir / "run_metadata.json").write_text(json.dumps({
+        "cell_type": "CD14 monocyte",
+        "models": [{
+            "purpose": "age_trajectory", "status": "complete",
+            "results_by_covariate": {"age_bin": "combined/age_bin.csv"},
+        }],
+    }))
+    pd.DataFrame({
+        "cell_type": ["stale source value", "stale source value", "stale source value"],
+        "gene": ["GENE1", "GENE1", "GENE2"],
+        "age_bin": ["20-30", "30-40", "20-30"],
+        "log2FoldChange": [0.0, 0.2, 0.0],
+        "omnibus_padj": [0.01, 0.01, 0.8],
+    }).to_csv(output_dir / "combined" / "age_bin.csv", index=False)
+
+    trajectories, support = _collect_cross_cell_type_trajectories(de_dir, "GENE1")
+
+    assert trajectories["age_bin"].tolist() == ["20-30", "30-40"]
+    assert trajectories["cell_type"].tolist() == ["CD14 monocyte", "CD14 monocyte"]
+    assert support["status"].tolist() == ["complete"]
 
 
 def test_profile_model_cache_drops_series_metadata_before_h5ad_write(tmp_path) -> None:

@@ -36,6 +36,13 @@ from pbmc_pipeline.covariates import (
     normalize_cmv_status,
     normalize_smoking_status,
 )
+from pbmc_pipeline.go_enrichment import (
+    GeneSetEnrichmentRun,
+    leading_edge_gene_preview,
+    run_preranked_gsea,
+    save_go_specificity_outputs,
+    signed_de_gene_ranking,
+)
 from pbmc_pipeline.reporting import (
     plot_trajectory_merge_diagnostic,
     sample_cell_type_fractions,
@@ -280,47 +287,98 @@ def wgcna_module_rankings(result, residuals):
 
 
 def run_wgcna_module_gsea(result, residuals):
-    """Run preranked GO biological-process GSEA for every retained module."""
-    rankings = wgcna_module_rankings(result, residuals)
-    if not rankings:
-        return pd.DataFrame(), None
-    try:
-        import gseapy
+    """Run preranked GO BP GSEA for every retained WGCNA module."""
+    run = run_preranked_gsea(wgcna_module_rankings(result, residuals))
+    return GeneSetEnrichmentRun(
+        results=run.results.rename(columns={
+            "analysis_set": "module", "analysis_set_fdr": "module_fdr",
+        }),
+        gene_sets=run.gene_sets,
+        provenance=run.provenance,
+        failures=run.failures,
+    )
 
-        gene_sets = gseapy.get_library(
-            "GO_Biological_Process_2023", organism="Human", min_size=10, max_size=500,
+
+def display_merged_age_go_enrichment(age_results, contrast):
+    """Run and display signed GO BP GSEA for one merged age-DE contrast."""
+    ranking = signed_de_gene_ranking(age_results)
+    ranking_label = (
+        "signed Wald statistic" if ranking.name == "wald_statistic"
+        else "signed −log10(p-value)"
+    )
+    display(Markdown("##### GO Biological Process enrichment of merged age effects"))
+    if ranking.dropna().shape[0] < 10:
+        display(Markdown("_Too few finite age statistics for preranked enrichment._"))
+        return
+
+    gsea_run = run_preranked_gsea({
+        f"Merged age ({contrast})": ranking,
+    })
+    if gsea_run.results.empty and gsea_run.failures:
+        display(Markdown(
+            "_GO enrichment could not run: "
+            f"{escape('; '.join(gsea_run.failures.values()))}._"
+        ))
+        return
+    if gsea_run.results.empty:
+        display(Markdown("_No GO Biological Process terms met the GSEA size limits._"))
+        return
+
+    enrichment_dir = output_dir / "go_enrichment"
+    enrichment_dir.mkdir(parents=True, exist_ok=True)
+    gsea_run.results.to_csv(enrichment_dir / "merged_age_gsea.csv", index=False)
+    if gsea_run.failures:
+        display(Markdown(
+            "_Some enrichment rankings were skipped: "
+            f"{escape('; '.join(gsea_run.failures.values()))}. Details are recorded in provenance._"
+        ))
+    try:
+        summary, _ = save_go_specificity_outputs(
+            gsea_run, output_dir=enrichment_dir, prefix="merged_age_gsea",
         )
-        rows = []
-        for module, ranking in rankings.items():
-            ranked_genes = ranking.rename_axis("gene").reset_index(name="score")
-            prerank = gseapy.prerank(
-                rnk=ranked_genes, gene_sets=gene_sets, min_size=10, max_size=500,
-                permutation_num=1000, seed=123, threads=1, outdir=None, no_plot=True,
-                verbose=False,
-            )
-            if prerank.res2d is None or prerank.res2d.empty:
-                continue
-            module_results = prerank.res2d.rename(columns={
-                "Term": "gene_set", "ES": "enrichment_score", "NES": "normalized_enrichment_score",
-                "NOM p-val": "pvalue", "FDR q-val": "module_fdr", "Lead_genes": "leading_edge_genes",
-            }).copy()
-            module_results.insert(0, "module", module)
-            rows.append(module_results)
-        if not rows:
-            return pd.DataFrame(), None
-        results = pd.concat(rows, ignore_index=True)
-        results["pvalue"] = pd.to_numeric(results["pvalue"], errors="coerce")
-        results["global_fdr"] = np.nan
-        valid = results["pvalue"].notna()
-        if valid.any():
-            results.loc[valid, "global_fdr"] = multipletests(
-                results.loc[valid, "pvalue"], method="fdr_bh",
-            )[1]
-        return results.sort_values(
-            ["global_fdr", "module_fdr", "module"], na_position="last"
-        ).reset_index(drop=True), None
-    except Exception as exc:  # noqa: BLE001 - keep report generation resilient to library/network failures
-        return pd.DataFrame(), f"{type(exc).__name__}: {exc}"
+    except Exception as exc:  # noqa: BLE001 - keep DE report usable if ontology is unavailable
+        display(Markdown(
+            "_The complete GO results were saved, but the hierarchy-aware summary could not be "
+            f"built: {escape(f'{type(exc).__name__}: {exc}')}. "
+            "See [full GSEA results](go_enrichment/merged_age_gsea.csv)._"
+        ))
+        return
+
+    if summary.empty:
+        display(Markdown(
+            "_No GO terms passed the native GSEA FDR threshold of 0.05. See [full ranked results]"
+            "(go_enrichment/merged_age_gsea.csv)._"
+        ))
+        return
+    display(Markdown(
+        f"All genes tested in the merged model are ranked by the {ranking_label}; positive NES "
+        "indicates enrichment toward genes increasing with age and negative NES toward genes "
+        "decreasing with age. The table includes GSEA FDR-significant terms after collapsing "
+        "redundant parent terms when a same-direction descendant has at least 0.5 leading-edge "
+        "Jaccard overlap. Full results and the term audit are available as [full GSEA results]"
+        "(go_enrichment/merged_age_gsea.csv), [specific summary]"
+        "(go_enrichment/merged_age_gsea_specific_summary.csv), and [term audit]"
+        "(go_enrichment/merged_age_gsea_specificity_audit.csv). The exact library, ontology, "
+        "parameters, and any failed rankings are recorded in [provenance]"
+        "(go_enrichment/merged_age_gsea_provenance.json)."
+    ))
+    age_summary = summary.copy()
+    leading_edge = age_summary["leading_edge_genes"].map(leading_edge_gene_preview)
+    age_summary["leading_edge_gene_count"] = leading_edge.map(lambda value: value[0])
+    age_summary["leading_edge_gene_preview"] = leading_edge.map(lambda value: value[1])
+    age_summary = age_summary.loc[:, [
+        "gene_set", "normalized_enrichment_score", "analysis_set_fdr",
+        "leading_edge_gene_count", "leading_edge_gene_preview",
+    ]].rename(columns={
+        "gene_set": "GO Biological Process",
+        "normalized_enrichment_score": "NES",
+        "analysis_set_fdr": "GSEA FDR q-value",
+        "leading_edge_gene_count": "Leading-edge genes (n)",
+        "leading_edge_gene_preview": "Leading-edge genes",
+    })
+    display_collapsible_table(
+        age_summary, "Show specific GO terms and their leading-edge genes", max_height=560,
+    )
 
 
 def wgcna_covariate_associations(result, annotations):
@@ -710,41 +768,78 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results, s
         hub_genes.loc[hub_genes["module_rank"] <= 20], "Show top 20 hub genes per module", max_height=560,
     )
     display(Markdown("#### Gene-set enrichment (preranked GSEA)"))
-    gsea_results, gsea_error = run_wgcna_module_gsea(result, residuals)
-    if gsea_error:
+    gsea_run = run_wgcna_module_gsea(result, residuals)
+    gsea_results = gsea_run.results
+    if gsea_results.empty and gsea_run.failures:
         display(Markdown(
-            "_GO Biological Process GSEA could not run. The report uses GSEApy's online "
-            f"Enrichr library and could not retrieve or process it: {escape(gsea_error)}._"
+            "_GO Biological Process GSEA could not run: "
+            f"{escape('; '.join(gsea_run.failures.values()))}._"
         ))
     elif gsea_results.empty:
         display(Markdown("_No GO Biological Process terms met the configured GSEA size limits._"))
     else:
         gsea_results.to_csv(wgcna_dir / "module_gsea.csv", index=False)
+        if gsea_run.failures:
+            display(Markdown(
+                "_Some modules could not be enriched: "
+                f"{escape('; '.join(gsea_run.failures.values()))}. Details are recorded in provenance._"
+            ))
         display(Markdown(
             "Genes are ranked by their Pearson correlation with each module eigengene, using all "
             "selected network genes. Grey/unassigned genes are excluded as modules. Results use "
-            "GO Biological Process 2023; the table includes module-level and global BH-adjusted "
-            "p-values."
+            "GO Biological Process 2023; the full table includes the native GSEA FDR q-value "
+            "within each module."
         ))
-        top_gsea = gsea_results.loc[
-            gsea_results.groupby("module", observed=True)["global_fdr"].rank(method="first") <= 10
-        ]
-        display_collapsible_table(
-            top_gsea, "Show the 10 most significant GO terms per module", max_height=560,
-        )
-        plotted_gsea = gsea_results.dropna(subset=["global_fdr"]).head(15).copy()
+        summary_error = None
+        try:
+            specific_gsea, _ = save_go_specificity_outputs(
+                gsea_run, output_dir=wgcna_dir, prefix="module_gsea", group_column="module",
+                fdr_column="module_fdr",
+            )
+        except Exception as exc:  # noqa: BLE001 - preserve the full GSEA output if GO is unavailable
+            summary_error = exc
+            specific_gsea = pd.DataFrame()
+            display(Markdown(
+                "_The GO-specific summary could not be built from the bundled ontology: "
+                f"{escape(f'{type(exc).__name__}: {exc}')}. "
+                "The complete preranked results remain available in "
+                "[module_gsea.csv](residual_wgcna/module_gsea.csv)._"
+            ))
+        if specific_gsea.empty:
+            if summary_error is None:
+                display(Markdown(
+                    "_No GO terms passed the native GSEA FDR threshold of 0.05. The full ranked "
+                    "results remain available in [module_gsea.csv]"
+                    "(residual_wgcna/module_gsea.csv)._"
+                ))
+        else:
+            display(Markdown(
+                "This summary shows terms with native GSEA FDR ≤ 0.05. A broader GO parent is "
+                "collapsed only when a same-direction descendant has at least 0.5 leading-edge "
+                "Jaccard overlap; terms without such a supported child remain. The complete "
+                "results and summary audit are available as [full GSEA results]"
+                "(residual_wgcna/module_gsea.csv), [specific summary]"
+                "(residual_wgcna/module_gsea_specific_summary.csv), and [term audit]"
+                "(residual_wgcna/module_gsea_specificity_audit.csv). The exact library, ontology, "
+                "parameters, and any failed modules are recorded in [provenance]"
+                "(residual_wgcna/module_gsea_provenance.json)."
+            ))
+            display_collapsible_table(
+                specific_gsea, "Show specific, nonredundant GO terms per module", max_height=560,
+            )
+        plotted_gsea = specific_gsea.head(15).copy()
         if not plotted_gsea.empty:
-            plotted_gsea["minus_log10_global_fdr"] = -np.log10(
-                plotted_gsea["global_fdr"].clip(lower=1e-300)
+            plotted_gsea["minus_log10_module_fdr"] = -np.log10(
+                plotted_gsea["module_fdr"].clip(lower=1e-300)
             )
             plotted_gsea["label"] = plotted_gsea["module"] + ": " + plotted_gsea["gene_set"]
             figure, axis = plt.subplots(figsize=(10, max(4.5, 0.34 * len(plotted_gsea) + 1.5)))
             axis.barh(
                 plotted_gsea["label"].iloc[::-1],
-                plotted_gsea["minus_log10_global_fdr"].iloc[::-1],
+                plotted_gsea["minus_log10_module_fdr"].iloc[::-1],
                 color="#7aa6c2", edgecolor="#38434a", linewidth=0.55,
             )
-            axis.set(xlabel="−log10(global FDR)", title="Top module GO enrichments")
+            axis.set(xlabel="−log10(module GSEA FDR)", title="Specific module GO enrichments")
             figure.tight_layout()
             display_collapsible_figure(figure, "Show top module GO enrichments")
     if cmv_results is not None and {"gene", "log2FoldChange", "padj"}.issubset(cmv_results):
@@ -853,8 +948,13 @@ def plot_residual_cluster_markers(residuals, annotations, settings):
         axis.set_xlabel("UMAP 1")
         axis.set_ylabel("UMAP 2")
         if axis.legend_ is not None:
-            axis.legend_.set_title("Residual cluster")
-            axis.legend_.set_bbox_to_anchor((1.02, 1))
+            handles, labels = axis.get_legend_handles_labels()
+            axis.legend(
+                handles, labels, title="Residual cluster", loc="best",
+                ncol=2 if len(labels) > 6 else 1,
+                fontsize=7, title_fontsize=8, framealpha=0.9,
+                borderpad=0.35, labelspacing=0.25, handletextpad=0.35,
+            )
         figure.tight_layout()
         plt.show()
 
@@ -917,7 +1017,8 @@ def plot_residual_sample_umaps(table, *, minimum_umap_samples):
         n_rows = max(1, int(np.ceil(len(covariates) / n_columns)))
         figure_size = (figsize[0], max(figsize[1], figsize[1] * n_rows / 2))
         figure, axes = plt.subplots(
-            n_rows, n_columns, figsize=figure_size, squeeze=False
+            n_rows, n_columns, figsize=figure_size, squeeze=False,
+            layout="constrained",
         )
         for axis, covariate in zip(axes.flat, covariates):
             if covariate not in coordinates:
@@ -931,20 +1032,57 @@ def plot_residual_sample_umaps(table, *, minimum_umap_samples):
                 axis.set_axis_off()
                 continue
             categorical = covariate in categorical_covariates
-            sns.scatterplot(
-                data=values, x="umap_1", y="umap_2", hue=covariate,
-                palette="tab20" if categorical else "viridis", s=50, alpha=0.85,
-                linewidth=0, ax=axis, legend="brief",
-            )
+            if covariate == "batch_single_cell":
+                plot_values = values.assign(_batch_label=values[covariate].astype(str))
+                batch_order = sorted(plot_values["_batch_label"].unique())
+                batch_palette = dict(zip(
+                    batch_order,
+                    sns.color_palette("husl", n_colors=len(batch_order)),
+                ))
+                sns.scatterplot(
+                    data=plot_values, x="umap_1", y="umap_2", hue="_batch_label",
+                    hue_order=batch_order, palette=batch_palette, s=50, alpha=0.85,
+                    linewidth=0, ax=axis, legend=False,
+                )
+            elif categorical:
+                plot_values = values.assign(_category_label=values[covariate].astype(str))
+                category_order = sorted(plot_values["_category_label"].unique())
+                category_palette = sns.color_palette(
+                    "husl" if len(category_order) > 20 else "tab20",
+                    n_colors=len(category_order),
+                )
+                sns.scatterplot(
+                    data=plot_values, x="umap_1", y="umap_2", hue="_category_label",
+                    hue_order=category_order, palette=dict(zip(category_order, category_palette)),
+                    s=50, alpha=0.85, linewidth=0, ax=axis, legend="brief",
+                )
+                if axis.legend_ is not None:
+                    handles, labels = axis.get_legend_handles_labels()
+                    axis.legend(
+                        handles, labels, loc="best",
+                        ncol=2 if len(labels) > 6 else 1,
+                        fontsize=6, title_fontsize=7, framealpha=0.9,
+                        borderpad=0.35, labelspacing=0.25, handletextpad=0.35,
+                    )
+            else:
+                sns.scatterplot(
+                    data=values, x="umap_1", y="umap_2", hue=covariate,
+                    palette="viridis", s=50, alpha=0.85, linewidth=0,
+                    ax=axis, legend=False,
+                )
+                if axis.collections:
+                    colorbar = figure.colorbar(
+                        axis.collections[-1], ax=axis, orientation="horizontal",
+                        pad=0.08, fraction=0.05, aspect=32,
+                    )
+                    colorbar.set_label(covariate.replace("_", " "), fontsize=7)
+                    colorbar.ax.tick_params(labelsize=6)
             axis.set_title(f"{covariate.replace('_', ' ')} · {present}/{len(coordinates)} present")
             axis.set_xlabel("UMAP 1")
             axis.set_ylabel("UMAP 2")
-            if axis.legend_ is not None:
-                axis.legend_.set_bbox_to_anchor((1.02, 1))
         for axis in axes.flat[len(covariates):]:
             axis.set_axis_off()
-        figure.suptitle(title, y=1.01)
-        figure.tight_layout()
+        figure.suptitle(title)
         display_collapsible_figure(
             figure, title, open_by_default=open_by_default,
         )
@@ -960,6 +1098,11 @@ def plot_residual_sample_umaps(table, *, minimum_umap_samples):
         else f"Cluster {int(cluster)}" if pd.notna(cluster) else np.nan
     )
     if optional_covariates or "residual_cluster" in coordinates:
+        if "batch_single_cell" in optional_covariates:
+            display(Markdown(
+                "_Technical-batch colors are assigned per batch; its legend is omitted "
+                "because there are many batch levels._"
+            ))
         plot_covariate_grid(
             ["residual_cluster", *optional_covariates],
             "Residual clusters and non-model covariates over residual UMAP",
@@ -994,13 +1137,22 @@ def plot_residual_pca_and_pc_umaps(pc_scores, coordinates):
         display(Markdown("_At least two residual PCs are needed for PCA plots._"))
         return
 
-    figure, axes = plt.subplots(1, 3, figsize=(18, 5.2))
+    figure, axes = plt.subplots(
+        1, 3, figsize=(18, 5.2), layout="constrained",
+    )
     sns.scatterplot(
         data=plot_data, x="PC1", y="PC2", hue="residual_cluster",
         palette="tab20", s=42, alpha=0.85, linewidth=0, ax=axes[0],
     )
     axes[0].set_title("Residual PCA: PC1 vs. PC2")
-    axes[0].legend(title="Residual cluster", bbox_to_anchor=(1.02, 1))
+    if axes[0].legend_ is not None:
+        handles, labels = axes[0].get_legend_handles_labels()
+        axes[0].legend(
+            handles, labels, title="Residual cluster", loc="best",
+            ncol=2 if len(labels) > 6 else 1,
+            fontsize=7, title_fontsize=8, framealpha=0.9,
+            borderpad=0.35, labelspacing=0.25, handletextpad=0.35,
+        )
     for axis, component in zip(axes[1:], ("PC1", "PC2")):
         values = plot_data.dropna(subset=["umap_1", "umap_2", component])
         points = axis.scatter(
@@ -1011,7 +1163,6 @@ def plot_residual_pca_and_pc_umaps(pc_scores, coordinates):
         axis.set_xlabel("UMAP 1")
         axis.set_ylabel("UMAP 2")
         figure.colorbar(points, ax=axis, label=f"{component} score")
-    figure.tight_layout()
     display_collapsible_figure(figure, "Residual PCA and PC scores over UMAP")
 
 
@@ -2302,6 +2453,8 @@ if de_dir:
                     ],
                 )
                 display(details)
+                if covariate == "age":
+                    display_merged_age_go_enrichment(contrast_results, contrast)
         display(Markdown(
             "_DE interpretation: the recurrence panels emphasize agreement among available per-study "
             "models; each combined volcano summarizes eligible samples with study-site, age, sex, "
@@ -2483,6 +2636,98 @@ if de_dir:
                         required_age_columns.issubset(adult_age.columns)
                         and required_age_columns.issubset(developmental_age.columns)
                     ):
+                        developmental_alpha = float(
+                            pipeline["differential_expression"]["alpha"]
+                        )
+                        developmental_volcano = developmental_age.copy()
+                        developmental_volcano["log2FoldChange"] = pd.to_numeric(
+                            developmental_volcano["log2FoldChange"], errors="coerce"
+                        )
+                        developmental_volcano["padj"] = pd.to_numeric(
+                            developmental_volcano["padj"], errors="coerce"
+                        )
+                        developmental_volcano = developmental_volcano.replace(
+                            [np.inf, -np.inf], np.nan
+                        ).dropna(subset=["log2FoldChange", "padj"])
+                        developmental_volcano = developmental_volcano.loc[
+                            developmental_volcano["padj"].between(0, 1)
+                        ].copy()
+                        if not developmental_volcano.empty:
+                            developmental_volcano["minus_log10_padj"] = -np.log10(
+                                developmental_volcano["padj"].clip(
+                                    lower=np.finfo(float).tiny, upper=1.0
+                                )
+                            )
+                            developmental_significant = (
+                                developmental_volcano["padj"] < developmental_alpha
+                            )
+                            figure, axis = plt.subplots(figsize=(9.5, 5.8))
+                            axis.scatter(
+                                developmental_volcano.loc[~developmental_significant, "log2FoldChange"],
+                                developmental_volcano.loc[~developmental_significant, "minus_log10_padj"],
+                                color="#aab4bf", s=15, alpha=0.55, linewidths=0,
+                                label="Not FDR significant",
+                            )
+                            axis.scatter(
+                                developmental_volcano.loc[developmental_significant, "log2FoldChange"],
+                                developmental_volcano.loc[developmental_significant, "minus_log10_padj"],
+                                color="#c44e52", s=20, alpha=0.78, linewidths=0,
+                                label=f"FDR < {developmental_alpha:g}",
+                            )
+                            axis.axvline(0, color="#666666", linewidth=0.8)
+                            axis.axhline(
+                                -np.log10(developmental_alpha), color="#666666",
+                                linewidth=0.9, linestyle="--",
+                            )
+                            axis.set(
+                                xlabel="Juvenile age effect ([0,20) years)\n"
+                                "raw log2 fold change per year",
+                                ylabel="−log10(adjusted p-value)",
+                                title=(
+                                    f"Juvenile age-associated genes "
+                                    f"({int(developmental_significant.sum()):,} FDR significant)"
+                                ),
+                            )
+                            axis.legend(frameon=True, fontsize=8)
+                            figure.tight_layout()
+                            plt.show()
+
+                            juvenile_gene_rows = (
+                                developmental_volcano.loc[developmental_significant]
+                                if developmental_significant.any()
+                                else developmental_volcano
+                            )
+                            top_juvenile_genes = juvenile_gene_rows.sort_values(
+                                ["padj", "gene"], kind="stable"
+                            ).head(25)
+                            display_columns = [
+                                column for column in (
+                                    "gene", "log2FoldChange", "padj", "baseMean"
+                                ) if column in top_juvenile_genes
+                            ]
+                            top_juvenile_genes = top_juvenile_genes[display_columns].rename(
+                                columns={
+                                    "gene": "Gene",
+                                    "log2FoldChange": "log2 fold change per year",
+                                    "padj": "Adjusted p-value",
+                                    "baseMean": "Mean expression",
+                                }
+                            )
+                            n_developmental_significant = int(developmental_significant.sum())
+                            summary = (
+                                f"Top juvenile age-DE genes (FDR < {developmental_alpha:g})"
+                                if n_developmental_significant
+                                else "No juvenile genes pass the FDR threshold; show top 25 tested genes"
+                            )
+                            display_collapsible_table(
+                                top_juvenile_genes,
+                                summary,
+                            )
+                        else:
+                            display(Markdown(
+                                "_No juvenile genes have finite age effects and adjusted "
+                                "p-values for the volcano plot._"
+                            ))
                         paired_age_effects = developmental_age[
                             ["gene", "log2FoldChange", "padj"]
                         ].rename(columns={

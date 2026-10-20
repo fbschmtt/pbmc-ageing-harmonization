@@ -8,6 +8,12 @@ and preparation dependency to have a manifest entry. Each study owns a
 directory containing its expression object and every study-specific
 supplementary file.
 
+Pipeline-wide analysis assets use their own subdirectory. In particular,
+`input_data/go/` holds the GO Biological Process GMT library and GO hierarchy
+used by DE-report enrichment. They are acquired through the same opt-in
+downloader as study inputs; use `make download-go-inputs` to retrieve only
+these files. They are not tracked in Git.
+
 Downsampled smoke-test fixtures are kept separately under `test_data/` and are
 created or refreshed with `make test-data`. The current ignored files at several
 production input paths in this checkout are also smoke-test-scale subsets

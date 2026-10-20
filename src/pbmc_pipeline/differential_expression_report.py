@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -56,6 +57,7 @@ def generate_differential_expression_report(
         "residual_sample_pc_scores.csv",
     ):
         (output_dir / name).unlink(missing_ok=True)
+    shutil.rmtree(output_dir / "go_enrichment", ignore_errors=True)
     render_log = output_dir / "report_render.log"
     render_log.unlink(missing_ok=True)
     output_notebook = output_dir / "executed.ipynb"
@@ -131,12 +133,35 @@ def render_per_type_reports(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Render per-cell-type pseudobulk DE reports")
-    parser.add_argument("--input-dir", type=Path, required=True)
-    parser.add_argument("--output-root", type=Path, required=True)
+    input_mode = parser.add_mutually_exclusive_group(required=True)
+    input_mode.add_argument(
+        "--input-dir", type=Path,
+        help="render all completed per-type fits found under this directory",
+    )
+    input_mode.add_argument(
+        "--result-dir", type=Path,
+        help="render one completed per-type fit directory",
+    )
+    parser.add_argument("--output-root", type=Path)
+    parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--template", type=Path, required=True)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--project-root", type=Path, required=True)
     args = parser.parse_args()
+    if args.result_dir is not None:
+        if args.output_dir is None:
+            parser.error("--result-dir requires --output-dir")
+        report = generate_differential_expression_report(
+            result_dir=args.result_dir,
+            output_dir=args.output_dir,
+            template_path=args.template,
+            config_path=args.config,
+            project_root=args.project_root,
+        )
+        print(report)
+        return
+    if args.output_root is None:
+        parser.error("--input-dir requires --output-root")
     reports = render_per_type_reports(
         args.input_dir,
         args.output_root,

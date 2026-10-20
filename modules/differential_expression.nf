@@ -32,7 +32,7 @@ process RUN_CELL_TYPE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION {
     val synthetic_test_data
 
     output:
-    path 'cell_type_result/*', emit: results
+    tuple val(slug), path("cell_type_result/${slug}"), emit: results
 
     script:
     def test_mode_argument = de_test_mode ? '--test-mode' : ''
@@ -94,25 +94,26 @@ process RENDER_CROSS_CELL_TYPE_ANALYSIS_REPORT {
 }
 
 process RENDER_PER_TYPE_DIFFERENTIAL_EXPRESSION_REPORTS {
-    tag 'per-cell-type differential expression reports'
+    tag { slug }
     publishDir "${params.outdir}/analysis/per_type", mode: 'copy', overwrite: true,
         saveAs: { filename ->
-            filename.startsWith('de_reports/') ? filename.substring('de_reports/'.length()) : null
+            filename.startsWith("${slug}/differential_expression/") ? filename : null
         }
 
     input:
-    path per_type_de
-    path cross_cell_type_report
+    tuple val(slug), path(result_dir, stageAs: 'result')
     path pipeline_config
     path report_template
+    path go_enrichment_data
 
     output:
-    path 'de_reports/*/differential_expression/*', emit: reports
+    path "${slug}/differential_expression/**", emit: reports
 
     script:
     """
-    test -s ${cross_cell_type_report}/report.html
-    pbmc-differential-expression-report --input-dir ${per_type_de} --output-root de_reports \\
+    mkdir -p ${slug}/differential_expression
+    PBMC_GO_ENRICHMENT_DATA_DIR=${go_enrichment_data} pbmc-differential-expression-report --result-dir result \\
+      --output-dir ${slug}/differential_expression \\
       --template ${report_template} --config ${pipeline_config} --project-root .
     """
 }

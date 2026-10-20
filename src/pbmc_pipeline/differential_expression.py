@@ -37,10 +37,31 @@ _SYNTHETIC_DATA_WARNING = (
     "SYNTHETIC TEST DATA: pseudobulk counts and sample metadata were generated "
     "deterministically to exercise the DE workflow. These results are not biological evidence."
 )
+_CONTINUOUS_DESIGN_COLUMNS = ("age", "bmi", "log10_total_counts")
 
 
 class _NonEstimableModel(ValueError):
     """Expected design or sample-size condition that prevents a DE fit."""
+
+
+def _center_continuous_design_columns(design_matrix: pd.DataFrame) -> pd.DataFrame:
+    """Center numeric covariates so the negative-binomial intercept is in range.
+
+    With no interactions, this changes only the intercept parameterization. It
+    avoids an artificial age-zero or zero-depth intercept that can destabilize
+    PyDESeq2's IRLS initialization for high-count genes.
+    """
+    centered = design_matrix.copy()
+    for column in _CONTINUOUS_DESIGN_COLUMNS:
+        if column not in centered:
+            continue
+        values = pd.to_numeric(centered[column], errors="coerce")
+        if not np.isfinite(values).all():
+            raise _NonEstimableModel(
+                f"design matrix contains non-finite values for {column!r}"
+            )
+        centered[column] = values - float(values.mean())
+    return centered
 
 
 def _matrix_to_counts(matrix, *, context: str) -> np.ndarray:
@@ -236,7 +257,9 @@ def _fit_covariate_model(
                 categories=categorical_levels(column, model_metadata[column]),
             )
 
-    design_matrix = FormulaicContrasts(model_metadata, design).design_matrix
+    design_matrix = _center_continuous_design_columns(
+        FormulaicContrasts(model_metadata, design).design_matrix,
+    )
     numeric_design = design_matrix.to_numpy(dtype=float)
     rank = int(np.linalg.matrix_rank(numeric_design))
     if rank < numeric_design.shape[1]:

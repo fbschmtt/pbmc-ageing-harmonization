@@ -15,7 +15,7 @@
   "processing": {
     "target_sum": 10000,
     "hvg": {"min_mean": 0.0125, "min_disp": 0.5},
-    "exclude_vdj_regex": "^(?:TRA[VDJ]|TRB[VDJ]|IGL[VDJ]|IGH[VDJ])",
+    "exclude_vdj_regex": "^(?:TRA[VDJ]|TRB[VDJ]|IGK[VJ]|IGL[VDJ]|IGH[VDJ])",
     "neighbors": {"n_neighbors": 50, "n_pcs": 30},
     "random_seed": 42,
     "output_compression": "gzip"

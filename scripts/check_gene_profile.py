@@ -35,6 +35,8 @@ def check_profile(profile_dir: Path, gene: str) -> None:
         "naive_study_slope_model_result.csv",
         "naive_study_slopes.csv",
         "naive_study_slope_predictions.csv",
+        "cross_cell_type_age_trajectories.csv",
+        "cross_cell_type_age_trajectory_support.csv",
         "naive_mixed_model_fixed_effects.csv",
         "naive_mixed_model_study_slopes.csv",
         "naive_mixed_model_predictions.csv",
@@ -54,6 +56,7 @@ def check_profile(profile_dir: Path, gene: str) -> None:
         raise AssertionError(f"The HTML report title does not identify the gene and type: {expected_title}")
     for heading in (
         "PyDESeq2", "Model and gene result", "Mean–dispersion position",
+        "Cross-cell-type age trajectories",
         "Exploratory infant-to-adult comparison",
         "Pearson residuals", "Against Age", "Against Depth",
         "Correlated genes", "Naive normalized expression versus VST",
@@ -209,6 +212,31 @@ def check_profile(profile_dir: Path, gene: str) -> None:
     naive_result = pd.read_csv(profile_dir / "naive_linear_model_result.csv")
     if naive_result.empty or "age" not in naive_result["term"].tolist():
         raise AssertionError("The naive linear model is missing its age coefficient")
+    study_slope_coefficients = pd.read_csv(
+        profile_dir / "naive_study_slope_model_result.csv",
+    )
+    required_slope_annotations = {"parameter_role", "study", "interpretation"}
+    if not required_slope_annotations.issubset(study_slope_coefficients.columns):
+        raise AssertionError("Study-slope coefficient coding is not annotated")
+    reference_age = study_slope_coefficients.loc[
+        study_slope_coefficients["term"] == "age"
+    ]
+    if len(reference_age) != 1 or reference_age.iloc[0]["parameter_role"] != (
+        "Per-year slope for the reference study"
+    ):
+        raise AssertionError("The reference-study age slope is not identified")
+    cross_type_trajectories = pd.read_csv(
+        profile_dir / "cross_cell_type_age_trajectories.csv",
+    )
+    cross_type_support = pd.read_csv(
+        profile_dir / "cross_cell_type_age_trajectory_support.csv",
+    )
+    if "status" not in cross_type_support.columns:
+        raise AssertionError("Cross-cell-type trajectory support status is missing")
+    if not cross_type_trajectories.empty and not {"cell_type", "age_bin", "log2FoldChange"}.issubset(
+        cross_type_trajectories.columns
+    ):
+        raise AssertionError("Cross-cell-type trajectories have an unsupported schema")
     mean_variance = pd.read_csv(profile_dir / "mean_variance.csv")
     target = mean_variance.loc[mean_variance["gene"] == gene]
     if target.empty or not bool(target.iloc[0]["is_target_gene"]):

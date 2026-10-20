@@ -55,6 +55,12 @@ study_slope_predictions = pd.read_csv(
 mixed_model_fixed_effects = pd.read_csv(profile_dir / "naive_mixed_model_fixed_effects.csv")
 mixed_model_study_slopes = pd.read_csv(profile_dir / "naive_mixed_model_study_slopes.csv")
 mixed_model_predictions = pd.read_csv(profile_dir / "naive_mixed_model_predictions.csv")
+cross_cell_type_trajectories = pd.read_csv(
+    profile_dir / "cross_cell_type_age_trajectories.csv",
+)
+cross_cell_type_trajectory_support = pd.read_csv(
+    profile_dir / "cross_cell_type_age_trajectory_support.csv",
+)
 
 display(HTML(render_report_header(
     title=f"{gene} · {cell_type}",
@@ -72,6 +78,60 @@ display(HTML(render_report_header(
     ],
     title_tag="div",
 )))
+
+
+# %% [markdown]
+# ## Cross-cell-type age trajectories
+#
+# This view reuses the completed `run-de` age-bin fits, rather than refitting
+# the selected gene. Each line is a cell type and each value is the adjusted
+# log2 fold change relative to that cell type’s reference age bin. It is not a
+# direct comparison of expression abundance between cell types.
+# %%
+if cross_cell_type_trajectories.empty:
+    reason = "; ".join(
+        cross_cell_type_trajectory_support["reason"].dropna().astype(str).unique()
+    ) or "No completed age-bin DE trajectories were available."
+    display(Markdown(f"_Cross-cell-type trajectories are unavailable: {reason}_"))
+else:
+    plot_trajectories = cross_cell_type_trajectories.copy()
+    plot_trajectories["age_bin_start"] = plot_trajectories["age_bin"].str.split(
+        "-", n=1,
+    ).str[0].astype(float)
+    plot_trajectories["log2FoldChange"] = pd.to_numeric(
+        plot_trajectories["log2FoldChange"], errors="coerce"
+    )
+    figure, axis = plt.subplots(figsize=(10, 5.8))
+    for current_cell_type, rows in plot_trajectories.groupby(
+        "cell_type", observed=True, sort=True,
+    ):
+        rows = rows.sort_values("age_bin_start", kind="stable")
+        axis.plot(
+            rows["age_bin_start"], rows["log2FoldChange"], marker="o",
+            linewidth=2, label=str(current_cell_type),
+        )
+    axis.axhline(0, color="#555555", linewidth=1, linestyle="--")
+    axis.set_xticks(sorted(plot_trajectories["age_bin_start"].unique()))
+    axis.set_xticklabels(sorted(plot_trajectories["age_bin"].unique(), key=lambda value: int(value.split("-", 1)[0])))
+    axis.set_xlabel("Age bin (years)")
+    axis.set_ylabel("Adjusted log2 fold change vs. reference age bin")
+    axis.set_title(f"{gene}: age-bin trajectories across cell types")
+    axis.legend(title="Cell type", fontsize=8, bbox_to_anchor=(1.02, 1), loc="upper left")
+    axis.grid(True, alpha=0.2)
+    figure.tight_layout()
+    plt.show()
+    trajectory_summary = (
+        plot_trajectories[["cell_type", "omnibus_padj"]]
+        .drop_duplicates("cell_type")
+        .sort_values("cell_type", kind="stable")
+    )
+    display(Markdown(
+        "The table gives the omnibus age-bin adjusted p-value for each displayed cell type. "
+        "Raw rows and unavailable-type reasons are in "
+        "[cross_cell_type_age_trajectories.csv](cross_cell_type_age_trajectories.csv) and "
+        "[cross_cell_type_age_trajectory_support.csv](cross_cell_type_age_trajectory_support.csv)."
+    ))
+    display(format_model_results(trajectory_summary))
 
 
 def display_collapsible_figure(figure, summary):
@@ -694,6 +754,12 @@ display(age_bin_predictions.round({
 # %%
 display(Markdown(f"**Design:** `{summary['study_slope_model']['design']}`"))
 display_fit_diagnostics("Naive age model with study-specific slopes")
+display(Markdown(
+    "The slopes above are direct fitted contrasts. In the full coefficient table below, "
+    "`age` is the reference-study slope and every `age:study[...]` row is that study's "
+    "deviation from the reference—not its standalone slope. The `parameter_role` and "
+    "`interpretation` columns make this coding explicit."
+))
 display(format_model_results(study_slopes))
 
 # %% [markdown]

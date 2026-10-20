@@ -85,6 +85,7 @@ def main() -> None:
                 "--cell-type", cell_type,
                 "--gene", gene,
                 "--output-dir", str(args.output_dir),
+                "--differential-expression-dir", str(args.differential_expression_dir),
                 "--cpus", str(args.cpus),
             ],
             check=False,

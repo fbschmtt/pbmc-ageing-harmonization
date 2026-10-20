@@ -23,6 +23,7 @@ from IPython.display import HTML, Markdown, display
 from upsetplot import UpSet, from_indicators
 
 from pbmc_pipeline.config import AgeTrajectorySettings
+from pbmc_pipeline.report_theme import render_report_header
 from pbmc_pipeline.reporting import plot_trajectory_merge_diagnostic
 from pbmc_pipeline.trajectory_analysis import (
     summarize_residual_clustering,
@@ -92,80 +93,27 @@ expression_gene_intersection_accounting = read_optional_csv(
     expression_gene_intersection_accounting_path
 )
 
-display(HTML("""
-<style>
-:root {
-  --report-ink: #182230;
-  --report-muted: #5f6b7a;
-  --report-line: #d8e0e8;
-  --report-paper: #ffffff;
-  --report-page: #f5f7fa;
-  --report-accent: #176b87;
-  --report-accent-soft: #e6f3f7;
-}
-body.jp-Notebook { background: var(--report-page); color: var(--report-ink); }
-main { max-width: 1600px; margin: 0 auto; padding: 2rem clamp(1.25rem, 3vw, 2.5rem) 4rem; }
-.jp-Cell-outputWrapper, .jp-OutputArea { width: 100%; }
-.jp-RenderedImage img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
-.report-toc-shell { position: fixed; z-index: 1000; top: 1rem; bottom: 1rem; left: 1rem; width: 260px; }
-.report-toc-toggle { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
-.report-toc-toggle-label { display: none; }
-.report-toc { height: 100%; overflow-y: auto; padding: .9rem .8rem 1.1rem; border: 1px solid var(--report-line); border-radius: 14px; background: var(--report-paper); box-shadow: 0 10px 28px rgba(24, 34, 48, .12); }
-.report-toc-heading { margin: 0 0 .65rem; padding: .25rem .45rem .65rem; border-bottom: 1px solid var(--report-line); color: var(--report-muted); font-size: .72rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
-.report-toc-list, .report-toc-list ul { margin: 0; padding: 0; list-style: none; }
-.report-toc-list > li { margin: .12rem 0 .45rem; }
-.report-toc-list ul { margin: .2rem 0 .35rem .65rem; padding-left: .65rem; border-left: 1px solid var(--report-line); }
-.report-toc-list ul li { margin: .12rem 0; }
-.report-toc a, .report-toc a:visited { display: block; padding: .25rem .45rem; border-radius: 6px; color: #344454; font-size: .88rem; font-weight: 600; line-height: 1.35; text-decoration: none; }
-.report-toc-list ul a { color: var(--report-muted); font-size: .82rem; font-weight: 500; }
-.report-toc a:hover, .report-toc a:focus-visible { background: var(--report-accent-soft); color: var(--report-accent); outline: none; }
-html { scroll-behavior: smooth; scroll-padding-top: 1.25rem; }
-@media print {
-  body.jp-Notebook { background: #fff; }
-  main { max-width: none; padding: 0; }
-  .report-toc-shell { display: none; }
-}
-@media (min-width: 1200px) {
-  main { width: calc(100% - 320px); max-width: 1500px; margin: 0 1.5rem 0 295px; }
-}
-@media (max-width: 1199px) {
-  main { padding-top: 5rem; }
-  .report-toc-shell { top: .5rem; right: .5rem; bottom: auto; left: .5rem; width: auto; }
-  .report-toc-toggle-label { display: flex; align-items: center; justify-content: space-between; min-height: 2.8rem; padding: .6rem .9rem; border: 1px solid var(--report-line); border-radius: 10px; background: var(--report-paper); box-shadow: 0 6px 18px rgba(24, 34, 48, .12); color: var(--report-accent); cursor: pointer; font-weight: 700; }
-  .report-toc-toggle-label::after { content: "＋"; font-size: 1.2rem; }
-  .report-toc-toggle:checked + .report-toc-toggle-label::after { content: "−"; }
-  .report-toc { display: none; height: auto; max-height: min(72vh, 680px); margin-top: .35rem; border-radius: 10px; }
-  .report-toc-toggle:checked ~ .report-toc { display: block; }
-  .report-toc-list { columns: 2; column-gap: 1rem; }
-  .report-toc-list > li { break-inside: avoid; }
-}
-@media (max-width: 560px) { .report-toc-list { columns: 1; } }
-</style>
-<div class="report-toc-shell">
-  <input class="report-toc-toggle" type="checkbox" id="cross-report-toc-toggle">
-  <label class="report-toc-toggle-label" for="cross-report-toc-toggle">Contents</label>
-  <nav class="report-toc" aria-label="Cross-cell-type report table of contents">
-    <p class="report-toc-heading">On this page</p>
-    <ul class="report-toc-list">
-      <li><a href="#Support-and-scope">Support and scope</a></li>
-      <li><a href="#Study-balanced-cell-type-expression-atlas">Expression atlas</a>
-        <ul>
-          <li><a href="#Gene-intersection-across-studies">Gene intersection</a></li>
-          <li><a href="#AIFI-L1-mean-scaled-expression">AIFI L1 scaled expression</a></li>
-          <li><a href="#3%E2%80%B2/5%E2%80%B2-technology-associated-contrast">3′/5′ contrast</a></li>
-          <li><a href="#Intronic-read-inclusion-contrast">Intronic contrast</a></li>
-        </ul>
-      </li>
-      <li><a href="#Sample-clustering-from-bins-model-Pearson-residuals">Residual clustering</a>
-        <ul><li><a href="#Cluster-focused-residual-characterization">Cluster characterization</a></li></ul>
-      </li>
-      <li><a href="#Age-bin-DE-genes-recurring-in-multiple-cell-types">Recurring age-bin DE genes</a></li>
-      <li><a href="#Cross-cell-type-trajectory-clusters">Trajectory clusters</a></li>
-      <li><a href="#Do-recurring-genes-share-trajectory-shapes?">Trajectory-shape concordance</a></li>
-    </ul>
-  </nav>
-</div>
-"""))
+display(HTML(render_report_header(
+    title="Merged age-DE results",
+    eyebrow="PBMC ageing · combined differential expression",
+    subtitle=(
+        "Cross-cell-type age trajectories, recurring differential expression, "
+        "residual structure, and study-balanced expression."
+    ),
+    metrics=[
+        ("Cell types analyzed", f"{len(cell_type_support):,}"),
+        (
+            "Types in cross-type analysis",
+            f"{len(metadata.get('cell_types_in_cross_cell_type_analysis', [])):,}",
+        ),
+        ("Shared age bins", f"{len(common_bins):,}"),
+        ("Trajectory profiles", f"{int(metadata.get('n_cross_cell_type_trajectories', 0)):,}"),
+        (
+            "Genes tested",
+            f"{int(metadata.get('n_genes_tested_in_cross_cell_type_analysis', 0)):,}",
+        ),
+    ],
+)))
 
 # %% [markdown]
 # ## Support and scope

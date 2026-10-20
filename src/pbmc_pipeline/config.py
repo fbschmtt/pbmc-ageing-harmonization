@@ -706,14 +706,13 @@ def validate_configuration(
             raise ConfigurationError(f"{study_id}: preparation.allow_cell_subset must be a boolean")
 
         annotation = study["annotation"]
-        if not isinstance(annotation, dict) or annotation.get("method") not in {"existing", "celltypist"}:
-            raise ConfigurationError(f"{study_id}: annotation.method must be existing or celltypist")
-        if annotation["method"] == "celltypist":
-            levels = annotation.get("levels")
-            if not isinstance(levels, list) or not levels or not set(levels).issubset({"l1", "l2", "l3"}):
-                raise ConfigurationError(
-                    f"{study_id}: celltypist annotation.levels must contain l1, l2, or l3"
-                )
+        if not isinstance(annotation, dict) or annotation.get("method") != "celltypist":
+            raise ConfigurationError(f"{study_id}: annotation.method must be celltypist")
+        levels = annotation.get("levels")
+        if not isinstance(levels, list) or not levels or not set(levels).issubset({"l1", "l2", "l3"}):
+            raise ConfigurationError(
+                f"{study_id}: celltypist annotation.levels must contain l1, l2, or l3"
+            )
         conversion = study.get("conversion")
         if conversion is not None:
             if not isinstance(conversion, dict):

@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 from .config import AgeTrajectorySettings, ExpressionAtlasSettings, read_json
-from .report_toc import set_notebook_title
+from .report_toc import populate_html_toc, set_notebook_title
 from .trajectory_analysis import analyze_age_trajectories
 
 
@@ -78,6 +78,7 @@ def generate_trajectory_report(
         "--HTMLExporter.exclude_output_prompt=True",
         f"--output={html.name}", f"--output-dir={output_dir}", str(executed),
     ], cwd=project_root, env=env, check=True)
+    populate_html_toc(html)
     return html
 
 

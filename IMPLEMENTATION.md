@@ -85,7 +85,8 @@ The core merge writes no global normalization, embedding, graph, or prediction.
   trajectory and residual analyses, and residual WGCNA from saved DE outputs.
 - `differential_expression.nf` and `modules/differential_expression.nf`: the
   independent pseudobulk DE workflow: label listing, one in-memory type subset
-  and fit per task, then result/manifest collection.
+  and fit per task, parallel per-type report rendering from each fit result,
+  result/manifest collection, and a separate combined report.
 - `src/pbmc_pipeline/differential_expression.py`: configured sample filtering,
   per-study and merged PyDESeq2 fits, task-result collection, CSV output, and
   the result manifest. It delegates age-bin model preparation and trajectory
@@ -114,6 +115,9 @@ The core merge writes no global normalization, embedding, graph, or prediction.
   fixed-study-intercept/random-slope mixed model. Each model has sample-level
   residual plots against age and library depth, faceted by study. The age-bin
   normalization reference uses all cell-type samples before model filters.
+  When completed DE results are supplied, the report also reads the existing
+  age-bin fits for the selected gene across cell types, preserving a support
+  table for types where that comparison is unavailable.
   `scripts/profile_top_age_genes.py` applies the same report to the most
   significant merged age-DE genes per cell type.
 - `scripts/check_gene_profile.py`: output-contract and notebook smoke checks
@@ -168,6 +172,8 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/{abundance_input.tsv,report.html,fraction_model_diagnostics.tsv}` (pseudobulk abundance input and per-type DE report outputs)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/residual_wgcna/` (residual WGCNA module assignments, eigengenes, soft-threshold and sample-connectivity diagnostics, covariate associations, hub genes, and leave-one-study-out module stability)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/residual_wgcna/{module_gsea.csv,cmv_associated_module_scores.csv,smoking_associated_module_scores.csv}` (preranked GO enrichment and sample scores for the strongest exposure-associated modules)
+- `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/residual_wgcna/{module_gsea_specific_summary.csv,module_gsea_specificity_audit.csv,module_gsea_provenance.json}` (specific-term summary, collapse audit, and observed GSEA/GO input provenance)
+- `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/go_enrichment/{merged_age_gsea.csv,merged_age_gsea_specific_summary.csv,merged_age_gsea_specificity_audit.csv,merged_age_gsea_provenance.json}` (merged-age GO enrichment, leading-edge summary, collapse audit, and observed input provenance)
 - `<outdir>/analysis/combined/differential_expression/differential_expression.json` (DE status and cell-type result index)
 - `<outdir>/analysis/combined/trajectory/{report.html,executed.ipynb}` (combined trajectory report)
 - `<outdir>/analysis/combined/trajectory/*.csv` (shared-bin cross-type clusters and means, gene-level DE recurrence, and cross-type pattern concordance)
@@ -176,7 +182,7 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/analysis/combined/trajectory/expression_atlas_*.csv` (study-balanced common-gene expression matrix, gene UMAP, depth support, and independent 3′/5′ and intronic-read sensitivity summaries)
 - `<outdir>/analysis/combined/trajectory/*_residual_{clusters,pc_scores}.csv` (per-cell-type sample cluster assignments and PCA scores)
 - `<outdir>/analysis/combined/trajectory/cross_cell_type_pearson_residuals.npz` and residual metadata/cluster CSVs (wide matrix, Leiden-primary assignments, K-means/HDBSCAN alternatives, marker contrasts, and cell-type feature composition for shared samples across full-trajectory-supported cell types)
-- `<outdir>/analysis/per_gene/<cell-type-slug>/<gene-slug>/` (focused gene-profile HTML and executed notebook, `report_render.log` for notebook-render diagnostics, model coefficient and residual tables, mean–dispersion diagnostics, normalized sample counts, and compressed VST matrix)
+- `<outdir>/analysis/per_gene/<cell-type-slug>/<gene-slug>/` (focused gene-profile HTML and executed notebook, `report_render.log` for notebook-render diagnostics, model coefficient and residual tables, mean–dispersion diagnostics, normalized sample counts, compressed VST matrix, and cross-cell-type age-bin trajectory/support tables when DE results are available)
 - `<outdir>/run_manifest.json` (requested, selected, and skipped studies;
   hashes of selected source inputs, metadata dependencies, and annotation models;
   selected studies are the complete requested set for explicit study lists)
@@ -320,8 +326,9 @@ gene-by-type trajectories, and summarizes per-gene recurrence and pattern
 agreement. Its cluster tables and means are published under
 `analysis/combined/trajectory/`.
 The single cell analysis report process consumes only the split and single-cell analysis
-artifacts. It has no DE manifest dependency. The DE workflow separately
-renders each per-type DE report after the collector completes. Cell-type
+artifacts. It has no DE manifest dependency. Each per-type DE report renders
+from its fit result as an independent task; the combined cross-type report
+renders separately from the collected manifest. Cell-type
 analysis and reports publish under
 `analysis/per_type/<cell-type-slug>/analysis/`; per-type DE results publish
 under `analysis/per_type/<cell-type-slug>/differential_expression/`. The
@@ -346,6 +353,9 @@ Rerendering skips PyDESeq2 fitting but reruns those report-stage calculations.
 The site term is omitted when only one site remains. Fit metadata and CSVs
 record the formula, included studies and sites, complete-case sample count, and
 exclusions for missing design values.
+Continuous design columns are centered within each fit before PyDESeq2 runs.
+This changes only the intercept parameterization and prevents an artificial
+age-zero or zero-depth intercept from destabilizing the optimizer.
 
 The explicit depth covariate is used in addition to PyDESeq2's size-factor
 normalization. It adjusts for the age-associated pseudobulk-depth pattern
@@ -453,13 +463,29 @@ Each per-type DE report runs residual WGCNA from the fitted age-bin residual
 matrix. It publishes module assignments and eigengenes together with
 soft-threshold, sample-connectivity, eigengene-covariate, hub-gene, CMV and
 smoking checks, preranked GO Biological Process enrichment, and leave-one-study-out
-stability diagnostics. CMV and smoking are checked because the residual model
+stability diagnostics. GSEA uses the GO Biological Process 2023 library downloaded to
+`input_data/go/`
+and its output is controlled by GSEA's native FDR q-value within each module.
+The compact summary collapses a parent term only if a same-direction descendant
+has a leading-edge Jaccard overlap of at least 0.5; it retains a visible
+representative for every collapsed term. The complete GSEA table, specificity
+audit, and a provenance manifest containing resource hashes and parameters are
+published alongside the report. CMV and smoking are checked because the residual model
 already adjusts for age bins, sex, study site, and depth but omits those plausible
 sources of remaining biological structure. These exploratory checks ask whether
 signal remains; they do not assume an effect is present or adjust the residuals.
 WGCNA color names are arbitrary module identifiers; grey is reserved for genes
 not assigned to a module and is excluded from GSEA because it is not a coherent
 module. The stability panel compares gene membership after omitting each study.
+
+The merged continuous-age DE report uses the same downloaded GO Biological Process
+collection. It ranks all genes tested in the merged model by signed Wald
+statistic when the statistic is complete, otherwise by signed `−log10(p-value)`.
+Its collapsible summary lists FDR-significant specific terms, the number of
+leading-edge genes, and a preview of the first twelve ranked leading-edge genes;
+the complete list is retained in the published CSV. Positive and negative NES
+values correspond to genes increasing and decreasing with age, respectively.
+GO Molecular Function and Cellular Component are not currently tested.
 
 ### Expression-atlas settings
 
@@ -541,11 +567,12 @@ workflow. When only the report template changes, use
 and analysis artifact without recomputing local analysis. `make docs-check`
 validates local Markdown links and documented Make targets without adding a
 documentation-tool dependency.
-`run-de` fits pseudobulk models, writes the combined cross-cell-type analysis
-report, then renders each per-type DE report. With `-resume`, completed PyDESeq2
-fits remain cached when only a downstream report input changes. Use
-`make render-de-reports` to rerun per-type report notebooks from existing model
-outputs; this skips PyDESeq2 fitting but reruns analyses executed inside those
+`run-de` fits pseudobulk models, fans out per-type DE report tasks from the fit
+results, and renders the combined cross-cell-type analysis report separately.
+With `-resume`, completed PyDESeq2 fits remain cached when only a downstream
+report input changes. Use `make render-de-reports` to rerun per-type report
+notebooks from existing model outputs; this also runs one render task per type
+and skips PyDESeq2 fitting while rerunning analyses executed inside those
 notebooks.
 Core, integration-benchmark, DE, and cell-type report targets update
 `<outdir>/index.html` after publishing. `make render-report-index OUTDIR=<outdir>`

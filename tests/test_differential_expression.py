@@ -11,6 +11,7 @@ import pandas as pd
 from pbmc_pipeline.age_trajectory import prepare_age_trajectory_metadata
 from pbmc_pipeline.config import AgeTrajectorySettings, read_json
 from pbmc_pipeline.differential_expression import (
+    _center_continuous_design_columns,
     _design_with_covariates,
     _maximal_per_study_covariates,
     _model_result_path,
@@ -31,6 +32,23 @@ ROOT = Path(__file__).resolve().parents[1]
 TRAJECTORY_SETTINGS = AgeTrajectorySettings.from_mapping(
     read_json(ROOT / "config/pipeline.json")["differential_expression"]["age_trajectory"]
 )
+
+
+def test_center_continuous_design_columns_preserves_categorical_columns() -> None:
+    design = pd.DataFrame({
+        "Intercept": [1.0, 1.0, 1.0],
+        "age": [20.0, 40.0, 60.0],
+        "sex[T.male]": [0.0, 1.0, 0.0],
+        "log10_total_counts": [4.0, 5.0, 6.0],
+    })
+
+    centered = _center_continuous_design_columns(design)
+
+    assert centered["age"].tolist() == [-20.0, 0.0, 20.0]
+    assert centered["log10_total_counts"].tolist() == [-1.0, 0.0, 1.0]
+    assert centered["Intercept"].tolist() == design["Intercept"].tolist()
+    assert centered["sex[T.male]"].tolist() == design["sex[T.male]"].tolist()
+    assert design["log10_total_counts"].tolist() == [4.0, 5.0, 6.0]
 
 
 def test_sample_abundance_input_includes_zero_types_and_groups_by_study_and_sample() -> None:
