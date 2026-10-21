@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 import platform
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -29,6 +30,23 @@ from pbmc_pipeline.utils import slugify
 LOGGER = logging.getLogger(__name__)
 MODEL_FORMAT_VERSION = 3
 MISSING_COEFFICIENT_WEIGHT_WARNING_FRACTION = 0.05
+
+
+class ClockEligibilityError(ValueError):
+    """A cell type cannot support the configured study-level clock split."""
+
+
+class ClockFitFailuresError(RuntimeError):
+    """One or more all-cell-type fits failed after other types completed."""
+
+
+@dataclass
+class ClockFit:
+    """In-memory fit result, deliberately separate from artifact publication."""
+
+    manifest: dict
+    inclusion_counts: dict
+    fitted_methods: list[dict]
 
 
 @dataclass(frozen=True)
@@ -431,18 +449,17 @@ def _mean_study_mae(predictions: pd.DataFrame) -> float:
     return float(per_study.mean())
 
 
-def train_age_clocks(
+def fit_age_clocks(
     input_path: Path,
     config_path: Path,
-    output_dir: Path,
     external_studies: list[str],
     *,
     cell_type_filter: str | None = None,
     alphas: list[float] | None = None,
     l1_ratios: list[float] | None = None,
     cv: bool = True,
-) -> dict:
-    """Fit configured clock methods for one cell type under shared study splits."""
+) -> ClockFit:
+    """Fit one cell type in memory without writing model artifacts."""
     import anndata as ad
 
     if not external_studies or any(not study for study in external_studies):
@@ -469,7 +486,6 @@ def train_age_clocks(
         choices = ", ".join(f"{label} ({slugify(label)})" for label in available_cell_types)
         raise ValueError(f"Unknown cell type {requested!r}. Available: {choices}")
     selected_cell_type = matches[0]
-    output_dir.mkdir(parents=True, exist_ok=True)
     if alphas is None:
         alphas = [0.001, 0.01, 0.1, 1.0, 10.0]
     if l1_ratios is None:
@@ -513,14 +529,27 @@ def train_age_clocks(
     train_meta = metadata.loc[metadata["study"].astype(str).isin(training_studies)].copy()
     external_meta = metadata.loc[metadata["study"].astype(str).isin(external_studies)].copy()
     missing_external = sorted(set(external_studies) - set(external_meta["study"].astype(str)))
-    if missing_external:
-        details = {study: inclusion_counts["by_study"][study] for study in missing_external}
-        raise ValueError(
-            f"External studies have no eligible samples for {selected_cell_type}: "
-            f"{missing_external}. Per-study inclusion counts: {json.dumps(details)}"
+    missing_training = sorted(set(training_studies) - set(train_meta["study"].astype(str)))
+    if missing_external or missing_training:
+        missing_studies = sorted(set(missing_external) | set(missing_training))
+        details = {study: inclusion_counts["by_study"][study] for study in missing_studies}
+        problems = []
+        if missing_external:
+            problems.append(
+                f"External studies have no eligible samples for {selected_cell_type}: "
+                f"{missing_external}"
+            )
+        if missing_training:
+            problems.append(
+                f"Training studies have no eligible samples for {selected_cell_type}: "
+                f"{missing_training}"
+            )
+        raise ClockEligibilityError(
+            "; ".join(problems)
+            + f". Per-study inclusion counts: {json.dumps(details)}"
         )
     if train_meta.empty:
-        raise ValueError("Selected cell type has no eligible training samples")
+        raise ClockEligibilityError("Selected cell type has no eligible training samples")
     train_meta["study"] = train_meta["study"].astype(str)
     external_meta["study"] = external_meta["study"].astype(str)
     train_study_ids = sorted(train_meta["study"].unique())
@@ -534,8 +563,6 @@ def train_age_clocks(
     alphas = alphas or [0.001, 0.01, 0.1, 1.0, 10.0]
     l1_ratios = l1_ratios or [0.1, 0.5, 0.9, 1.0]
     methods = _clock_methods(alphas, l1_ratios)
-    output_type_dir = output_dir / slugify(selected_cell_type) / "ageing_clock"
-    output_type_dir.mkdir(parents=True, exist_ok=True)
     fitted = []
 
     for method in methods:
@@ -668,31 +695,21 @@ def train_age_clocks(
         estimator = _fit_estimator(
             method, best_parameters, x_final, y_train, final_weights
         )
-        method_dir = output_type_dir / method.name
-        method_dir.mkdir(parents=True, exist_ok=True)
-        if cv:
-            cv_grid.to_csv(method_dir / "cv_grid_search.csv", index=False)
-            pd.DataFrame(cv_by_study).to_csv(method_dir / "cv_by_study.csv", index=False)
-            cv_oof_predictions.to_csv(
-                method_dir / "cv_oof_predictions.csv", index=True, index_label="pseudobulk_id"
-            )
-        else:
-            for filename in ("cv_grid_search.csv", "cv_by_study.csv", "cv_oof_predictions.csv"):
-                (method_dir / filename).unlink(missing_ok=True)
         fitted.append({
             "method": method,
-            "method_dir": method_dir,
             "genes": final_genes,
             "estimator": estimator,
             "best_parameters": best_parameters,
             "cv_best_mae": cv_best_mae,
             "cv_by_study": cv_by_study,
+            "cv_grid": cv_grid,
+            "cv_oof_predictions": cv_oof_predictions,
+            "training_gene_intersection": final_gene_intersection,
         })
 
     # Generate external features only after every method has completed tuning and fitting.
     for item in fitted:
         method = item["method"]
-        method_dir = item["method_dir"]
         estimator = item["estimator"]
         genes = item["genes"]
         model = estimator.named_steps[method.estimator_step]
@@ -725,17 +742,6 @@ def train_age_clocks(
             )
         predictions["predicted_age"] = predicted
         predictions["age_error_years"] = predicted - predictions["age"].to_numpy(float)
-        predictions.to_csv(method_dir / "external_predictions.csv", index=True)
-        if method.coefficient_step and coefficients is not None:
-            pd.DataFrame({
-                "gene": genes,
-                "coefficient": coefficients,
-                "absolute_coefficient": np.abs(coefficients),
-            }).sort_values("absolute_coefficient", ascending=False).to_csv(
-                method_dir / "coefficients.csv", index=False
-            )
-        else:
-            (method_dir / "coefficients.csv").unlink(missing_ok=True)
         metrics_by_study = {
             str(study): _metrics(group["age"], group["predicted_age"].to_numpy(float))
             for study, group in predictions.groupby("study", observed=True, sort=True)
@@ -764,7 +770,7 @@ def train_age_clocks(
                 int(np.count_nonzero(coefficients)) if coefficients is not None else None
             ),
             "training_studies_present": train_study_ids,
-            "training_gene_intersection": final_gene_intersection,
+            "training_gene_intersection": item["training_gene_intersection"],
             "training_age_coverage_by_study": training_age_coverage,
             "best_parameters": item["best_parameters"],
             "best_training_cv_mae_years": item["cv_best_mae"],
@@ -774,16 +780,65 @@ def train_age_clocks(
             "external_metrics_by_study": metrics_by_study,
             "external_metrics_pooled": _metrics(predictions["age"], predicted),
             "external_metrics_macro_study_mae_years": _mean_study_mae(predictions),
-            "model": str(method_dir / "model.joblib"),
-            "predictions": str(method_dir / "external_predictions.csv"),
         }
+        item.update({
+            "predictions": predictions,
+            "coefficients": coefficients,
+            "model": model,
+            "result": result,
+        })
+        manifest["methods"].append(result)
+
+    return ClockFit(manifest, inclusion_counts, fitted)
+
+
+def publish_age_clock_fit(fit: ClockFit, output_dir: Path) -> dict:
+    """Publish a completed in-memory fit; publication failures remain fatal."""
+    manifest = fit.manifest
+    cell_type = str(manifest["cell_type"])
+    output_type_dir = output_dir / slugify(cell_type) / "ageing_clock"
+    output_type_dir.mkdir(parents=True, exist_ok=True)
+    run_metadata = {key: value for key, value in manifest.items() if key != "methods"}
+
+    for item in fit.fitted_methods:
+        method = item["method"]
+        method_dir = output_type_dir / method.name
+        method_dir.mkdir(parents=True, exist_ok=True)
+        if item["cv_best_mae"] is not None:
+            item["cv_grid"].to_csv(method_dir / "cv_grid_search.csv", index=False)
+            pd.DataFrame(item["cv_by_study"]).to_csv(method_dir / "cv_by_study.csv", index=False)
+            item["cv_oof_predictions"].to_csv(
+                method_dir / "cv_oof_predictions.csv", index=True, index_label="pseudobulk_id"
+            )
+        else:
+            for filename in ("cv_grid_search.csv", "cv_by_study.csv", "cv_oof_predictions.csv"):
+                (method_dir / filename).unlink(missing_ok=True)
+
+        genes = item["genes"]
+        estimator = item["estimator"]
+        model = item["model"]
+        result = item["result"]
+        result["model"] = str(method_dir / "model.joblib")
+        result["predictions"] = str(method_dir / "external_predictions.csv")
+        item["predictions"].to_csv(method_dir / "external_predictions.csv", index=True)
+        coefficients = item["coefficients"]
+        if method.coefficient_step and coefficients is not None:
+            pd.DataFrame({
+                "gene": genes,
+                "coefficient": coefficients,
+                "absolute_coefficient": np.abs(coefficients),
+            }).sort_values("absolute_coefficient", ascending=False).to_csv(
+                method_dir / "coefficients.csv", index=False
+            )
+        else:
+            (method_dir / "coefficients.csv").unlink(missing_ok=True)
         bundle = {
             "model_format_version": MODEL_FORMAT_VERSION,
             "estimator": estimator,
             "genes": genes,
             "transform": "counts_per_million_then_log1p",
             "scaling": method.scaling_description,
-            "cell_type": selected_cell_type,
+            "cell_type": cell_type,
             "method": method.name,
             "training_weighting": result["training_weighting"],
             "target": "age_years",
@@ -793,12 +848,11 @@ def train_age_clocks(
             "software_versions": manifest["software_versions"],
         }
         joblib.dump(bundle, method_dir / "model.joblib")
-        run_metadata = {key: value for key, value in manifest.items() if key != "methods"}
         method_metadata = {
             **run_metadata,
             **result,
             "genes": genes,
-            "sample_inclusion_counts": inclusion_counts,
+            "sample_inclusion_counts": fit.inclusion_counts,
             "model_intercept_years": (
                 float(model.intercept_) if hasattr(model, "intercept_") else None
             ),
@@ -815,10 +869,28 @@ def train_age_clocks(
         (method_dir / "age_clock.json").write_text(
             json.dumps(method_manifest, indent=2) + "\n"
         )
-        manifest["methods"].append(result)
 
     (output_type_dir / "age_clock.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return manifest
+
+
+def train_age_clocks(
+    input_path: Path,
+    config_path: Path,
+    output_dir: Path,
+    external_studies: list[str],
+    *,
+    cell_type_filter: str | None = None,
+    alphas: list[float] | None = None,
+    l1_ratios: list[float] | None = None,
+    cv: bool = True,
+) -> dict:
+    """Fit and publish configured clock methods for one cell type."""
+    fit = fit_age_clocks(
+        input_path, config_path, external_studies,
+        cell_type_filter=cell_type_filter, alphas=alphas, l1_ratios=l1_ratios, cv=cv,
+    )
+    return publish_age_clock_fit(fit, output_dir)
 
 
 def train_all_age_clocks(
@@ -831,7 +903,7 @@ def train_all_age_clocks(
     l1_ratios: list[float] | None = None,
     cv: bool = True,
 ) -> dict[str, dict]:
-    """Fit one clock collection per cell type present in the pseudobulk input."""
+    """Fit every type, isolating expected and unexpected fit failures per type."""
     import anndata as ad
 
     pipeline_config = _load_config(config_path)
@@ -844,11 +916,50 @@ def train_all_age_clocks(
     if not cell_types:
         raise ValueError("Pseudobulk input contains no cell types")
     results = {}
+    summary = {
+        "kind": "all_cell_type_age_clock_run",
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "input": str(input_path),
+        "external_studies": external_studies,
+        "successful_cell_types": [],
+        "eligibility_skipped_cell_types": [],
+        "failed_cell_types": [],
+    }
     for cell_type in cell_types:
         LOGGER.info("Starting all-cell-type age-clock run for %s", cell_type)
-        results[cell_type] = train_age_clocks(
-            input_path, config_path, output_dir, external_studies,
-            cell_type_filter=cell_type, alphas=alphas, l1_ratios=l1_ratios, cv=cv,
+        try:
+            fit = fit_age_clocks(
+                input_path, config_path, external_studies,
+                cell_type_filter=cell_type, alphas=alphas, l1_ratios=l1_ratios, cv=cv,
+            )
+        except ClockEligibilityError as error:
+            LOGGER.error("Skipping age clock for %s: %s", cell_type, error)
+            summary["eligibility_skipped_cell_types"].append({
+                "cell_type": cell_type,
+                "exception": type(error).__name__,
+                "message": str(error),
+            })
+            continue
+        except Exception as error:
+            formatted_traceback = traceback.format_exc()
+            LOGGER.exception("Age-clock fit failed for %s; continuing with other cell types", cell_type)
+            summary["failed_cell_types"].append({
+                "cell_type": cell_type,
+                "exception": type(error).__name__,
+                "message": str(error),
+                "traceback": formatted_traceback,
+            })
+            continue
+        results[cell_type] = publish_age_clock_fit(fit, output_dir)
+        summary["successful_cell_types"].append(cell_type)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = output_dir / "age_clock_all_types_summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n")
+    if summary["failed_cell_types"]:
+        raise ClockFitFailuresError(
+            f"Age-clock fitting failed for {len(summary['failed_cell_types'])} cell type(s); "
+            f"successful types were published and details are in {summary_path}"
         )
     return results
 

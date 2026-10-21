@@ -16,6 +16,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from pbmc_pipeline.age_clock import (
+    ClockFitFailuresError,
     ClockMethod,
     WithinSampleRankTransformer,
     _clock_methods,
@@ -168,6 +169,75 @@ def test_all_cell_type_runner_discovers_and_fits_available_types(clock_input, tm
     assert (
         tmp_path / "clock/cd14-monocyte/ageing_clock/elastic_net/model.joblib"
     ).is_file()
+
+
+def test_all_cell_type_runner_skips_type_missing_from_studies(clock_input, tmp_path, caplog):
+    adata, _, input_path, config_path = clock_input
+    adata.obs["aifi_l2_majority"] = adata.obs["aifi_l2_majority"].astype(str)
+    adata.obs.loc["bulk_8", "aifi_l2_majority"] = "Rare type"
+    adata.write_h5ad(input_path)
+
+    with caplog.at_level("ERROR"):
+        manifests = train_all_age_clocks(
+            input_path, config_path, tmp_path / "clock", ["external_a", "external_b"],
+            alphas=[0.1], l1_ratios=[0.5], cv=False,
+        )
+
+    assert list(manifests) == ["CD14 monocyte"]
+    assert "Skipping age clock for Rare type" in caplog.text
+    assert "Training studies have no eligible samples" in caplog.text
+    assert "External studies have no eligible samples" in caplog.text
+    summary = json.loads((tmp_path / "clock/age_clock_all_types_summary.json").read_text())
+    assert summary["successful_cell_types"] == ["CD14 monocyte"]
+    assert summary["eligibility_skipped_cell_types"][0]["cell_type"] == "Rare type"
+    assert summary["failed_cell_types"] == []
+
+
+def test_all_cell_type_runner_continues_after_unexpected_fit_error(
+    clock_input, tmp_path, monkeypatch, caplog,
+):
+    from pbmc_pipeline import age_clock
+
+    adata, _, input_path, config_path = clock_input
+    adata.obs["aifi_l2_majority"] = adata.obs["aifi_l2_majority"].astype(str)
+    adata.obs.loc["bulk_8", "aifi_l2_majority"] = "Rare type"
+    adata.write_h5ad(input_path)
+    fit_age_clock = age_clock.fit_age_clocks
+
+    def fail_rare_type(*args, cell_type_filter=None, **kwargs):
+        if cell_type_filter == "Rare type":
+            raise RuntimeError("deliberate fit failure")
+        return fit_age_clock(*args, cell_type_filter=cell_type_filter, **kwargs)
+
+    monkeypatch.setattr(age_clock, "fit_age_clocks", fail_rare_type)
+    with caplog.at_level("ERROR"), pytest.raises(ClockFitFailuresError, match="1 cell type"):
+        train_all_age_clocks(
+            input_path, config_path, tmp_path / "clock", ["external_a", "external_b"],
+            alphas=[0.1], l1_ratios=[0.5], cv=False,
+        )
+
+    assert (tmp_path / "clock/cd14-monocyte/ageing_clock/age_clock.json").is_file()
+    assert "deliberate fit failure" in caplog.text
+    summary = json.loads((tmp_path / "clock/age_clock_all_types_summary.json").read_text())
+    assert summary["successful_cell_types"] == ["CD14 monocyte"]
+    assert summary["failed_cell_types"][0]["cell_type"] == "Rare type"
+    assert "RuntimeError: deliberate fit failure" in summary["failed_cell_types"][0]["traceback"]
+
+
+def test_all_cell_type_runner_does_not_catch_publication_errors(clock_input, tmp_path, monkeypatch):
+    from pbmc_pipeline import age_clock
+
+    monkeypatch.setattr(
+        age_clock,
+        "publish_age_clock_fit",
+        lambda *_: (_ for _ in ()).throw(OSError("deliberate publication failure")),
+    )
+    _, _, input_path, config_path = clock_input
+    with pytest.raises(OSError, match="deliberate publication failure"):
+        train_all_age_clocks(
+            input_path, config_path, tmp_path / "clock", ["external_a", "external_b"],
+            alphas=[0.1], l1_ratios=[0.5], cv=False,
+        )
 
 
 def test_module_cli_rank_model_loads_in_a_separate_process_context(clock_input, tmp_path):
