@@ -1,7 +1,10 @@
 """Shared visual shell for generated analysis reports."""
 from __future__ import annotations
 
+import base64
+from datetime import datetime, timezone
 from html import escape
+from io import BytesIO
 
 REPORT_CSS = r"""
 :root {
@@ -46,6 +49,7 @@ main { max-width: 1600px; margin: 0 auto; padding: 2rem clamp(1.25rem, 3vw, 2.5r
 .report-metric { display: flex; align-items: baseline; gap: .55rem; padding: .62rem .78rem; border: 1px solid rgba(255,255,255,.22); border-radius: 10px; background: rgba(255,255,255,.1); }
 .report-metric dt { color: #d6edf2; font-size: .9rem; font-weight: 600; }
 .report-metric dd { margin: 0; color: #fff; font-size: .9rem; font-weight: 650; text-align: right; }
+.report-generated-at { margin: .9rem 0 0; color: #d6edf2; font-size: .82rem; }
 .report-toc-shell { position: fixed; z-index: 1000; top: 1rem; bottom: 1rem; left: 1rem; width: 260px; }
 .report-toc-toggle { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
 .report-toc-toggle-label { display: none; }
@@ -120,6 +124,9 @@ def render_report_header(
         f'<dd>{escape(value)}</dd></div>'
         for label, value in metrics
     )
+    generated_at = datetime.now(timezone.utc)
+    generated_iso = generated_at.isoformat(timespec="seconds")
+    generated_label = generated_at.strftime("%Y-%m-%d %H:%M:%S UTC")
     return f'''
 <style>\n{REPORT_CSS}\n</style>
 <header class="report-hero">
@@ -127,6 +134,7 @@ def render_report_header(
   <{title_tag} class="report-hero-title">{escape(title)}</{title_tag}>
   <p class="report-subtitle">{escape(subtitle)}</p>
   <dl class="report-metrics">{metrics_html}</dl>
+  <p class="report-generated-at"><time datetime="{escape(generated_iso, quote=True)}">Generated {escape(generated_label)}</time></p>
   <div class="report-toc-shell">
     <input class="report-toc-toggle" type="checkbox" id="report-toc-toggle">
     <label class="report-toc-toggle-label" for="report-toc-toggle">Contents</label>
@@ -139,3 +147,18 @@ def render_report_header(
   </div>
 </header>
 '''
+
+
+def display_accessible_figure(figure, *, alt_text: str) -> None:
+    """Display a Matplotlib figure as HTML with meaningful alternative text."""
+    import matplotlib.pyplot as plt
+    from IPython.display import HTML, display
+
+    image = BytesIO()
+    figure.savefig(image, format="png", bbox_inches="tight")
+    encoded = base64.b64encode(image.getvalue()).decode("ascii")
+    display(HTML(
+        f'<img class="report-figure" alt="{escape(alt_text, quote=True)}" '
+        f'src="data:image/png;base64,{encoded}">'
+    ))
+    plt.close(figure)

@@ -461,9 +461,10 @@ which validation to run.
 | One single cell analysis report | `make run-cell-type-test CELL_TYPE=<slug>` (requires an existing split; create test splits with `make split-cell-types-test`) | Use `make render-cell-type-test CELL_TYPE=<slug>` to rerender one report from existing analysis artifacts, or `make render-cell-type-reports-test` to rerender all test reports. |
 | Rerender single cell analysis reports from existing analysis artifacts | `make render-cell-type-reports[-test]` | Use `make render-cell-type[-test] CELL_TYPE=<slug>` to refresh one report. |
 | Rerender per-type pseudobulk DE reports from existing model results | `make render-de-reports[-test]` | Runs one render task per cell type. Requires current per-type model outputs and `abundance_input.tsv`; rendering also executes abundance models, residual clustering, and WGCNA. It does not refit PyDESeq2. Rerun `make run-de[-test]` to regenerate missing abundance inputs. |
-| Rebuild the central report index | `make render-report-index` | It is also refreshed automatically after core, integration-benchmark, DE, and cell-type workflow targets. |
+| Rebuild the central report index | `make render-report-index` | It is also refreshed automatically after core, integration-benchmark, DE, cell-type, and age-clock workflow targets. |
 | Cell-type splitting or shared analysis | `make run-test`, then `make run-cell-type-analysis-test` | Use `make run-all-test` when the complete ordered test workflow is needed. |
 | Positive pseudobulk DE fitting | `make run-de-synthetic-test` and `make check-synthetic-de-results` | This fixture is independent of the core merge and renders per-type DE plus cross-cell-type reports. To check single cell analysis reports too, run `make run-test`, `make run-cell-type-analysis-test`, and `make check-synthetic-de-reports`. |
+| Cell-type transcriptomic age clocks | `make run-age-clock` | Fits sample-weighted, study-balanced, and within-sample rank elastic-net clocks for one type selected with `CELL_TYPE` (default `cd14-monocyte`; label or slug). Use `make run-age-clocks` to fit every cell type present in the pseudobulk. Defaults to holding out `nehar_belaid26,perez22`; these relatively small studies retain as much training data as possible while spanning a broad validation age range. Override with any comma-separated list via `AGE_CLOCK_EXTERNAL_STUDIES=study_a,study_b`. Per-method reports and a merged comparison go to `analysis/per_type/<slug>/ageing_clock/`. Smoke-test with `make run-age-clock-synthetic-test` and check that expected output files exist with `make check-age-clock-synthetic-test`; both are included in `make run-all-test` and `make verify`. |
 | Focused gene-by-cell-type profile | `make profile-gene CELL_TYPE=<label-or-slug> GENE=<gene-id>` | Use `make run-gene-profile-synthetic-test` to fit and render a planted synthetic gene and check the report end to end. |
 | Top merged age-DE gene profiles | `make profile-top-age-genes-test` | Uses the synthetic DE fixture and profiles two genes per cell type; included in `make run-all-test`. |
 | DE from an existing test pseudobulk merge | `make run-de-test` | Requires `make run-test` first; the small core fixture may not have enough independent samples for successful fits. Use the synthetic target above for positive fitting coverage. |
@@ -599,11 +600,13 @@ first, then `make run-cell-type-analysis-test` to consume the test merge under
 
 The central HTML report index is written to `<outdir>/index.html`. It links
 to the merged and per-study harmonization QC reports, integration benchmark,
-combined cross-cell-type analysis, and currently published residual and DE
-reports for each type. Core, integration-benchmark, DE, and cell-type report
-Make targets refresh it after publishing. The index checks residual and DE
-report files independently, and adds known types from the cell-type manifest
-when available. To rebuild it manually after moving or removing reports, run
+combined cross-cell-type analysis, and currently published residual, DE, and
+age-clock reports for each type. Age-clock entries include the merged method
+comparison and each method's report, based on the clock manifest. Core,
+integration-benchmark, DE, cell-type, and age-clock Make targets refresh it
+after publishing. The index checks report files independently, and adds known
+types from the cell-type and age-clock manifests when available. To rebuild it
+manually after moving or removing reports, run
 `make render-report-index OUTDIR=<outdir>`.
 
 The raw-count splits are published under `<outdir>/analysis/per_type/<cell-type-slug>/split.h5ad` so one
@@ -994,6 +997,34 @@ real-data results. The fixture design and marker contract are documented in
 upsample real test samples to simulate replication; more cells within a sample
 do not add independent samples.
 
+### Synthetic age-clock experiments
+
+The synthetic pseudobulk generator is deliberately compact: its single
+implementation, [`src/pbmc_pipeline/synthetic_de.py`](src/pbmc_pipeline/synthetic_de.py),
+defines the studies, assay-availability flags, planted effects, and count
+sampling in `create_synthetic_pseudobulk`. For one-off clock diagnostics,
+modify that source directly rather than adding a scenario framework; record
+the command and seed, and revert temporary source edits afterwards.
+
+The default fixture is a software smoke test, not evidence that a clock
+transfers between real sites. In particular, when `synthetic_study_c` is the
+external study, development contains only A and B. Their study-only genes are
+unavailable in the opposite leave-one-study-out fold and deliberately have
+opposite age slopes. This is a useful assay-coverage stress case, but can
+produce large opposite fold biases and should not be interpreted as clock
+performance. To isolate that mismatch, temporarily set the two
+`study_specific_age_effects` slopes to zero. The sample count is allocated
+equally over nine age bins, so `--samples-per-study` must be divisible by nine;
+for example, 360 creates the tenfold diagnostic fixture.
+
+Keep exploratory inputs and reports in a dedicated ignored workspace directory
+such as `output/experiments/<experiment-name>/`, not only under system-wide
+`/tmp`: files outside the repository may be inaccessible to browsers or the
+shared workspace UI. Inspect gene-intersection loss, missing-gene coverage,
+fold bias, and top coefficients before interpreting feature selection. Any
+retained fixture change must preserve the default smoke-test contract, update
+`adata.uns["synthetic_test_data"]`, and have focused unit-test coverage.
+
 After `make run-de-synthetic-test`, run `make profile-top-age-genes-test` to
 render two genes per cell type, ranked by merged age-DE adjusted
 p-value. The outputs are written under
@@ -1002,10 +1033,13 @@ included in `make run-all-test` and `make verify`.
 
 `make run-all-test` is the complete ordered Docker test. It runs the core and
 integration benchmark on available downsampled real-data fixtures, then fits
-the separate synthetic pseudobulk DE fixture, profiles its top two merged
-age-DE genes per cell type, runs the focused synthetic gene-profile smoke test,
-renders per-type DE and combined cross-cell-type reports from that synthetic
-fixture, and renders single cell analysis reports from the real merge/splits.
+the separate synthetic pseudobulk DE fixture and checks its results. The
+synthetic age-clock smoke test creates its own synthetic pseudobulk and checks
+that model, prediction, CV, report, and index files exist, then the suite
+profiles its top two merged age-DE genes per cell type, runs the focused
+synthetic gene-profile smoke test, renders per-type DE and combined
+cross-cell-type reports from that synthetic fixture, and renders single cell
+analysis reports from the real merge/splits.
 `make verify` runs it after linting, unit
 tests, Nextflow lint, and documentation checks. `STUDIES=<list>` changes only
 the core test inputs; use `STUDIES=all` for all available fixtures. The synthetic WGCNA fixture exercises the ordinary

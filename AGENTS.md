@@ -56,6 +56,12 @@
 - Development test targets request every configured study, including
   `nehar_belaid26`, and skip unavailable fixtures. Use an explicit `STUDIES`
   list to narrow coverage; this is a Make-level selection only.
+- For temporary synthetic age-clock diagnostics, follow the
+  [Synthetic age-clock experiments](README.md#synthetic-age-clock-experiments)
+  guidance in the README.
+  Keep exploratory inputs and reports under `output/experiments/<name>/`, not
+  only under system-wide `/tmp`, so they remain accessible in the shared
+  workspace.
 
 ## Working style
 

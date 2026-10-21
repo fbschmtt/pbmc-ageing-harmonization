@@ -136,47 +136,75 @@ def cluster_sample_residuals(
         svd_solver="randomized",
         random_state=settings.random_state,
     ).fit_transform(values.to_numpy(dtype=float))
+    if not np.isfinite(scores).all():
+        # PCA is fed only finite residuals, but extreme numeric inputs can still
+        # yield non-finite scores.  Residual clustering is diagnostic and must
+        # not abort the DE workflow in that case.
+        annotations["residual_clustering_status"] = "skipped_nonfinite_pca_scores"
+        annotations["residual_cluster"] = np.nan
+        annotations["residual_leiden_selected_resolution"] = np.nan
+        for column in residual_cluster_label_columns(settings):
+            if column != "residual_cluster":
+                annotations[column] = np.nan
+        annotations["umap_1"] = np.nan
+        annotations["umap_2"] = np.nan
+        return annotations.reset_index(drop=True), pd.DataFrame(), n_components
+
+    annotations["residual_clustering_status"] = "complete"
     if len(scores) >= settings.minimum_umap_trajectories:
         import umap
 
-        embedding = umap.UMAP(
-            n_components=2,
-            n_neighbors=min(settings.residual_umap_neighbors, len(scores) - 1),
-            min_dist=settings.umap_min_dist,
-            metric="euclidean",
-            random_state=settings.random_state,
-            transform_seed=settings.random_state,
-            n_jobs=1,
-        ).fit_transform(scores)
-        annotations["umap_1"] = embedding[:, 0]
-        annotations["umap_2"] = embedding[:, 1]
-        if len(scores) >= settings.residual_hdbscan_min_cluster_size:
-            umap_hdbscan_labels = HDBSCAN(
-                min_cluster_size=settings.residual_hdbscan_min_cluster_size,
-                min_samples=settings.residual_hdbscan_min_samples,
+        try:
+            embedding = umap.UMAP(
+                n_components=2,
+                n_neighbors=min(settings.residual_umap_neighbors, len(scores) - 1),
+                min_dist=settings.umap_min_dist,
                 metric="euclidean",
-                cluster_selection_method=settings.residual_hdbscan_cluster_selection_method,
-                allow_single_cluster=False,
-                copy=False,
-            ).fit_predict(embedding)
+                random_state=settings.random_state,
+                transform_seed=settings.random_state,
+                n_jobs=1,
+            ).fit_transform(scores)
+        except (FloatingPointError, ValueError):
+            embedding = None
+            annotations["residual_clustering_status"] = "skipped_umap_error"
+        if embedding is None or not np.isfinite(embedding).all():
+            annotations["umap_1"] = np.nan
+            annotations["umap_2"] = np.nan
+            annotations["residual_cluster_kmeans"] = np.nan
+            annotations["residual_cluster_hdbscan_umap"] = -1
+            if embedding is not None:
+                annotations["residual_clustering_status"] = "skipped_nonfinite_umap_embedding"
         else:
-            umap_hdbscan_labels = np.full(len(scores), -1, dtype=int)
-        annotations["residual_cluster_hdbscan_umap"] = umap_hdbscan_labels
-        candidates = range(2, min(settings.max_clusters, len(scores) // 3) + 1)
-        kmeans_labels = np.ones(len(scores), dtype=int)
-        best_score = -np.inf
-        for n_clusters in candidates:
-            labels = KMeans(
-                n_clusters=n_clusters, n_init=50, random_state=settings.random_state
-            ).fit_predict(embedding)
-            if np.bincount(labels).min() < 3:
-                continue
-            score = silhouette_score(embedding, labels)
-            if score > best_score:
-                kmeans_labels = labels + 1
-                best_score = score
-        annotations["residual_cluster_kmeans"] = kmeans_labels
+            annotations["umap_1"] = embedding[:, 0]
+            annotations["umap_2"] = embedding[:, 1]
+            if len(scores) >= settings.residual_hdbscan_min_cluster_size:
+                umap_hdbscan_labels = HDBSCAN(
+                    min_cluster_size=settings.residual_hdbscan_min_cluster_size,
+                    min_samples=settings.residual_hdbscan_min_samples,
+                    metric="euclidean",
+                    cluster_selection_method=settings.residual_hdbscan_cluster_selection_method,
+                    allow_single_cluster=False,
+                    copy=False,
+                ).fit_predict(embedding)
+            else:
+                umap_hdbscan_labels = np.full(len(scores), -1, dtype=int)
+            annotations["residual_cluster_hdbscan_umap"] = umap_hdbscan_labels
+            candidates = range(2, min(settings.max_clusters, len(scores) // 3) + 1)
+            kmeans_labels = np.ones(len(scores), dtype=int)
+            best_score = -np.inf
+            for n_clusters in candidates:
+                labels = KMeans(
+                    n_clusters=n_clusters, n_init=50, random_state=settings.random_state
+                ).fit_predict(embedding)
+                if len(np.unique(labels)) < 2 or np.bincount(labels).min() < 3:
+                    continue
+                score = silhouette_score(embedding, labels)
+                if score > best_score:
+                    kmeans_labels = labels + 1
+                    best_score = score
+            annotations["residual_cluster_kmeans"] = kmeans_labels
     else:
+        annotations["residual_clustering_status"] = "skipped_insufficient_samples_for_umap"
         annotations["umap_1"] = np.nan
         annotations["umap_2"] = np.nan
         annotations["residual_cluster_kmeans"] = np.nan

@@ -40,6 +40,8 @@ GENE_PROFILE_TEST_DIR ?= $(OUTDIR)/analysis/combined/gene_profile_synthetic
 GENE_PROFILE_TEST_INPUT ?= $(GENE_PROFILE_TEST_DIR)/pseudobulk_merged.h5ad
 PER_TYPE_DIR ?= $(OUTDIR)/analysis/per_type
 SYNTHETIC_DE_DIR ?= $(OUTDIR)/analysis/combined/synthetic_de
+AGE_CLOCK_DIR ?= $(PER_TYPE_DIR)
+AGE_CLOCK_EXTERNAL_STUDIES ?= nehar_belaid26,perez22
 VENV_PYTHON := .venv/bin/python
 VENV_DEPS := .venv/.dev-qc-installed
 
@@ -67,6 +69,7 @@ validate-study validate-test validate-full test-data download-inputs download-go
 	profile-gene profile-top-age-genes check-top-age-profile-prerequisites \
 	profile-top-age-genes-test \
 	run-gene-profile-synthetic-test \
+	run-age-clock run-age-clocks run-age-clock-synthetic-test check-age-clock-synthetic-test check-age-clock-prerequisites \
 	run-integration-benchmark run-integration-benchmark-test check-integration-benchmark-prerequisites check-integration-benchmark-test \
 	run-de run-de-test run-de-synthetic-test \
 	render-report-index \
@@ -109,14 +112,16 @@ test-unit: $(VENV_DEPS) ## Run deterministic unit and output-contract tests
 verify: STUDIES = $(TEST_STUDIES)
 verify: lint test-unit workflow-lint docs-check run-all-test ## Run all checks and fresh Docker workflows for representative studies
 
-# Keep benchmark, DE, and reports ordered even under `make -j`: each stage
+# Keep benchmark, DE, age-clock, and reports ordered even under `make -j`: each stage
 # consumes the fresh core output or synthetic-DE manifest from the prior stage.
 run-all-test: STUDIES = $(TEST_STUDIES)
-run-all-test: run-test ## Run core, benchmark, DE, cross-cell-type analysis, profiles, and cell-type reports
+run-all-test: run-test ## Run core, benchmark, DE, age clocks, profiles, and cell-type reports
 	$(MAKE) run-integration-benchmark-test STUDIES="$(STUDIES)"
 	$(MAKE) check-integration-benchmark-test STUDIES="$(STUDIES)"
 	$(MAKE) run-de-synthetic-test STUDIES="$(STUDIES)"
 	$(MAKE) check-synthetic-de-results STUDIES="$(STUDIES)"
+	$(MAKE) run-age-clock-synthetic-test STUDIES="$(STUDIES)"
+	$(MAKE) check-age-clock-synthetic-test STUDIES="$(STUDIES)"
 	$(MAKE) profile-top-age-genes-test STUDIES="$(STUDIES)"
 	$(MAKE) run-gene-profile-synthetic-test STUDIES="$(STUDIES)"
 	$(MAKE) run-cell-type-analysis-test STUDIES="$(STUDIES)"
@@ -272,6 +277,37 @@ run-de-synthetic-test: SYNTHETIC_DE_DIR = $(OUTDIR)/analysis/combined/synthetic_
 run-de-synthetic-test: $(PYTHON_CONTAINER_PREREQS) ## Generate a positive DE fixture, fit it, and render per-type reports
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.synthetic_de --config config/pipeline.json --output "$(SYNTHETIC_DE_DIR)/pseudobulk_merged.h5ad"
 	$(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression,synthetic_de_test -work-dir $(WORK_DIR) --outdir "$(OUTDIR)" --pseudobulk_input "$(SYNTHETIC_DE_DIR)/pseudobulk_merged.h5ad" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
+	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
+
+run-age-clock-synthetic-test: OUTDIR = output/test
+run-age-clock-synthetic-test: SYNTHETIC_DE_DIR = $(OUTDIR)/analysis/combined/synthetic_de
+run-age-clock-synthetic-test: AGE_CLOCK_DIR = $(OUTDIR)/analysis/per_type
+run-age-clock-synthetic-test: $(PYTHON_CONTAINER_PREREQS) ## Smoke-test the default CELL_TYPE age-clock fit on synthetic DE pseudobulks
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.synthetic_de --config config/pipeline.json --output "$(SYNTHETIC_DE_DIR)/pseudobulk_merged.h5ad"
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock --input "$(SYNTHETIC_DE_DIR)/pseudobulk_merged.h5ad" --config config/pipeline.json --output-dir "$(AGE_CLOCK_DIR)" --external-studies synthetic_study_c --cell-type "$(CELL_TYPE)"
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock_report --report-root "$(AGE_CLOCK_DIR)" --cell-type "$(CELL_TYPE)" --template reports/age_clock_report.py --comparison-template reports/age_clock_comparison_report.py --project-root /work
+	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
+
+check-age-clock-synthetic-test: $(PYTHON_CONTAINER_PREREQS) ## Check that expected synthetic age-clock output files exist
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/check_age_clock.py --outdir output/test --cell-type "$(CELL_TYPE)"
+
+check-age-clock-prerequisites:
+	@if test ! -f "$(PSEUDOBULK_INPUT)"; then \
+		echo "Missing pseudobulk input: $(PSEUDOBULK_INPUT). Run the core workflow first." >&2; exit 2; \
+	elif test -z "$(AGE_CLOCK_EXTERNAL_STUDIES)"; then \
+		echo "Set AGE_CLOCK_EXTERNAL_STUDIES to one or more comma-separated study IDs." >&2; exit 2; \
+	else \
+		echo "Ready to train on all pseudobulk studies except $(AGE_CLOCK_EXTERNAL_STUDIES)"; \
+	fi
+
+run-age-clock: check-age-clock-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Fit and externally evaluate one cell-type age clock; set CELL_TYPE and AGE_CLOCK_EXTERNAL_STUDIES
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock --input "$(PSEUDOBULK_INPUT)" --config config/pipeline.json --output-dir "$(AGE_CLOCK_DIR)" --external-studies "$(AGE_CLOCK_EXTERNAL_STUDIES)" --cell-type "$(CELL_TYPE)"
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock_report --report-root "$(AGE_CLOCK_DIR)" --cell-type "$(CELL_TYPE)" --template reports/age_clock_report.py --comparison-template reports/age_clock_comparison_report.py --project-root /work
+	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
+
+run-age-clocks: check-age-clock-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Fit and externally evaluate age clocks for every pseudobulk cell type
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock --input "$(PSEUDOBULK_INPUT)" --config config/pipeline.json --output-dir "$(AGE_CLOCK_DIR)" --external-studies "$(AGE_CLOCK_EXTERNAL_STUDIES)" --all-cell-types
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock_report --report-root "$(AGE_CLOCK_DIR)" --template reports/age_clock_report.py --comparison-template reports/age_clock_comparison_report.py --project-root /work
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 check-synthetic-de-results: $(PYTHON_CONTAINER_PREREQS) ## Check completed synthetic DE fits and planted age markers

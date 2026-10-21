@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timezone
 from html import escape
 from html.parser import HTMLParser
 from pathlib import Path
@@ -40,6 +41,14 @@ def _report_title(path: Path) -> str:
     return path.parent.parent.name.replace("-", " ").title()
 
 
+def _read_json(path: Path) -> dict:
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return document if isinstance(document, dict) else {}
+
+
 def render_report_index(outdir: Path) -> Path:
     outdir = outdir.resolve()
     analysis_dir = outdir / "analysis"
@@ -57,7 +66,7 @@ def render_report_index(outdir: Path) -> Path:
     per_type_root = analysis_dir / "per_type"
     cell_type_manifest = per_type_root / "cell_type_manifest.json"
     if cell_type_manifest.is_file():
-        document = json.loads(cell_type_manifest.read_text(encoding="utf-8"))
+        document = _read_json(cell_type_manifest)
         manifest_slugs = [
             str(record["slug"])
             for record in document.get("cell_types", [])
@@ -70,6 +79,10 @@ def render_report_index(outdir: Path) -> Path:
         for pattern in ("*/analysis/report.html", "*/differential_expression/report.html")
         for path in per_type_root.glob(pattern)
     }
+    available_slugs.update(
+        path.parent.parent.name
+        for path in per_type_root.glob("*/ageing_clock/age_clock.json")
+    )
     slugs = sorted(set(manifest_slugs) | available_slugs)
 
     def link(path: Path, label: str) -> str:
@@ -125,19 +138,41 @@ def render_report_index(outdir: Path) -> Path:
         for slug in slugs:
             residual_report = per_type_root / slug / "analysis" / "report.html"
             de_report = per_type_root / slug / "differential_expression" / "report.html"
-            report = residual_report if residual_report.is_file() else de_report
-            cell_type = _report_title(report)
+            clock_root = per_type_root / slug / "ageing_clock"
+            clock_manifest = _read_json(clock_root / "age_clock.json")
+            clock_comparison = clock_root / "report.html"
+            clock_method_reports = []
+            for method in clock_manifest.get("methods", []):
+                if not isinstance(method, dict) or not method.get("method"):
+                    continue
+                method_report = clock_root / str(method["method"]) / "report.html"
+                if method_report.is_file():
+                    label = str(method.get("method_name") or method["method"])
+                    clock_method_reports.append(link(method_report, label))
+            clock_links = []
+            if clock_comparison.is_file():
+                clock_links.append(link(clock_comparison, "Comparison"))
+            clock_links.extend(clock_method_reports)
+            report = next(
+                (path for path in (residual_report, de_report) if path.is_file()), None
+            )
+            cell_type = (
+                _report_title(report)
+                if report is not None
+                else str(clock_manifest.get("cell_type") or slug.replace("-", " ").title())
+            )
             rows.append(
                 "<tr>"
                 f"<th scope=\"row\">{escape(cell_type)}</th>"
                 f"<td>{link(residual_report, 'Single-cell') if residual_report.is_file() else '—'}</td>"
                 f"<td>{link(de_report, 'DE & abundance') if de_report.is_file() else '—'}</td>"
+                f"<td>{' · '.join(clock_links) if clock_links else '—'}</td>"
                 f"<td><code>{escape(slug)}</code></td>"
                 "</tr>"
             )
         per_type_content = (
             "<table><thead><tr><th>Cell type</th><th>Single-cell</th>"
-            "<th>DE &amp; abundance</th><th>Output folder</th>"
+            "<th>DE &amp; abundance</th><th>Age clock</th><th>Output folder</th>"
             "</tr></thead><tbody>"
             + "".join(rows)
             + "</tbody></table>"
@@ -145,6 +180,9 @@ def render_report_index(outdir: Path) -> Path:
     else:
         per_type_content = "<p>No per-cell-type reports are published yet.</p>"
 
+    generated_at = datetime.now(timezone.utc)
+    generated_iso = escape(generated_at.isoformat(timespec="seconds"), quote=True)
+    generated_label = escape(generated_at.strftime("%Y-%m-%d %H:%M:%S UTC"))
     html = """<!doctype html>
 <html lang="en">
 <head>
@@ -161,11 +199,13 @@ def render_report_index(outdir: Path) -> Path:
     thead { background: #eef5f8; }
     a { color: #075baf; }
     code { color: #475569; }
+    .generated-at { color: #64748b; font-size: .9rem; }
   </style>
 </head>
 <body>
   <h1>PBMC ageing analysis reports</h1>
   <p>Links are relative to this file and point to reports published under this output directory.</p>
+  <p class="generated-at"><time datetime="__GENERATED_ISO__">Generated __GENERATED_LABEL__</time></p>
   <section>
     <h2>Harmonization and merge</h2>
     __HARMONIZATION_REPORTS__
@@ -184,6 +224,10 @@ def render_report_index(outdir: Path) -> Path:
         "__MERGED_ANALYSIS_REPORTS__", merged_analysis_content
     ).replace(
         "__CELL_TYPE_REPORTS__", per_type_content
+    ).replace(
+        "__GENERATED_ISO__", generated_iso
+    ).replace(
+        "__GENERATED_LABEL__", generated_label
     )
     index_path = outdir / "index.html"
     outdir.mkdir(parents=True, exist_ok=True)

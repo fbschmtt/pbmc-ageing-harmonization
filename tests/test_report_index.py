@@ -37,6 +37,33 @@ def test_report_index_links_published_reports_from_output_root(tmp_path: Path) -
         tmp_path / "analysis/per_type/naive-cd4-t-cell/differential_expression/report.html",
         "Naive CD4 T cell | PBMC",
     )
+    _write_report(
+        tmp_path / "analysis/per_type/cd14-monocyte/ageing_clock/report.html",
+        "Age-clock comparison | PBMC",
+    )
+    _write_report(
+        tmp_path / "analysis/per_type/cd14-monocyte/ageing_clock/elastic_net/report.html",
+        "Elastic net age clock | PBMC",
+    )
+    _write_report(
+        tmp_path / "analysis/per_type/cd14-monocyte/ageing_clock/equal_study_elastic_net/report.html",
+        "Study-balanced age clock | PBMC",
+    )
+    (tmp_path / "analysis/per_type/cd14-monocyte/ageing_clock/age_clock.json").write_text(
+        '{"cell_type": "CD14 monocyte", "methods": ['
+        '{"method": "elastic_net", "method_name": "Elastic net"}, '
+        '{"method": "equal_study_elastic_net", '
+        '"method_name": "Study-balanced elastic net"}]}',
+        encoding="utf-8",
+    )
+    (tmp_path / "analysis/per_type/age-only-type/ageing_clock").mkdir(parents=True)
+    (tmp_path / "analysis/per_type/age-only-type/ageing_clock/age_clock.json").write_text(
+        '{"cell_type": "Age-only type", "methods": []}', encoding="utf-8"
+    )
+    _write_report(
+        tmp_path / "analysis/per_type/age-only-type/ageing_clock/report.html",
+        "Age-only comparison | PBMC",
+    )
     (tmp_path / "analysis/per_type/cell_type_manifest.json").write_text(
         '{"cell_types": [{"slug": "cd14-monocyte"}]}',
         encoding="utf-8",
@@ -53,8 +80,21 @@ def test_report_index_links_published_reports_from_output_root(tmp_path: Path) -
     assert 'href="analysis/per_type/cd14-monocyte/analysis/report.html"' in html
     assert 'href="analysis/per_type/cd14-monocyte/differential_expression/report.html"' in html
     assert 'href="analysis/per_type/naive-cd4-t-cell/differential_expression/report.html"' in html
+    assert 'href="analysis/per_type/cd14-monocyte/ageing_clock/report.html"' in html
+    assert 'href="analysis/per_type/age-only-type/ageing_clock/report.html"' in html
+    assert 'href="analysis/per_type/cd14-monocyte/ageing_clock/elastic_net/report.html"' in html
+    assert (
+        'href="analysis/per_type/cd14-monocyte/ageing_clock/'
+        'equal_study_elastic_net/report.html"' in html
+    )
     assert "Per-cell-type analysis" in html
+    assert "Generated " in html
+    assert 'datetime="' in html
     assert "DE & abundance" in unescape(html)
+    assert "Age clock" in html
+    assert "Study-balanced elastic net" in unescape(html)
+    assert "Age-only type" in html
+    assert "<code>age-only-type</code>" in html
     assert (
         "<table><thead><tr><th>Cell type</th><th>Single-cell</th>"
         "<th>DE &amp; abundance</th>"

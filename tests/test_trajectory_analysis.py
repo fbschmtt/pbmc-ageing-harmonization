@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from dataclasses import replace
 from pathlib import Path
 
@@ -15,6 +17,7 @@ from pbmc_pipeline.trajectory_analysis import (
     analyze_age_trajectories,
     build_cross_cell_type_trajectories,
     build_developmental_adult_effect_comparison,
+    cluster_sample_residuals,
     cluster_trajectory_profiles,
     select_residual_leiden_resolution,
     summarize_residual_cluster_markers,
@@ -187,6 +190,51 @@ def test_expression_atlas_records_counts_lost_by_shared_gene_intersection(tmp_pa
     assert accounting.loc["study_b", "discarded_counts"] == 8
     assert accounting.loc["study_b", "top_discarded_gene"] == "ONLY_B"
     assert metadata["gene_intersection_accounting"]["discarded_counts"] == 12
+
+
+def test_nonfinite_umap_embedding_skips_umap_clusterers(monkeypatch) -> None:
+    class FakeUMAP:
+        def __init__(self, **kwargs):
+            del kwargs
+
+        def fit_transform(self, values):
+            return np.full((len(values), 2), np.nan)
+
+    class FakeAnnData:
+        def __init__(self, X):
+            self.X = X
+            self.obs = pd.DataFrame(index=range(len(X)))
+
+    def fake_leiden(adata, *, key_added, **kwargs):
+        del kwargs
+        adata.obs[key_added] = pd.Categorical(["0", "0", "1", "1"])
+
+    monkeypatch.setitem(sys.modules, "umap", types.SimpleNamespace(UMAP=FakeUMAP))
+    monkeypatch.setitem(sys.modules, "scanpy", types.SimpleNamespace(
+        AnnData=FakeAnnData,
+        pp=types.SimpleNamespace(neighbors=lambda *args, **kwargs: None),
+        tl=types.SimpleNamespace(leiden=fake_leiden),
+    ))
+    residuals = pd.DataFrame(
+        np.arange(20, dtype=float).reshape(4, 5),
+        index=[f"sample_{index}" for index in range(4)],
+    )
+    metadata = pd.DataFrame(index=residuals.index)
+    settings = replace(
+        SETTINGS, minimum_umap_trajectories=4,
+        residual_hdbscan_min_cluster_size=5,
+        residual_leiden_resolutions=[0.5],
+    )
+
+    annotations, pc_scores, _ = cluster_sample_residuals(residuals, metadata, settings)
+
+    assert annotations["residual_clustering_status"].eq(
+        "skipped_nonfinite_umap_embedding"
+    ).all()
+    assert annotations[["umap_1", "umap_2"]].isna().all().all()
+    assert annotations["residual_cluster_kmeans"].isna().all()
+    assert np.isfinite(pc_scores.filter(like="PC").to_numpy()).all()
+    assert annotations["residual_cluster"].notna().all()
 
 
 def test_hierarchical_trajectory_clusters_and_umap_use_complete_profiles() -> None:

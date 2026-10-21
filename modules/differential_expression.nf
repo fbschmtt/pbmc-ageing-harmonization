@@ -112,7 +112,7 @@ process RENDER_PER_TYPE_DIFFERENTIAL_EXPRESSION_REPORTS {
     script:
     """
     mkdir -p ${slug}/differential_expression
-    PBMC_GO_ENRICHMENT_DATA_DIR=${go_enrichment_data} pbmc-differential-expression-report --result-dir result \\
+    PBMC_GO_ENRICHMENT_DATA_DIR="\$PWD/${go_enrichment_data}" pbmc-differential-expression-report --result-dir result \\
       --output-dir ${slug}/differential_expression \\
       --template ${report_template} --config ${pipeline_config} --project-root .
     """
