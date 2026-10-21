@@ -133,6 +133,9 @@ for item in cell_type_records:
         "LOSO tuning MAE (years)": item.get("best_training_cv_mae_years"),
         "external MAE (years)": item["external_metrics_pooled"]["mae_years"],
         "external RMSE (years)": item["external_metrics_pooled"]["rmse_years"],
+        "final fit hit iteration limit": item.get("fit_diagnostics", {}).get(
+            "iteration_limit_reached", False
+        ),
         "feature representation": item.get("feature_representation"),
     })
     for fold in item.get("cv_mae_by_held_out_study", []):
@@ -167,6 +170,85 @@ if cv_rows:
         figure,
         alt_text="Bar chart of selected elastic-net tuning MAE for each held-out training study.",
     )
+
+    convergence_rows = []
+    for item in cell_type_records:
+        grid_path = report_dir / "cv_grid_search.csv"
+        if not grid_path.is_file():
+            continue
+        grid = pd.read_csv(grid_path)
+        if grid.empty or "n_iteration_limit_folds" not in grid:
+            continue
+        grid["cell type"] = item["cell_type"]
+        convergence_rows.append(grid)
+    if convergence_rows:
+        display(Markdown("### Convergence diagnostics"))
+        convergence_grid = pd.concat(convergence_rows, ignore_index=True)
+        affected = convergence_grid.loc[
+            convergence_grid["n_iteration_limit_folds"].gt(0)
+        ]
+        if not affected.empty:
+            display(Markdown(
+                "> **CONVERGENCE WARNING.** Some candidate fits reached the estimator's "
+                "iteration limit. Their tuning scores are shown for transparency, but may be "
+                "less reliable. The plots show whether the selected setting was affected."
+            ))
+        if {"regression__alpha", "regression__l1_ratio", "mean_mae_years"}.issubset(
+            convergence_grid.columns
+        ):
+            figure, axis = plt.subplots(figsize=(8.5, 5.2))
+            sns.scatterplot(
+                data=convergence_grid,
+                x="regression__alpha", y="mean_mae_years",
+                hue="n_iteration_limit_folds", style="regression__l1_ratio",
+                palette="magma_r", s=85, ax=axis,
+            )
+            axis.set_xscale("log")
+            axis.set(
+                xlabel="Elastic-net alpha", ylabel="Mean LOSO MAE (years)",
+                title="CV tuning performance and convergence burden",
+            )
+            axis.legend(
+                title="Iteration-limit folds / L1 ratio", bbox_to_anchor=(1.02, 1),
+                loc="upper left",
+            )
+            figure.tight_layout()
+            display_accessible_figure(
+                figure,
+                alt_text=(
+                    "Scatter plot of mean LOSO tuning error by elastic-net alpha, with color "
+                    "showing how many held-out-study folds reached the iteration limit."
+                ),
+            )
+
+    if (
+        {"n_iterations", "iteration_limit_reached"}.issubset(cv_table.columns)
+        and cv_table["n_iterations"].notna().any()
+    ):
+        figure, axis = plt.subplots(figsize=(max(8, len(cv_table) * 0.7), 4.5))
+        colors = np.where(cv_table["iteration_limit_reached"], "#c44e52", "#4c72b0")
+        axis.bar(cv_table["held-out training study"], cv_table["n_iterations"], color=colors)
+        max_iter = max(
+            (item.get("fit_diagnostics", {}).get("max_iter", 0) or 0)
+            for item in cell_type_records
+        )
+        if max_iter:
+            axis.axhline(max_iter, color="#c44e52", linestyle="--", linewidth=1,
+                        label=f"Iteration limit ({max_iter:g})")
+            axis.legend()
+        axis.set(
+            title="Selected-setting optimizer iterations by held-out study",
+            xlabel="Held-out training study", ylabel="Iterations",
+        )
+        axis.tick_params(axis="x", rotation=35)
+        figure.tight_layout()
+        display_accessible_figure(
+            figure,
+            alt_text=(
+                "Bar chart of optimizer iterations for selected-setting LOSO fits; red bars "
+                "reached the iteration limit."
+            ),
+        )
 
 # %% [markdown]
 # ## Assay coverage: cross-validation versus external validation

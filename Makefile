@@ -42,6 +42,7 @@ PER_TYPE_DIR ?= $(OUTDIR)/analysis/per_type
 SYNTHETIC_DE_DIR ?= $(OUTDIR)/analysis/combined/synthetic_de
 AGE_CLOCK_DIR ?= $(PER_TYPE_DIR)
 AGE_CLOCK_EXTERNAL_STUDIES ?= nehar_belaid26,perez22
+AGE_CLOCK_N_JOBS ?= 20
 VENV_PYTHON := .venv/bin/python
 VENV_DEPS := .venv/.dev-qc-installed
 
@@ -284,7 +285,7 @@ run-age-clock-synthetic-test: SYNTHETIC_DE_DIR = $(OUTDIR)/analysis/combined/syn
 run-age-clock-synthetic-test: AGE_CLOCK_DIR = $(OUTDIR)/analysis/per_type
 run-age-clock-synthetic-test: $(PYTHON_CONTAINER_PREREQS) ## Smoke-test the default CELL_TYPE age-clock fit on synthetic DE pseudobulks
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.synthetic_de --config config/pipeline.json --output "$(SYNTHETIC_DE_DIR)/pseudobulk_merged.h5ad"
-	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock --input "$(SYNTHETIC_DE_DIR)/pseudobulk_merged.h5ad" --config config/pipeline.json --output-dir "$(AGE_CLOCK_DIR)" --external-studies synthetic_study_c --cell-type "$(CELL_TYPE)"
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock --input "$(SYNTHETIC_DE_DIR)/pseudobulk_merged.h5ad" --config config/pipeline.json --output-dir "$(AGE_CLOCK_DIR)" --external-studies synthetic_study_c --cell-type "$(CELL_TYPE)" --n-jobs "$(AGE_CLOCK_N_JOBS)"
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock_report --report-root "$(AGE_CLOCK_DIR)" --cell-type "$(CELL_TYPE)" --template reports/age_clock_report.py --comparison-template reports/age_clock_comparison_report.py --project-root /work
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
@@ -301,13 +302,13 @@ check-age-clock-prerequisites:
 	fi
 
 run-age-clock: check-age-clock-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Fit and externally evaluate one cell-type age clock; set CELL_TYPE and AGE_CLOCK_EXTERNAL_STUDIES
-	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock --input "$(PSEUDOBULK_INPUT)" --config config/pipeline.json --output-dir "$(AGE_CLOCK_DIR)" --external-studies "$(AGE_CLOCK_EXTERNAL_STUDIES)" --cell-type "$(CELL_TYPE)"
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock --input "$(PSEUDOBULK_INPUT)" --config config/pipeline.json --output-dir "$(AGE_CLOCK_DIR)" --external-studies "$(AGE_CLOCK_EXTERNAL_STUDIES)" --cell-type "$(CELL_TYPE)" --n-jobs "$(AGE_CLOCK_N_JOBS)"
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock_report --report-root "$(AGE_CLOCK_DIR)" --cell-type "$(CELL_TYPE)" --template reports/age_clock_report.py --comparison-template reports/age_clock_comparison_report.py --project-root /work
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 run-age-clocks: check-age-clock-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Fit and externally evaluate age clocks for every pseudobulk cell type
 	@status=0; \
-	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock --input "$(PSEUDOBULK_INPUT)" --config config/pipeline.json --output-dir "$(AGE_CLOCK_DIR)" --external-studies "$(AGE_CLOCK_EXTERNAL_STUDIES)" --all-cell-types || status=$$?; \
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock --input "$(PSEUDOBULK_INPUT)" --config config/pipeline.json --output-dir "$(AGE_CLOCK_DIR)" --external-studies "$(AGE_CLOCK_EXTERNAL_STUDIES)" --all-cell-types --n-jobs "$(AGE_CLOCK_N_JOBS)" || status=$$?; \
 	if find "$(AGE_CLOCK_DIR)" -path '*/ageing_clock/age_clock.json' -type f -print -quit | grep -q .; then \
 		$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock_report --report-root "$(AGE_CLOCK_DIR)" --template reports/age_clock_report.py --comparison-template reports/age_clock_comparison_report.py --project-root /work || exit $$?; \
 	else \

@@ -464,7 +464,7 @@ which validation to run.
 | Rebuild the central report index | `make render-report-index` | It is also refreshed automatically after core, integration-benchmark, DE, cell-type, and age-clock workflow targets. |
 | Cell-type splitting or shared analysis | `make run-test`, then `make run-cell-type-analysis-test` | Use `make run-all-test` when the complete ordered test workflow is needed. |
 | Positive pseudobulk DE fitting | `make run-de-synthetic-test` and `make check-synthetic-de-results` | This fixture is independent of the core merge and renders per-type DE plus cross-cell-type reports. To check single cell analysis reports too, run `make run-test`, `make run-cell-type-analysis-test`, and `make check-synthetic-de-reports`. |
-| Cell-type transcriptomic age clocks | `make run-age-clock` | Fits sample-weighted, study-balanced, and within-sample rank elastic-net clocks for one type selected with `CELL_TYPE` (default `cd14-monocyte`; label or slug). Use `make run-age-clocks` to fit every cell type present in the pseudobulk. It logs and skips types with no eligible samples in any configured training or external study; an unexpected type-specific fit failure is recorded with its traceback in `analysis/per_type/age_clock_all_types_summary.json`, successful types are still reported, and the target then exits nonzero. Defaults to holding out `nehar_belaid26,perez22`; these relatively small studies retain as much training data as possible while spanning a broad validation age range. Override with any comma-separated list via `AGE_CLOCK_EXTERNAL_STUDIES=study_a,study_b`. Per-method reports and a merged comparison go to `analysis/per_type/<slug>/ageing_clock/`. Smoke-test with `make run-age-clock-synthetic-test` and check that expected output files exist with `make check-age-clock-synthetic-test`; both are included in `make run-all-test` and `make verify`. |
+| Cell-type transcriptomic age clocks | `make run-age-clock` | Fits sample-weighted, study-balanced, and within-sample rank elastic-net clocks for one type selected with `CELL_TYPE` (default `cd14-monocyte`; label or slug). CV candidates run with `AGE_CLOCK_N_JOBS=20` by default; lower it to limit CPU use. Use `make run-age-clocks` to fit every cell type present in the pseudobulk. It logs and skips types with no eligible samples in any configured training or external study; an unexpected type-specific fit failure is recorded with its traceback in `analysis/per_type/age_clock_all_types_summary.json`, successful types are still reported, and the target then exits nonzero. Defaults to holding out `nehar_belaid26,perez22`; these relatively small studies retain as much training data as possible while spanning a broad validation age range. Override with any comma-separated list via `AGE_CLOCK_EXTERNAL_STUDIES=study_a,study_b`. Per-method reports and a merged comparison go to `analysis/per_type/<slug>/ageing_clock/`. Smoke-test with `make run-age-clock-synthetic-test` and check that expected output files exist with `make check-age-clock-synthetic-test`; both are included in `make run-all-test` and `make verify`. |
 | Focused gene-by-cell-type profile | `make profile-gene CELL_TYPE=<label-or-slug> GENE=<gene-id>` | Use `make run-gene-profile-synthetic-test` to fit and render a planted synthetic gene and check the report end to end. |
 | Top merged age-DE gene profiles | `make profile-top-age-genes-test` | Uses the synthetic DE fixture and profiles two genes per cell type; included in `make run-all-test`. |
 | DE from an existing test pseudobulk merge | `make run-de-test` | Requires `make run-test` first; the small core fixture may not have enough independent samples for successful fits. Use the synthetic target above for positive fitting coverage. |
@@ -836,7 +836,7 @@ fraction views. They do not consume the DE manifest. The residual WGCNA helper
 is run by each per-type DE report from the fitted age-bin residual matrix. The
 report includes soft-threshold and sample-connectivity diagnostics, eigengene
 structure and covariate associations, hub genes, CMV evidence, and
-leave-one-study-out module stability. Module GSEA ranks all selected network
+Module GSEA ranks all selected network
 genes by correlation with each module eigengene and tests GO Biological Process
 2023 terms from the downloaded `input_data/go/` library. It publishes complete results as
 `module_gsea.csv`, a hierarchy-aware specific-term summary, and a provenance
@@ -856,7 +856,7 @@ not assume that such effects are present. WGCNA color names are module IDs,
 not biological classes. Grey is the special unassigned-gene label, so it is
 excluded from module GSEA because those genes do not form a coherent module.
 Module colors are assigned independently when a network is fit, so color names
-are not stable across fits; leave-one-study-out matches use shared genes instead.
+are not stable across fits.
 The tables are published beside the report under `residual_wgcna/`. To keep large networks readable, module-indexed
 figures show at most the 25 largest modules and state when that limit applies;
 the complete module-level tables remain available in that directory.
@@ -1043,7 +1043,7 @@ analysis reports from the real merge/splits.
 `make verify` runs it after linting, unit
 tests, Nextflow lint, and documentation checks. `STUDIES=<list>` changes only
 the core test inputs; use `STUDIES=all` for all available fixtures. The synthetic WGCNA fixture exercises the ordinary
-network and report path, including its leave-one-study-out refits, but its
+network and report path, but its
 two-module result does not exercise the 25-module figure cap or production-scale
 runtime.
 

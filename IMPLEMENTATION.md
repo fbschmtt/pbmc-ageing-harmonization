@@ -170,7 +170,7 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/developmental/age_support_samples.csv` (samples retained by the [0,20) developmental model, used for its study-site age-support plot)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/cell_type_result.json` (per-task fit record collected into the root manifest)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/{abundance_input.tsv,report.html,fraction_model_diagnostics.tsv}` (pseudobulk abundance input and per-type DE report outputs)
-- `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/residual_wgcna/` (residual WGCNA module assignments, eigengenes, soft-threshold and sample-connectivity diagnostics, covariate associations, hub genes, and leave-one-study-out module stability)
+- `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/residual_wgcna/` (residual WGCNA module assignments, eigengenes, soft-threshold and sample-connectivity diagnostics, covariate associations, and hub genes)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/residual_wgcna/{module_gsea.csv,cmv_associated_module_scores.csv,smoking_associated_module_scores.csv}` (preranked GO enrichment and sample scores for the strongest exposure-associated modules)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/residual_wgcna/{module_gsea_specific_summary.csv,module_gsea_specificity_audit.csv,module_gsea_provenance.json}` (specific-term summary, collapse audit, and observed GSEA/GO input provenance)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/go_enrichment/{merged_age_gsea.csv,merged_age_gsea_specific_summary.csv,merged_age_gsea_specificity_audit.csv,merged_age_gsea_provenance.json}` (merged-age GO enrichment, leading-edge summary, collapse audit, and observed input provenance)
@@ -462,8 +462,7 @@ matrices, and sample metadata are materialized for downstream analysis.
 Each per-type DE report runs residual WGCNA from the fitted age-bin residual
 matrix. It publishes module assignments and eigengenes together with
 soft-threshold, sample-connectivity, eigengene-covariate, hub-gene, CMV and
-smoking checks, preranked GO Biological Process enrichment, and leave-one-study-out
-stability diagnostics. GSEA uses the GO Biological Process 2023 library downloaded to
+smoking checks and preranked GO Biological Process enrichment. GSEA uses the GO Biological Process 2023 library downloaded to
 `input_data/go/`
 and its output is controlled by GSEA's native FDR q-value within each module.
 The compact summary collapses a parent term only if a same-direction descendant
@@ -476,7 +475,7 @@ sources of remaining biological structure. These exploratory checks ask whether
 signal remains; they do not assume an effect is present or adjust the residuals.
 WGCNA color names are arbitrary module identifiers; grey is reserved for genes
 not assigned to a module and is excluded from GSEA because it is not a coherent
-module. The stability panel compares gene membership after omitting each study.
+module.
 
 The merged continuous-age DE report uses the same downloaded GO Biological Process
 collection. It ranks all genes tested in the merged model by signed Wald
@@ -595,7 +594,7 @@ workflow coverage rather than a realistic model of study balance or biological
 effects: covariate availability and gene presence are deliberately simple, and
 the planted effects have no study-specific heterogeneity.
 Its synthetic WGCNA output currently has two modules. Thus verification executes
-the ordinary WGCNA and leave-one-study-out report path, but does not exercise
+the ordinary WGCNA report path, but does not exercise
 the 25-module display cap or provide a production-scale runtime benchmark.
 `make run` is the resumable production entry point and merges single-cell data
 by default. Set `MERGE_SINGLE_CELL=false` to skip that optional branch.

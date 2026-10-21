@@ -55,6 +55,7 @@ def generate_differential_expression_report(
         "age_trajectory_cluster_means.csv",
         "residual_sample_clusters.csv",
         "residual_sample_pc_scores.csv",
+        "residual_wgcna/leave_one_study_out_stability.csv",
     ):
         (output_dir / name).unlink(missing_ok=True)
     shutil.rmtree(output_dir / "go_enrichment", ignore_errors=True)

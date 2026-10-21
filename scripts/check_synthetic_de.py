@@ -351,7 +351,6 @@ def check_reports(
             "sample_connectivity.csv",
             "module_covariate_associations.csv",
             "hub_genes.csv",
-            "leave_one_study_out_stability.csv",
         ]
         missing_wgcna = [str(wgcna_dir / name) for name in required_wgcna if not (wgcna_dir / name).is_file()]
         if missing_wgcna:

@@ -432,6 +432,37 @@ def _fit_diagnostics(estimator: Pipeline, method: ClockMethod) -> dict:
     return diagnostics
 
 
+def _diagnostic_maximum(diagnostics: dict, name: str) -> float | None:
+    """Return a scalar maximum from a sklearn scalar-or-array diagnostic."""
+    value = diagnostics.get(name)
+    if value is None:
+        return None
+    values = np.asarray(value, dtype=float)
+    return float(np.max(values)) if values.size else None
+
+
+def _optional_float(value: object) -> float | None:
+    """Convert a persisted diagnostic value while retaining unavailable values."""
+    if value is None or not np.isfinite(value):
+        return None
+    return float(value)
+
+
+def _score_cv_candidate(
+    method: ClockMethod,
+    parameters: dict[str, object],
+    x_fit,
+    y_fit: np.ndarray,
+    weights: np.ndarray | None,
+    x_valid,
+    y_valid: np.ndarray,
+) -> tuple[float, dict]:
+    """Fit and score one independent CV parameter candidate."""
+    estimator = _fit_estimator(method, parameters, x_fit, y_fit, weights)
+    score = float(mean_absolute_error(y_valid, estimator.predict(x_valid)))
+    return score, _fit_diagnostics(estimator, method)
+
+
 def _software_versions() -> dict:
     versions = {"python": platform.python_version()}
     for name in ("pbmc-ageing-pipeline", "anndata", "numpy", "scipy", "scikit-learn", "joblib"):
@@ -458,6 +489,7 @@ def fit_age_clocks(
     alphas: list[float] | None = None,
     l1_ratios: list[float] | None = None,
     cv: bool = True,
+    n_jobs: int = 1,
 ) -> ClockFit:
     """Fit one cell type in memory without writing model artifacts."""
     import anndata as ad
@@ -466,6 +498,8 @@ def fit_age_clocks(
         raise ValueError("Specify one or more comma-separated external study IDs")
     if len(set(external_studies)) != len(external_studies):
         raise ValueError("External study IDs must be distinct")
+    if n_jobs < 1:
+        raise ValueError("n_jobs must be at least 1")
     pipeline_config = _load_config(config_path)
     adata = ad.read_h5ad(input_path)
     available_studies = set(adata.obs["study"].astype(str).unique())
@@ -520,6 +554,7 @@ def fit_age_clocks(
         "training_studies": training_studies,
         "external_studies": external_studies,
         "cross_validation": "leave-one-training-study-out; fold-specific gene intersection" if cv else "disabled",
+        "cv_parallel_jobs": n_jobs,
         "cell_type": selected_cell_type,
     }
 
@@ -612,20 +647,30 @@ def fit_age_clocks(
                 fold_data, start=1
             ):
                 LOGGER.info(
-                    "Fitting CV fold %d/%d with %s held out (%d validation, %d training samples)",
+                    "Fitting CV fold %d/%d with %s held out (%d validation, %d training samples; %d candidate workers)",
                     fold_index,
                     len(fold_data),
                     study,
                     len(y_valid),
                     len(y_fit),
+                    min(n_jobs, len(parameter_candidates)),
                 )
-                for candidate_index, parameters in enumerate(parameter_candidates):
-                    estimator = _fit_estimator(method, parameters, x_fit, y_fit, weights)
-                    score = float(mean_absolute_error(y_valid, estimator.predict(x_valid)))
+                candidate_results = joblib.Parallel(n_jobs=n_jobs, prefer="threads")(
+                    joblib.delayed(_score_cv_candidate)(
+                        method, parameters, x_fit, y_fit, weights, x_valid, y_valid,
+                    )
+                    for parameters in parameter_candidates
+                )
+                for candidate_index, (score, diagnostics) in enumerate(candidate_results):
                     cv_rows[candidate_index][f"mae_{study}"] = score
-                    diagnostics = _fit_diagnostics(estimator, method)
                     cv_rows[candidate_index][f"iteration_limit_reached_{study}"] = diagnostics.get(
                         "iteration_limit_reached", False
+                    )
+                    cv_rows[candidate_index][f"n_iterations_{study}"] = _diagnostic_maximum(
+                        diagnostics, "n_iter"
+                    )
+                    cv_rows[candidate_index][f"dual_gap_{study}"] = _diagnostic_maximum(
+                        diagnostics, "dual_gap"
                     )
 
             for row in cv_rows:
@@ -648,6 +693,8 @@ def fit_age_clocks(
                     "mae_years": float(best_row[f"mae_{study}"]),
                     **fold_coverage[study],
                     "iteration_limit_reached": bool(best_row[f"iteration_limit_reached_{study}"]),
+                    "n_iterations": _optional_float(best_row[f"n_iterations_{study}"]),
+                    "dual_gap": _optional_float(best_row[f"dual_gap_{study}"]),
                 }
                 for study in train_study_ids
             ]
@@ -884,11 +931,13 @@ def train_age_clocks(
     alphas: list[float] | None = None,
     l1_ratios: list[float] | None = None,
     cv: bool = True,
+    n_jobs: int = 1,
 ) -> dict:
     """Fit and publish configured clock methods for one cell type."""
     fit = fit_age_clocks(
         input_path, config_path, external_studies,
         cell_type_filter=cell_type_filter, alphas=alphas, l1_ratios=l1_ratios, cv=cv,
+        n_jobs=n_jobs,
     )
     return publish_age_clock_fit(fit, output_dir)
 
@@ -902,6 +951,7 @@ def train_all_age_clocks(
     alphas: list[float] | None = None,
     l1_ratios: list[float] | None = None,
     cv: bool = True,
+    n_jobs: int = 1,
 ) -> dict[str, dict]:
     """Fit every type, isolating expected and unexpected fit failures per type."""
     import anndata as ad
@@ -931,6 +981,7 @@ def train_all_age_clocks(
             fit = fit_age_clocks(
                 input_path, config_path, external_studies,
                 cell_type_filter=cell_type, alphas=alphas, l1_ratios=l1_ratios, cv=cv,
+                n_jobs=n_jobs,
             )
         except ClockEligibilityError as error:
             LOGGER.error("Skipping age clock for %s: %s", cell_type, error)
@@ -983,6 +1034,10 @@ def main() -> None:
     )
     parser.add_argument("--alphas", default="0.001,0.01,0.1,1,10")
     parser.add_argument("--l1-ratios", default="0.1,0.5,0.9,1")
+    parser.add_argument(
+        "--n-jobs", type=int, default=1,
+        help="parallel CV candidate fits per held-out-study fold (default: 1)",
+    )
     parser.add_argument("--no-cv", action="store_true", help="Fit fixed alpha=0.1, l1_ratio=0.5")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -990,6 +1045,7 @@ def main() -> None:
         "alphas": [float(value) for value in args.alphas.split(",")],
         "l1_ratios": [float(value) for value in args.l1_ratios.split(",")],
         "cv": not args.no_cv,
+        "n_jobs": args.n_jobs,
     }
     external_studies = [value.strip() for value in args.external_studies.split(",") if value.strip()]
     if args.all_cell_types:

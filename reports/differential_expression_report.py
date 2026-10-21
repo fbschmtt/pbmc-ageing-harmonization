@@ -450,60 +450,8 @@ def wgcna_covariate_associations(result, annotations):
     return associations.sort_values(["fdr", "module", "covariate"], na_position="last")
 
 
-def wgcna_leave_one_study_out_stability(result, residuals, annotations, settings):
-    """Compare full-data modules with modules refitted after omitting each study."""
-    if "study" not in annotations:
-        return pd.DataFrame()
-    studies = sorted(annotations["study"].dropna().astype(str).unique())
-    if len(studies) < 2:
-        return pd.DataFrame()
-    full_modules = {
-        str(module): set(group["gene"].astype(str))
-        for module, group in result.module_assignments.groupby("module", observed=True)
-    }
-    rows = []
-    for held_out_study in studies:
-        retained = annotations.loc[annotations["study"].astype(str) != held_out_study].copy()
-        retained_residuals = residuals.loc[residuals.index.intersection(
-            retained["sample_key"].astype(str), sort=False
-        )]
-        refit = run_residual_wgcna(retained_residuals, retained, settings=settings)
-        if refit.metadata["status"] != "complete":
-            rows.append({
-                "held_out_study": held_out_study,
-                "module": "—",
-                "best_refit_module": "—",
-                "jaccard_overlap": np.nan,
-                "n_retained_samples": len(retained_residuals),
-                "status": refit.metadata.get("reason", "refit failed"),
-            })
-            continue
-        refit_modules = [
-            (str(module), set(group["gene"].astype(str)))
-            for module, group in refit.module_assignments.groupby("module", observed=True)
-        ]
-        for module, genes in full_modules.items():
-            best_module, best_overlap = max(
-                (
-                    (refit_module, len(genes & refit_genes) / len(genes | refit_genes))
-                    for refit_module, refit_genes in refit_modules
-                    if genes | refit_genes
-                ),
-                key=lambda item: item[1], default=("—", np.nan),
-            )
-            rows.append({
-                "held_out_study": held_out_study,
-                "module": module,
-                "best_refit_module": best_module,
-                "jaccard_overlap": best_overlap,
-                "n_retained_samples": len(retained_residuals),
-                "status": "complete",
-            })
-    return pd.DataFrame(rows)
-
-
 def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results, smoking_results):
-    """Show WGCNA diagnostics, covariates, hubs, and cross-study stability."""
+    """Show WGCNA diagnostics, covariates, hubs, and enrichment."""
     if result.metadata["status"] != "complete":
         status = result.metadata["status"]
         message = result.metadata.get("reason", "unknown reason")
@@ -562,8 +510,8 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results, s
     display(Markdown("#### Module structure"))
     display(Markdown(
         "Module color names are WGCNA identifiers, not biological labels, and can change when "
-        "the network is refit; the stability check matches modules by shared genes. Grey marks "
-        "genes that were not assigned to a module. The `n_cmv_yes/no` and `n_smoking_yes/no` fields "
+        "the network is refit. Grey marks genes that were not assigned to a module. "
+        "The `n_cmv_yes/no` and `n_smoking_yes/no` fields "
         "count samples with observed yes/no status used in each eigengene association. They "
         "repeat across modules because eigengenes use the same samples."
     ))
@@ -863,49 +811,6 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results, s
             figure.colorbar(points, ax=axis, label="−log10(CMV adjusted p-value)")
             figure.tight_layout()
             display_collapsible_figure(figure, "Show module-membership versus CMV-DE evidence")
-
-    display(Markdown("#### Leave-one-study-out stability"))
-    stability = wgcna_leave_one_study_out_stability(result, residuals, annotations, settings)
-    stability.to_csv(wgcna_dir / "leave_one_study_out_stability.csv", index=False)
-    completed = stability.loc[stability.get("status", pd.Series(dtype=str)).eq("complete")].copy()
-    if completed.empty:
-        display(Markdown("_Leave-one-study-out module refits require at least two studies with sufficient retained samples._"))
-    else:
-        plotted_stability = completed.loc[completed["module"].isin(display_modules)]
-        figure, axis = plt.subplots(
-            figsize=(
-                max(6, 0.9 * plotted_stability["held_out_study"].nunique() + 4),
-                max(4, 0.36 * plotted_stability["module"].nunique() + 2),
-            )
-        )
-        matrix = plotted_stability.pivot(
-            index="module", columns="held_out_study", values="jaccard_overlap"
-        )
-        best_matches = plotted_stability.pivot(
-            index="module", columns="held_out_study", values="best_refit_module"
-        ).reindex(index=matrix.index, columns=matrix.columns)
-        labels = matrix.copy().astype(object)
-        for module_name in matrix.index:
-            for study_name in matrix.columns:
-                overlap = matrix.loc[module_name, study_name]
-                match = best_matches.loc[module_name, study_name]
-                labels.loc[module_name, study_name] = (
-                    f"{match}\n{overlap:.2f}" if pd.notna(overlap) and pd.notna(match) else ""
-                )
-        sns.heatmap(matrix, vmin=0, vmax=1, cmap="mako", annot=labels, fmt="",
-                    annot_kws={"fontsize": 7}, ax=axis,
-                    cbar_kws={"label": "Best refit-module Jaccard overlap"})
-        axis.set(
-            xlabel="Held-out study", ylabel="Full-data module",
-            title="Leave-one-study-out module stability" + figure_label_suffix,
-        )
-        axis.tick_params(axis="x", labelrotation=35)
-        figure.tight_layout()
-        display_collapsible_figure(figure, "Show leave-one-study-out module stability", open_by_default=True)
-        display_collapsible_table(
-            stability, "Show leave-one-study-out module matches", max_height=480,
-        )
-
 
 def annotate_cluster_centroids(axis, table, label_column):
     labels = pd.to_numeric(table[label_column], errors="coerce")
@@ -3224,9 +3129,8 @@ if de_dir:
                 "(residual_wgcna/module_summary.csv), and [soft-threshold diagnostics]"
                 "(residual_wgcna/soft_threshold.csv), [sample connectivity]"
                 "(residual_wgcna/sample_connectivity.csv), [covariate associations]"
-                "(residual_wgcna/module_covariate_associations.csv), [hub genes]"
-                "(residual_wgcna/hub_genes.csv), and [leave-one-study-out stability]"
-                "(residual_wgcna/leave_one_study_out_stability.csv)."
+                "(residual_wgcna/module_covariate_associations.csv), and [hub genes]"
+                "(residual_wgcna/hub_genes.csv)."
             ))
             plot_residual_wgcna(
                 residual_wgcna,

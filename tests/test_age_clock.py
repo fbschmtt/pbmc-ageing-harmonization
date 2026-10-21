@@ -352,6 +352,20 @@ def test_no_cv_rerun_removes_previous_cv_artifacts(clock_input, tmp_path):
     assert not list(clock_root.glob("*/cv_*.csv"))
 
 
+def test_cv_candidate_parallelism_records_convergence_diagnostics(clock_input, tmp_path):
+    _, _, input_path, config_path = clock_input
+    manifest = train_age_clocks(
+        input_path, config_path, tmp_path / "clock", ["external_a", "external_b"],
+        cell_type_filter="cd14-monocyte", alphas=[0.1, 1.0], l1_ratios=[0.5], n_jobs=2,
+    )
+
+    assert manifest["cv_parallel_jobs"] == 2
+    for method in manifest["methods"]:
+        assert all("n_iterations" in fold for fold in method["cv_mae_by_held_out_study"])
+        grid = pd.read_csv(Path(method["model"]).parent / "cv_grid_search.csv")
+        assert {"n_iterations_train_a", "n_iterations_train_b"}.issubset(grid.columns)
+
+
 def test_external_expression_age_and_availability_do_not_change_fits(clock_input, tmp_path):
     adata, _, input_path, _ = clock_input
     first = _train_fixture(clock_input, tmp_path / "first")
