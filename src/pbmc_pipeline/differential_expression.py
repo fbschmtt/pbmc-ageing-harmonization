@@ -37,7 +37,7 @@ _SYNTHETIC_DATA_WARNING = (
     "SYNTHETIC TEST DATA: pseudobulk counts and sample metadata were generated "
     "deterministically to exercise the DE workflow. These results are not biological evidence."
 )
-_CONTINUOUS_DESIGN_COLUMNS = ("age", "bmi", "log10_total_counts")
+_CONTINUOUS_DESIGN_COLUMNS = ("age", "bmi", "log10_total_counts", "juvenile_age")
 
 
 class _NonEstimableModel(ValueError):
@@ -210,7 +210,7 @@ def _availability_mask(var: pd.DataFrame, studies: list[str], *, context: str) -
 
 def _has_covariate_variation(metadata: pd.DataFrame, covariate: str) -> bool:
     values = metadata[covariate]
-    if covariate in {"age", "bmi", "log10_total_counts"}:
+    if covariate in {"age", "bmi", "log10_total_counts", "juvenile_age"}:
         values = pd.to_numeric(values, errors="coerce")
     return values.nunique() >= 2
 
@@ -250,7 +250,7 @@ def _fit_covariate_model(
 
     counts_df = pd.DataFrame(counts, index=metadata.index, columns=genes)
     model_metadata = metadata.copy()
-    for column in ("study_site", "sex", "cmv", "smoking_status", "age_bin"):
+    for column in ("study_site", "sex", "cmv", "smoking_status", "age_bin", "juvenile"):
         if column in design and column in model_metadata:
             model_metadata[column] = pd.Categorical(
                 model_metadata[column],
@@ -321,8 +321,14 @@ def _fit_covariate_model(
         )
     coefficient_results = {}
     for covariate in covariates:
-        if covariate in {"age", "bmi", "log10_total_counts"}:
-            terms = [covariate] if covariate in design_matrix.columns else []
+        if covariate in {"age", "bmi", "log10_total_counts", "adult_age", "juvenile_age"}:
+            if covariate == "adult_age":
+                terms = ["age"]
+            elif covariate == "juvenile_age":
+                terms = ["age", "juvenile_age"]
+            else:
+                terms = [covariate]
+            terms = [term for term in terms if term in design_matrix.columns]
             levels = []
         else:
             terms = [
@@ -336,9 +342,12 @@ def _fit_covariate_model(
                 f"design columns {list(design_matrix.columns)}"
             )
         pieces = []
-        for term in terms:
+        result_terms = terms[:1] if covariate == "juvenile_age" else terms
+        for term in result_terms:
             contrast = np.zeros(design_matrix.shape[1], dtype=float)
-            contrast[list(design_matrix.columns).index(term)] = 1.0
+            contrast_terms = terms if covariate == "juvenile_age" else [term]
+            for contrast_term in contrast_terms:
+                contrast[list(design_matrix.columns).index(contrast_term)] = 1.0
             stats = DeseqStats(
                 dds,
                 contrast=contrast,
@@ -348,11 +357,13 @@ def _fit_covariate_model(
             )
             stats.summary()
             result = stats.results_df.copy()
-            if covariate in {"age", "bmi", "log10_total_counts"}:
+            if covariate in {"age", "bmi", "log10_total_counts", "adult_age", "juvenile_age"}:
                 contrast_label = {
                     "age": "per year",
                     "bmi": "per BMI unit",
                     "log10_total_counts": "per log10(total_counts) unit",
+                    "adult_age": "adult age effect per year (age ≥20)",
+                    "juvenile_age": "juvenile age effect per year (age <20)",
                 }[covariate]
             else:
                 level = term.removeprefix(f"{covariate}[T.").removesuffix("]")
@@ -413,7 +424,7 @@ def _run_model(
         missing_by_covariate["study_site"] = int((~site_observed).sum())
         valid &= site_observed
     for column in design_covariates:
-        if column in {"age", "bmi", "log10_total_counts"}:
+        if column in {"age", "bmi", "log10_total_counts", "juvenile_age"}:
             values = pd.to_numeric(metadata[column], errors="coerce")
             observed = values.notna() & np.isfinite(values)
         else:
@@ -428,7 +439,8 @@ def _run_model(
         "missing_values_by_design_covariate": missing_by_covariate,
     })
     for covariate in covariates:
-        if not _has_covariate_variation(metadata, covariate):
+        support_covariate = "age" if covariate in {"adult_age", "juvenile_age"} else covariate
+        if not _has_covariate_variation(metadata, support_covariate):
             details["reason"] = f"{covariate} has fewer than two observed values"
             return details
     if metadata.empty:
@@ -671,8 +683,9 @@ def _prepare_developmental_metadata(
     comparison: dict,
     *,
     test_mode: bool,
+    retain_adults: bool = False,
 ) -> tuple[pd.DataFrame, dict, dict[str, int], list[dict]]:
-    """Apply ordinary DE eligibility to the configured developmental age range."""
+    """Apply ordinary DE eligibility to the juvenile/adult age comparison."""
     developmental_inclusion = {
         **inclusion,
         "minimum_age_years_inclusive": comparison["minimum_age_years_inclusive"],
@@ -686,9 +699,18 @@ def _prepare_developmental_metadata(
         "minimum_age_years_inclusive": comparison["minimum_age_years_inclusive"],
         "maximum_age_years_exclusive": maximum_age,
         "n_samples_before_maximum_age_filter": len(metadata),
-        "n_samples_excluded_at_or_above_maximum_age": int(at_or_above_maximum.sum()),
-        "n_samples_retained": int((~at_or_above_maximum).sum()),
+        "n_samples_excluded_at_or_above_maximum_age": int(
+            0 if retain_adults else at_or_above_maximum.sum()
+        ),
+        "n_samples_retained": int(len(metadata) if retain_adults else (~at_or_above_maximum).sum()),
     }
+    if retain_adults:
+        support.update({
+            "n_juvenile_samples": int((~at_or_above_maximum).sum()),
+            "n_adult_samples": int(at_or_above_maximum.sum()),
+            "model_scope": "all eligible ages with shared study-site intercepts",
+        })
+        return metadata, support, exclusions, excluded
     return metadata.loc[~at_or_above_maximum].copy(), support, exclusions, excluded
 
 
@@ -885,11 +907,20 @@ def _run_cell_type_differential_expression(
         spec["sample_inclusion"],
         comparison,
         test_mode=test_mode,
+        retain_adults=True,
     )
-    developmental_covariates = [
-        covariate for covariate in ("age", "sex", "log10_total_counts")
-        if _has_covariate_variation(developmental_metadata, covariate)
-    ] or ["age"]
+    developmental_metadata["juvenile"] = pd.Categorical(
+        np.where(
+            developmental_metadata["age"] < comparison["maximum_age_years_exclusive"],
+            "juvenile", "adult",
+        ),
+        categories=["adult", "juvenile"],
+    )
+    developmental_metadata["juvenile_age"] = (
+        developmental_metadata["age"]
+        * (developmental_metadata["juvenile"] == "juvenile").astype(float)
+    )
+    developmental_covariates = ["adult_age", "juvenile_age"]
     developmental_fit = _run_model(
         adata=type_adata,
         obs=type_obs,
@@ -897,7 +928,7 @@ def _run_cell_type_differential_expression(
         cell_type=cell_type,
         model_name="developmental",
         study=None,
-        design=spec["merged_design"],
+        design=f"{spec['merged_design']} + juvenile + juvenile_age",
         covariates=developmental_covariates,
         alpha=spec["alpha"],
         cpus=cpus,

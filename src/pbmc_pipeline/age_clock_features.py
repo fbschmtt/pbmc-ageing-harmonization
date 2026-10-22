@@ -25,3 +25,34 @@ class WithinSampleRankTransformer(TransformerMixin, BaseEstimator):
             return np.zeros(values.shape, dtype=float)
         ranks = rankdata(values, axis=1, method="average")
         return (ranks - 1.0) / (values.shape[1] - 1.0)
+
+
+def within_study_gene_zscore(x, studies) -> tuple[np.ndarray, list[dict]]:
+    """Z-score each gene across samples separately within each study.
+
+    Study-specific means and standard deviations are computed from the samples
+    being transformed. This is intended for cohort-level held-out study
+    prediction, where the target study contributes an unlabeled expression cohort.
+    """
+    values = x.toarray() if sparse.issparse(x) else np.asarray(x, dtype=float)
+    labels = np.asarray(studies, dtype=object).astype(str)
+    if values.ndim != 2 or len(labels) != values.shape[0]:
+        raise ValueError("Study z-score input must align samples with study labels")
+    if not np.isfinite(values).all():
+        raise ValueError("Study z-score input must contain finite values")
+    transformed = np.empty_like(values, dtype=float)
+    diagnostics = []
+    for study in sorted(np.unique(labels)):
+        mask = labels == study
+        study_values = values[mask]
+        means = study_values.mean(axis=0)
+        scales = study_values.std(axis=0, ddof=0)
+        constant = scales <= np.finfo(float).eps
+        scales[constant] = 1.0
+        transformed[mask] = (study_values - means) / scales
+        diagnostics.append({
+            "study": study,
+            "n_samples": int(mask.sum()),
+            "n_constant_genes": int(constant.sum()),
+        })
+    return transformed, diagnostics

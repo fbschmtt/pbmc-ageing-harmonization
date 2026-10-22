@@ -111,10 +111,30 @@ def check_results(outdir: Path) -> None:
         )
         if developmental is None or developmental.get("status") != "complete":
             raise SystemExit(f"Missing developmental age fit for {cell_type!r}")
-        developmental_path = de_dir / developmental["results_by_covariate"]["age"]
-        developmental_results = list(csv.DictReader(developmental_path.open(newline="")))
-        if not developmental_results or "log2FoldChange" not in developmental_results[0]:
-            raise SystemExit(f"Developmental age result lacks age effects: {developmental_path}")
+        developmental_results_by_covariate = developmental.get(
+            "results_by_covariate", {}
+        )
+        for covariate in ("adult_age", "juvenile_age"):
+            relative_path = developmental_results_by_covariate.get(covariate)
+            if not relative_path:
+                raise SystemExit(
+                    f"Developmental age fit lacks its {covariate!r} contrast"
+                )
+            developmental_path = de_dir / relative_path
+            if not developmental_path.is_file():
+                raise SystemExit(
+                    f"Missing developmental {covariate} results: {developmental_path}"
+                )
+            with developmental_path.open(newline="") as handle:
+                developmental_results = list(csv.DictReader(handle))
+            if (
+                not developmental_results
+                or "log2FoldChange" not in developmental_results[0]
+            ):
+                raise SystemExit(
+                    f"Developmental {covariate} result lacks age effects: "
+                    f"{developmental_path}"
+                )
         depth_path = de_dir / merged["results_by_covariate"]["log10_total_counts"]
         if not depth_path.is_file():
             raise SystemExit(f"Missing combined depth results: {depth_path}")

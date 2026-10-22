@@ -624,7 +624,7 @@ def _read_cell_type_trajectory_results(
 def build_developmental_adult_effect_comparison(
     differential_expression_dir: Path,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Join raw developmental and adult age effects plus expression support."""
+    """Join juvenile and adult slopes from the shared all-age model."""
     comparisons = []
     support = []
     required_columns = {"gene", "baseMean", "log2FoldChange", "padj"}
@@ -637,11 +637,6 @@ def build_developmental_adult_effect_comparison(
              if model.get("purpose") == "developmental_adult_effect_comparison"),
             None,
         )
-        adult = next(
-            (model for model in models
-             if model.get("model") == "merged" and model.get("study") is None),
-            None,
-        )
         row = {"cell_type": cell_type}
         if developmental is None:
             row.update({"status": "skipped", "reason": "developmental fit is not recorded"})
@@ -652,14 +647,10 @@ def build_developmental_adult_effect_comparison(
             row.update({"status": "skipped", "reason": developmental.get("reason", "fit did not complete")})
             support.append(row)
             continue
-        if adult is None or adult.get("status") != "complete":
-            row.update({"status": "skipped", "reason": "adult merged age fit did not complete"})
-            support.append(row)
-            continue
-        developmental_path = developmental.get("results_by_covariate", {}).get("age")
-        adult_path = adult.get("results_by_covariate", {}).get("age")
+        developmental_path = developmental.get("results_by_covariate", {}).get("juvenile_age")
+        adult_path = developmental.get("results_by_covariate", {}).get("adult_age")
         if not developmental_path or not adult_path:
-            row.update({"status": "skipped", "reason": "one age-coefficient result is missing"})
+            row.update({"status": "skipped", "reason": "one shared-model age-slope result is missing"})
             support.append(row)
             continue
         developmental_path = metadata_path.parent / developmental_path
@@ -683,9 +674,9 @@ def build_developmental_adult_effect_comparison(
         developmental_table = developmental_results[[
             "gene", "baseMean", "log2FoldChange", "padj",
         ]].rename(columns={
-            "log2FoldChange": "developmental_log2_fold_change_per_year",
-            "baseMean": "developmental_base_mean",
-            "padj": "developmental_padj",
+            "log2FoldChange": "juvenile_log2_fold_change_per_year",
+            "baseMean": "juvenile_base_mean",
+            "padj": "juvenile_padj",
         })
         adult_table = adult_results[[
             "gene", "baseMean", "log2FoldChange", "padj",
@@ -703,18 +694,18 @@ def build_developmental_adult_effect_comparison(
             "n_genes_joined": len(joined),
             "n_genes_with_finite_effects": int(np.isfinite(
                 joined[[
-                    "developmental_log2_fold_change_per_year",
+                    "juvenile_log2_fold_change_per_year",
                     "adult_log2_fold_change_per_year",
                 ]].to_numpy(dtype=float)
             ).all(axis=1).sum()),
             "n_genes_with_padj_in_both_models": int(
-                (joined["developmental_padj"].notna() & joined["adult_padj"].notna()).sum()
+                (joined["juvenile_padj"].notna() & joined["adult_padj"].notna()).sum()
             ),
         })
         support.append(row)
     columns = [
-        "cell_type", "gene", "developmental_log2_fold_change_per_year",
-        "developmental_base_mean", "developmental_padj", "adult_log2_fold_change_per_year",
+        "cell_type", "gene", "juvenile_log2_fold_change_per_year",
+        "juvenile_base_mean", "juvenile_padj", "adult_log2_fold_change_per_year",
         "adult_base_mean", "adult_padj",
     ]
     comparison = pd.concat(comparisons, ignore_index=True) if comparisons else pd.DataFrame(columns=columns)

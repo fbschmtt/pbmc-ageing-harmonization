@@ -2513,26 +2513,18 @@ if de_dir:
             ), "Show per-study gene-intersection sensitivity details")
 
         if de_run_metadata:
-            adult_age_fit = next(
-                (model for model in de_run_metadata.get("models", [])
-                 if model.get("model") == "merged"),
-                {},
-            )
             developmental_age_fit = next(
                 (model for model in de_run_metadata.get("models", [])
                  if model.get("purpose") == "developmental_adult_effect_comparison"),
                 {},
             )
-            if (
-                adult_age_fit.get("status") == "complete"
-                and developmental_age_fit.get("status") == "complete"
-            ):
-                adult_age_path = Path(de_dir) / adult_age_fit.get(
+            if developmental_age_fit.get("status") == "complete":
+                adult_age_path = Path(de_dir) / developmental_age_fit.get(
                     "results_by_covariate", {}
-                ).get("age", "")
+                ).get("adult_age", "")
                 developmental_age_path = Path(de_dir) / developmental_age_fit.get(
                     "results_by_covariate", {}
-                ).get("age", "")
+                ).get("juvenile_age", "")
                 required_age_columns = {"gene", "log2FoldChange", "padj"}
                 if adult_age_path.is_file() and developmental_age_path.is_file():
                     adult_age = pd.read_csv(adult_age_path)
@@ -2557,6 +2549,172 @@ if de_dir:
                         developmental_volcano = developmental_volcano.loc[
                             developmental_volcano["padj"].between(0, 1)
                         ].copy()
+                        paired_age_effects = developmental_age[
+                            ["gene", "log2FoldChange", "padj"]
+                        ].rename(columns={
+                            "log2FoldChange": "juvenile_effect",
+                            "padj": "juvenile_padj",
+                        }).merge(
+                            adult_age[["gene", "log2FoldChange", "padj"]].rename(
+                                columns={
+                                    "log2FoldChange": "adult_effect",
+                                    "padj": "adult_padj",
+                                }
+                            ),
+                            on="gene", how="inner", validate="one_to_one",
+                        )
+                        for column in [
+                            "juvenile_effect", "adult_effect",
+                            "juvenile_padj", "adult_padj",
+                        ]:
+                            paired_age_effects[column] = pd.to_numeric(
+                                paired_age_effects[column], errors="coerce"
+                            )
+                        plot_age_effects = paired_age_effects.replace(
+                            [np.inf, -np.inf], np.nan
+                        ).dropna(subset=[
+                            "juvenile_effect", "adult_effect",
+                            "juvenile_padj", "adult_padj",
+                        ])
+                        display(Markdown("### Juvenile versus adult age effects"))
+                        support_path = de_dir / developmental_age_fit.get(
+                            "age_support_samples", "developmental/age_support_samples.csv",
+                        )
+                        if support_path.is_file():
+                            developmental_support_samples = pd.read_csv(support_path)
+                            if not developmental_support_samples.empty:
+                                support_column = (
+                                    "study_site"
+                                    if "study_site" in developmental_support_samples
+                                    else "study"
+                                )
+                                support_samples = developmental_support_samples.dropna(
+                                    subset=[support_column, "age"],
+                                ).copy()
+                                support_order = sorted(
+                                    support_samples[support_column].astype(str).unique()
+                                )
+                                figure, axis = plt.subplots(
+                                    figsize=(max(10, 0.42 * len(support_order) + 5), 4.8)
+                                )
+                                sns.stripplot(
+                                    data=support_samples,
+                                    x=support_column,
+                                    y="age",
+                                    hue="sex" if "sex" in support_samples else None,
+                                    order=support_order,
+                                    hue_order=(
+                                        sorted(support_samples["sex"].dropna().astype(str).unique())
+                                        if "sex" in support_samples else None
+                                    ),
+                                    dodge="sex" in support_samples,
+                                    jitter=0.18,
+                                    alpha=0.8,
+                                    ax=axis,
+                                )
+                                axis.set_xlabel(
+                                    "Study site" if support_column == "study_site" else "Study"
+                                )
+                                axis.set_ylabel("Age (years)")
+                                axis.set_title("Age support by study site (juvenile <20, adult ≥20 years)")
+                                axis.tick_params(axis="x", rotation=75, labelsize=7)
+                                if axis.legend_ is not None:
+                                    axis.legend(title="Sex", fontsize=8, title_fontsize=8)
+                                figure.tight_layout()
+                                display_collapsible_figure(
+                                    figure,
+                                    "Juvenile and adult age support by study site",
+                                    open_by_default=True,
+                                )
+                            else:
+                                display(Markdown("_No samples were retained for the shared age model._"))
+                        else:
+                            display(Markdown(
+                                "_Developmental sample-level support is unavailable; rerun the DE fit to publish it._"
+                            ))
+                        display(Markdown(
+                            "Each point is a gene from one joint model fit across all eligible ages. "
+                            "The model shares study-site intercepts across age groups and estimates "
+                            "separate juvenile (<20 years) and adult (≥20 years) age slopes. The "
+                            "juvenile slope is the adult age coefficient plus the juvenile-by-age "
+                            "interaction. Points require a non-missing adjusted p-value for both "
+                            "slope contrasts; no significance cutoff is used. Both panels use the "
+                            "same color scale."
+                        ))
+                        if plot_age_effects.empty:
+                            display(Markdown(
+                                "_No genes pass the expression filter in both fits with finite "
+                                "age coefficients._"
+                            ))
+                        else:
+                            developmental_color = -np.log10(
+                                plot_age_effects["juvenile_padj"].clip(
+                                    lower=np.finfo(float).tiny, upper=1.0
+                                )
+                            )
+                            adult_color = -np.log10(
+                                plot_age_effects["adult_padj"].clip(
+                                    lower=np.finfo(float).tiny, upper=1.0
+                                )
+                            )
+                            color_max = max(
+                                1.0,
+                                float(pd.concat(
+                                    [developmental_color, adult_color], ignore_index=True
+                                ).quantile(0.99)),
+                            )
+                            effect_limit = max(
+                                float(np.nanmax(np.abs(plot_age_effects[[
+                                    "juvenile_effect", "adult_effect",
+                                ]].to_numpy(dtype=float)))) * 1.05,
+                                0.01,
+                            )
+                            figure = plt.figure(figsize=(12.2, 5.8), layout="constrained")
+                            grid = figure.add_gridspec(
+                                2, 2, height_ratios=[1, 0.075],
+                            )
+                            axes = [figure.add_subplot(grid[0, 0]), figure.add_subplot(grid[0, 1])]
+                            colorbar_axis = figure.add_subplot(grid[1, :])
+                            scatter = None
+                            for axis, color_values, title in [
+                                (axes[0], developmental_color, "Colored by juvenile −log10(padj)"),
+                                (axes[1], adult_color, "Colored by adult −log10(padj)"),
+                            ]:
+                                scatter = axis.scatter(
+                                    plot_age_effects["juvenile_effect"],
+                                    plot_age_effects["adult_effect"],
+                                    c=color_values.clip(upper=color_max),
+                                    s=14, alpha=0.65, linewidths=0,
+                                    cmap="viridis", vmin=0, vmax=color_max,
+                                )
+                                axis.axhline(0, color="#666666", linewidth=0.8)
+                                axis.axvline(0, color="#666666", linewidth=0.8)
+                                axis.plot(
+                                    [-effect_limit, effect_limit],
+                                    [-effect_limit, effect_limit],
+                                    color="#c44e52", linewidth=0.9, linestyle="--",
+                                )
+                                axis.set(
+                                    xlim=(-effect_limit, effect_limit),
+                                    ylim=(-effect_limit, effect_limit),
+                                    xlabel="Juvenile age effect (age <20 years)\n"
+                                    "raw log2 fold change per year",
+                                    ylabel="Adult age effect (ages ≥20)\n"
+                                    "raw log2 fold change per year",
+                                    title=title,
+                                )
+                                axis.set_aspect("equal", adjustable="box")
+                            colorbar = figure.colorbar(
+                                scatter, cax=colorbar_axis, orientation="horizontal",
+                            )
+                            colorbar.set_label(
+                                f"−log10(adjusted p-value; values above {color_max:.1f} capped)"
+                            )
+                            figure.suptitle(
+                                f"{cell_type_name}: juvenile versus adult age effects "
+                                f"(n={len(plot_age_effects):,} genes)"
+                            )
+                            plt.show()
                         if not developmental_volcano.empty:
                             developmental_volcano["minus_log10_padj"] = -np.log10(
                                 developmental_volcano["padj"].clip(
@@ -2585,7 +2743,7 @@ if de_dir:
                                 linewidth=0.9, linestyle="--",
                             )
                             axis.set(
-                                xlabel="Juvenile age effect ([0,20) years)\n"
+                                xlabel="Juvenile age effect (age <20 years)\n"
                                 "raw log2 fold change per year",
                                 ylabel="−log10(adjusted p-value)",
                                 title=(
@@ -2633,172 +2791,6 @@ if de_dir:
                                 "_No juvenile genes have finite age effects and adjusted "
                                 "p-values for the volcano plot._"
                             ))
-                        paired_age_effects = developmental_age[
-                            ["gene", "log2FoldChange", "padj"]
-                        ].rename(columns={
-                            "log2FoldChange": "developmental_effect",
-                            "padj": "developmental_padj",
-                        }).merge(
-                            adult_age[["gene", "log2FoldChange", "padj"]].rename(
-                                columns={
-                                    "log2FoldChange": "adult_effect",
-                                    "padj": "adult_padj",
-                                }
-                            ),
-                            on="gene", how="inner", validate="one_to_one",
-                        )
-                        for column in [
-                            "developmental_effect", "adult_effect",
-                            "developmental_padj", "adult_padj",
-                        ]:
-                            paired_age_effects[column] = pd.to_numeric(
-                                paired_age_effects[column], errors="coerce"
-                            )
-                        plot_age_effects = paired_age_effects.replace(
-                            [np.inf, -np.inf], np.nan
-                        ).dropna(subset=[
-                            "developmental_effect", "adult_effect",
-                            "developmental_padj", "adult_padj",
-                        ])
-                        display(Markdown("### Developmental versus adult age effects"))
-                        support_path = de_dir / developmental_age_fit.get(
-                            "age_support_samples", "developmental/age_support_samples.csv",
-                        )
-                        if support_path.is_file():
-                            developmental_support_samples = pd.read_csv(support_path)
-                            if not developmental_support_samples.empty:
-                                support_column = (
-                                    "study_site"
-                                    if "study_site" in developmental_support_samples
-                                    else "study"
-                                )
-                                support_samples = developmental_support_samples.dropna(
-                                    subset=[support_column, "age"],
-                                ).copy()
-                                support_order = sorted(
-                                    support_samples[support_column].astype(str).unique()
-                                )
-                                figure, axis = plt.subplots(
-                                    figsize=(max(10, 0.42 * len(support_order) + 5), 4.8)
-                                )
-                                sns.stripplot(
-                                    data=support_samples,
-                                    x=support_column,
-                                    y="age",
-                                    hue="sex" if "sex" in support_samples else None,
-                                    order=support_order,
-                                    hue_order=(
-                                        sorted(support_samples["sex"].dropna().astype(str).unique())
-                                        if "sex" in support_samples else None
-                                    ),
-                                    dodge="sex" in support_samples,
-                                    jitter=0.18,
-                                    alpha=0.8,
-                                    ax=axis,
-                                )
-                                axis.set_xlabel(
-                                    "Study site" if support_column == "study_site" else "Study"
-                                )
-                                axis.set_ylabel("Age (years)")
-                                axis.set_title("Developmental age support by study site ([0,20) years)")
-                                axis.tick_params(axis="x", rotation=75, labelsize=7)
-                                if axis.legend_ is not None:
-                                    axis.legend(title="Sex", fontsize=8, title_fontsize=8)
-                                figure.tight_layout()
-                                display_collapsible_figure(
-                                    figure,
-                                    "Developmental age support by study site",
-                                    open_by_default=True,
-                                )
-                            else:
-                                display(Markdown("_No samples were retained for the [0,20) age-support plot._"))
-                        else:
-                            display(Markdown(
-                                "_Developmental sample-level support is unavailable; rerun the DE fit to publish it._"
-                            ))
-                        display(Markdown(
-                            "Each point in the scatterplots is a gene, comparing its raw age "
-                            "coefficient from the [0,20)-year fit with its coefficient from the "
-                            "adult fit (ages ≥20). Points require a non-missing adjusted p-value "
-                            "in both fits, which is PyDESeq2’s independent expression filter; no "
-                            "significance cutoff is used. The developmental range is [0,20) and "
-                            "the adult range starts at 20, so the age ranges do not overlap. "
-                            "Both panels use the same color scale."
-                        ))
-                        if plot_age_effects.empty:
-                            display(Markdown(
-                                "_No genes pass the expression filter in both fits with finite "
-                                "age coefficients._"
-                            ))
-                        else:
-                            developmental_color = -np.log10(
-                                plot_age_effects["developmental_padj"].clip(
-                                    lower=np.finfo(float).tiny, upper=1.0
-                                )
-                            )
-                            adult_color = -np.log10(
-                                plot_age_effects["adult_padj"].clip(
-                                    lower=np.finfo(float).tiny, upper=1.0
-                                )
-                            )
-                            color_max = max(
-                                1.0,
-                                float(pd.concat(
-                                    [developmental_color, adult_color], ignore_index=True
-                                ).quantile(0.99)),
-                            )
-                            effect_limit = max(
-                                float(np.nanmax(np.abs(plot_age_effects[[
-                                    "developmental_effect", "adult_effect",
-                                ]].to_numpy(dtype=float)))) * 1.05,
-                                0.01,
-                            )
-                            figure = plt.figure(figsize=(12.2, 5.8), layout="constrained")
-                            grid = figure.add_gridspec(
-                                2, 2, height_ratios=[1, 0.075],
-                            )
-                            axes = [figure.add_subplot(grid[0, 0]), figure.add_subplot(grid[0, 1])]
-                            colorbar_axis = figure.add_subplot(grid[1, :])
-                            scatter = None
-                            for axis, color_values, title in [
-                                (axes[0], developmental_color, "Colored by developmental −log10(padj)"),
-                                (axes[1], adult_color, "Colored by adult −log10(padj)"),
-                            ]:
-                                scatter = axis.scatter(
-                                    plot_age_effects["developmental_effect"],
-                                    plot_age_effects["adult_effect"],
-                                    c=color_values.clip(upper=color_max),
-                                    s=14, alpha=0.65, linewidths=0,
-                                    cmap="viridis", vmin=0, vmax=color_max,
-                                )
-                                axis.axhline(0, color="#666666", linewidth=0.8)
-                                axis.axvline(0, color="#666666", linewidth=0.8)
-                                axis.plot(
-                                    [-effect_limit, effect_limit],
-                                    [-effect_limit, effect_limit],
-                                    color="#c44e52", linewidth=0.9, linestyle="--",
-                                )
-                                axis.set(
-                                    xlim=(-effect_limit, effect_limit),
-                                    ylim=(-effect_limit, effect_limit),
-                                    xlabel="Developmental age effect ([0,20) years)\n"
-                                    "raw log2 fold change per year",
-                                    ylabel="Adult age effect (ages ≥20)\n"
-                                    "raw log2 fold change per year",
-                                    title=title,
-                                )
-                                axis.set_aspect("equal", adjustable="box")
-                            colorbar = figure.colorbar(
-                                scatter, cax=colorbar_axis, orientation="horizontal",
-                            )
-                            colorbar.set_label(
-                                f"−log10(adjusted p-value; values above {color_max:.1f} capped)"
-                            )
-                            figure.suptitle(
-                                f"{cell_type_name}: developmental versus adult age effects "
-                                f"(n={len(plot_age_effects):,} genes)"
-                            )
-                            plt.show()
         if age_trajectory_fit or age_trajectory_results is not None:
             display(Markdown(
                 "<a id=\"age-bin-trajectories\"></a>\n## Age-Bin Trajectories"
@@ -2960,7 +2952,7 @@ if de_dir:
                     cluster_means.to_csv(
                         output_dir / "age_trajectory_cluster_means.csv", index=False
                     )
-                    figure, axes = plt.subplots(1, 3, figsize=(18, 4.8))
+                    figure, axes = plt.subplots(1, 4, figsize=(22, 4.8))
                     palette = sns.color_palette(
                         "husl", n_colors=max(len(cluster_means), 1)
                     )
@@ -2983,6 +2975,30 @@ if de_dir:
                     axes[0].set_title("Mean trajectory by hierarchical cluster")
                     axes[0].tick_params(axis="x", rotation=35)
                     axes[0].legend(fontsize=8)
+                    cluster_gene_counts = (
+                        cluster_rows.groupby("trajectory_cluster", observed=True)["gene"]
+                        .nunique()
+                        .sort_index()
+                    )
+                    if cluster_gene_counts.empty:
+                        axes[3].text(
+                            0.5, 0.5, "No complete trajectories to count",
+                            ha="center", va="center", transform=axes[3].transAxes,
+                        )
+                    else:
+                        count_clusters = [
+                            int(cluster) for cluster in cluster_gene_counts.index
+                        ]
+                        count_bars = axes[3].bar(
+                            [str(cluster) for cluster in count_clusters],
+                            cluster_gene_counts.to_numpy(dtype=int),
+                            color=[cluster_colors[str(cluster)] for cluster in count_clusters],
+                        )
+                        axes[3].bar_label(count_bars, fmt="%d", padding=3)
+                        axes[3].set_xlabel("Trajectory cluster")
+                        axes[3].set_ylabel("Number of genes")
+                        axes[3].set_title("Genes per cluster")
+                        axes[3].set_ylim(0, max(cluster_gene_counts.max() * 1.12, 1))
                     embedded = cluster_labels.dropna(subset=["umap_1", "umap_2"])
                     if embedded.empty:
                         axes[1].text(

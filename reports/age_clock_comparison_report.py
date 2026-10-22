@@ -42,6 +42,7 @@ if manifest.get("synthetic_test_data"):
 
 summary = []
 study_rows = []
+calibration_rows = []
 prediction_frames = []
 for method in methods:
     summary.append({
@@ -74,6 +75,28 @@ for method in methods:
             "bias (years)": predictions.loc[
                 predictions["study"].astype(str) == study, "age_error_years"
             ].mean(),
+        })
+    for study, calibration in method.get("target_expression_calibration", {}).items():
+        metrics = calibration.get("metrics", {})
+        raw = metrics.get("none", {})
+        corrected = metrics.get("age_protected_mean_shift", {})
+        calibration_rows.append({
+            "method": method["method_name"],
+            "study": study,
+            "status": calibration.get("status"),
+            "calibration donors": calibration.get("n_calibration_samples"),
+            "evaluation donors per split": calibration.get("n_evaluation_samples_per_repeat"),
+            "repeats": calibration.get("n_repeats"),
+            "raw held-out MAE (years)": raw.get("mean_mae_years"),
+            "corrected held-out MAE (years)": corrected.get("mean_mae_years"),
+            "MAE change (years)": (
+                corrected.get("mean_mae_years", float("nan"))
+                - raw.get("mean_mae_years", float("nan"))
+            ),
+            "corrected MAE SD across splits (years)": corrected.get(
+                "sd_mae_across_repeats_years"
+            ),
+            "corrected mean bias (years)": corrected.get("mean_bias_years"),
         })
 
 tuning_description = (
@@ -111,6 +134,18 @@ display_accessible_figure(
     alt_text="Bar chart comparing external mean absolute age error by study and clock method.",
 )
 
+if calibration_rows:
+    display(Markdown(
+        "### Target-site gene-expression calibration\n\n"
+        "Each repeat randomly selects the configured number of known-age donors to estimate "
+        "an additive per-gene site shift after accounting for a shared linear age "
+        "trend and study-specific training intercepts. Calibration donors are "
+        "excluded from these scores; raw and corrected predictions use the same "
+        "remaining donors. The mean-shift correction does not estimate gene-wise "
+        "scale changes."
+    ))
+    display(pd.DataFrame(calibration_rows))
+
 all_predictions = pd.concat(prediction_frames, ignore_index=True)
 figure, axis = plt.subplots(figsize=(7, 6))
 sns.scatterplot(
@@ -144,3 +179,13 @@ display(Markdown(
     "expression magnitude information while preserving relative ordering; tied "
     "values (including zeros) receive average ranks."
 ))
+if any(method.get("within_study_zscore") for method in methods):
+    display(Markdown(
+        "The within-study z-score model centers and scales each gene across the "
+        "unlabeled samples of each study independently, then applies the fitted "
+        "elastic net. Held-out predictions therefore use the expression cohort "
+        "from that study to estimate its normalization. This is cohort-level "
+        "prediction; a single-sample input has no within-study variation and "
+        "normalizes to zero. The recorded normalization diagnostics include "
+        "study sample counts and genes with zero within-study variance."
+    ))

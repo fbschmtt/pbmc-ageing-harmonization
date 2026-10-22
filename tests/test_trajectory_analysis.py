@@ -384,29 +384,30 @@ def test_developmental_adult_effect_comparison_joins_raw_coefficients_and_expres
 ) -> None:
     cell_type_dir = tmp_path / "cd14-monocyte"
     cell_type_dir.mkdir()
+    developmental_dir = cell_type_dir / "developmental"
+    developmental_dir.mkdir()
     pd.DataFrame({
         "gene": ["G1", "G2"],
         "baseMean": [25.0, 2.0],
         "log2FoldChange": [0.3, -0.2],
         "padj": [0.01, np.nan],
-    }).to_csv(cell_type_dir / "developmental.csv", index=False)
+    }).to_csv(developmental_dir / "juvenile_age.csv", index=False)
     pd.DataFrame({
         "gene": ["G1", "G2"],
         "baseMean": [30.0, 3.0],
         "log2FoldChange": [0.4, -0.5],
         "padj": [0.02, 0.7],
-    }).to_csv(cell_type_dir / "merged.csv", index=False)
+    }).to_csv(developmental_dir / "adult_age.csv", index=False)
     (cell_type_dir / "run_metadata.json").write_text(json.dumps({
         "cell_type": "CD14 monocyte",
         "models": [
             {
-                "model": "merged", "study": None, "status": "complete",
-                "results_by_covariate": {"age": "merged.csv"},
-            },
-            {
                 "model": "developmental", "status": "complete",
                 "purpose": "developmental_adult_effect_comparison",
-                "results_by_covariate": {"age": "developmental.csv"},
+                "results_by_covariate": {
+                    "juvenile_age": "developmental/juvenile_age.csv",
+                    "adult_age": "developmental/adult_age.csv",
+                },
                 "developmental_age_range": {
                     "minimum_age_years_inclusive": 0,
                     "maximum_age_years_exclusive": 20,
@@ -418,9 +419,9 @@ def test_developmental_adult_effect_comparison_joins_raw_coefficients_and_expres
     effects, support = build_developmental_adult_effect_comparison(tmp_path)
 
     assert effects["gene"].tolist() == ["G1", "G2"]
-    assert effects["developmental_log2_fold_change_per_year"].tolist() == [0.3, -0.2]
+    assert effects["juvenile_log2_fold_change_per_year"].tolist() == [0.3, -0.2]
     assert effects["adult_log2_fold_change_per_year"].tolist() == [0.4, -0.5]
-    assert effects["developmental_base_mean"].tolist() == [25.0, 2.0]
+    assert effects["juvenile_base_mean"].tolist() == [25.0, 2.0]
     assert support.loc[0, "status"] == "complete"
     assert support.loc[0, "n_genes_with_finite_effects"] == 2
     assert support.loc[0, "n_genes_with_padj_in_both_models"] == 1

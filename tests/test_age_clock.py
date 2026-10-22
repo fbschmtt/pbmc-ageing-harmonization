@@ -31,6 +31,7 @@ from pbmc_pipeline.age_clock import (
     train_age_clocks,
     train_all_age_clocks,
 )
+from pbmc_pipeline.age_clock_features import within_study_gene_zscore
 
 
 class PseudobulkVar:
@@ -61,6 +62,65 @@ def test_rank_transform_uses_within_sample_percentiles_and_is_scale_invariant():
 
     assert original.tolist() == [[0.0, 1 / 3, 2 / 3, 1.0]]
     assert rescaled.tolist() == original.tolist()
+
+
+def test_within_study_gene_zscore_centers_each_gene_inside_each_study():
+    values = np.array([
+        [1.0, 10.0], [3.0, 10.0],
+        [100.0, 50.0], [100.0, 70.0],
+    ])
+
+    transformed, diagnostics = within_study_gene_zscore(
+        values, ["a", "a", "b", "b"]
+    )
+
+    np.testing.assert_allclose(
+        transformed,
+        [[-1, 0], [1, 0], [0, -1], [0, 1]],
+    )
+    assert diagnostics == [
+        {"study": "a", "n_samples": 2, "n_constant_genes": 1},
+        {"study": "b", "n_samples": 2, "n_constant_genes": 1},
+    ]
+
+
+def test_focused_fit_can_select_only_the_study_zscore_clock(clock_input, tmp_path):
+    manifest = _train_fixture(
+        clock_input,
+        tmp_path / "clock",
+        method_names=["study_zscore_elastic_net"],
+        cv=False,
+    )
+
+    assert [method["method"] for method in manifest["methods"]] == [
+        "study_zscore_elastic_net"
+    ]
+    method_dir = tmp_path / "clock/cd14-monocyte/ageing_clock/study_zscore_elastic_net"
+    assert (method_dir / "model.joblib").is_file()
+    assert json.loads((method_dir / "metadata.json").read_text())[
+        "within_study_zscore"
+    ] is True
+
+
+def test_focused_fit_preserves_compatible_prior_methods(clock_input, tmp_path):
+    output_dir = tmp_path / "clock"
+    first = _train_fixture(
+        clock_input, output_dir, method_names=["elastic_net"], cv=False
+    )
+    assert [method["method"] for method in first["methods"]] == ["elastic_net"]
+
+    second = _train_fixture(
+        clock_input,
+        output_dir,
+        method_names=["study_zscore_elastic_net"],
+        cv=False,
+    )
+
+    assert [method["method"] for method in second["methods"]] == [
+        "elastic_net", "study_zscore_elastic_net",
+    ]
+    assert second["newly_fitted_methods"] == ["study_zscore_elastic_net"]
+    assert second["reused_prior_methods"] == ["elastic_net"]
 
 
 def test_rank_clock_uses_sample_weighting_and_rank_pipeline():
