@@ -32,7 +32,7 @@ from pbmc_pipeline.config import config_digest
 from pbmc_pipeline.utils import slugify
 
 LOGGER = logging.getLogger(__name__)
-MODEL_FORMAT_VERSION = 3
+MODEL_FORMAT_VERSION = 4
 MISSING_COEFFICIENT_WEIGHT_WARNING_FRACTION = 0.05
 
 
@@ -42,6 +42,16 @@ class ClockEligibilityError(ValueError):
 
 class ClockFitFailuresError(RuntimeError):
     """One or more all-cell-type fits failed after other types completed."""
+
+
+@dataclass(frozen=True)
+class AgeAwareStudyReference:
+    """Gene-wise age trend and additive study offsets fitted on development data."""
+
+    intercept: np.ndarray
+    age_slope: np.ndarray
+    age_center: float
+    study_offsets: dict[str, np.ndarray]
 
 
 @dataclass
@@ -71,6 +81,7 @@ class ClockMethod:
     )
     equal_study_weight: bool = False
     within_study_zscore: bool = False
+    age_aware_study_offset: bool = False
     weighted_steps: tuple[str, ...] = ("scale", "regression")
     gene_selector: Callable[[object, list[str]], list[str]] | None = None
 
@@ -148,6 +159,25 @@ def _clock_methods(alphas: list[float], l1_ratios: list[float]) -> list[ClockMet
                 "target-study cohort expression is required at prediction"
             ),
             within_study_zscore=True,
+        ),
+        ClockMethod(
+            name="age_aware_study_offset_elastic_net",
+            display_name="Age-aware study-offset elastic net",
+            description=(
+                "Fits gene-wise age trends and additive training-study offsets; "
+                "known-age target donors estimate an offset before prediction."
+            ),
+            estimator_factory=_elastic_net_pipeline,
+            parameter_grid=common_grid,
+            default_parameters={"regression__alpha": 0.1, "regression__l1_ratio": 0.5},
+            feature_representation=(
+                "log-CPM with age-aware additive study-offset correction"
+            ),
+            scaling_description=(
+                "age-aware additive study-offset correction, then training-only "
+                "standard deviation; model intercept fitted"
+            ),
+            age_aware_study_offset=True,
         ),
     ]
 
@@ -289,6 +319,21 @@ def _gene_coverage(adata, row_positions: np.ndarray, genes: list[str]) -> list[d
     return records
 
 
+def _gene_availability_for_study(adata, genes: list[str], study: str) -> np.ndarray:
+    """Return training-model gene availability for one study or new assay."""
+    present = np.asarray([gene in adata.var_names for gene in genes], dtype=bool)
+    column = f"available_in_{study}"
+    if column not in adata.var:
+        return present
+    available = np.zeros(len(genes), dtype=bool)
+    positions = np.flatnonzero(present)
+    available[positions] = (
+        adata.var.loc[np.asarray(genes, dtype=object)[positions], column]
+        .fillna(False).astype(bool).to_numpy()
+    )
+    return available
+
+
 def _coefficient_coverage(
     adata, genes: list[str], coefficients: np.ndarray | None, study: str,
 ) -> dict:
@@ -309,17 +354,7 @@ def _coefficient_coverage(
     coefficient_array = np.asarray(coefficients, dtype=float).ravel()
     if len(coefficient_array) != len(genes):
         raise ValueError("Age-clock coefficient count does not match model genes")
-    present = np.asarray([gene in adata.var_names for gene in genes], dtype=bool)
-    column = f"available_in_{study}"
-    if column in adata.var:
-        available = np.zeros(len(genes), dtype=bool)
-        present_positions = np.flatnonzero(present)
-        available[present_positions] = (
-            adata.var.loc[np.asarray(genes, dtype=object)[present_positions], column]
-            .fillna(False).astype(bool).to_numpy()
-        )
-    else:
-        available = present
+    available = _gene_availability_for_study(adata, genes, study)
     absolute = np.abs(coefficient_array)
     total = float(absolute.sum())
     missing = float(absolute[~available].sum())
@@ -375,8 +410,14 @@ def _log_cpm(adata, row_positions: np.ndarray, genes: list[str]):
     return aligned
 
 
-def predict_age_clock(model_path: Path, adata, row_positions: np.ndarray) -> np.ndarray:
-    """Predict from raw pseudobulks, rejecting assays with zero model-gene overlap."""
+def predict_age_clock(
+    model_path: Path,
+    adata,
+    row_positions: np.ndarray,
+    *,
+    calibration_row_positions: np.ndarray | None = None,
+) -> np.ndarray:
+    """Predict from raw pseudobulks, optionally using known-age target calibrators."""
     bundle = joblib.load(model_path)
     if bundle.get("model_format_version") != MODEL_FORMAT_VERSION:
         raise ValueError(
@@ -387,6 +428,36 @@ def predict_age_clock(model_path: Path, adata, row_positions: np.ndarray) -> np.
     if bundle.get("within_study_zscore", False):
         studies = adata.obs.iloc[row_positions]["study"].astype(str).to_numpy()
         matrix, _ = within_study_gene_zscore(matrix, studies)
+    if bundle.get("age_aware_study_offset", False):
+        if calibration_row_positions is None:
+            raise ValueError(
+                "This age-aware clock requires known-age calibration_row_positions"
+            )
+        metadata = adata.obs.iloc[row_positions]
+        ages = pd.to_numeric(metadata["age"], errors="coerce").to_numpy(dtype=float)
+        row_lookup = {position: index for index, position in enumerate(row_positions)}
+        calibration_positions = np.asarray(calibration_row_positions, dtype=int)
+        if not np.isin(calibration_positions, row_positions).all():
+            raise ValueError("calibration_row_positions must be included in row_positions")
+        calibration_by_study: dict[str, list[int]] = {}
+        for position in calibration_positions:
+            index = row_lookup[position]
+            study = str(metadata.iloc[index]["study"])
+            calibration_by_study.setdefault(study, []).append(index)
+        availability = {
+            study: _gene_availability_for_study(adata, genes, study)
+            for study in metadata["study"].astype(str).unique()
+        }
+        matrix, _, _ = _age_aware_target_correction(
+            bundle["age_aware_reference"], matrix, ages,
+            metadata["study"].astype(str).to_numpy(), availability,
+            calibration_samples=int(bundle["age_aware_calibration_samples"]),
+            seed=0,
+            calibration_indices_by_study={
+                study: np.asarray(indices, dtype=int)
+                for study, indices in calibration_by_study.items()
+            },
+        )
     return bundle["estimator"].predict(matrix)
 
 
@@ -511,15 +582,15 @@ def _dense_features(matrix) -> np.ndarray:
 
 def _fit_age_reference_expression(
     x, ages: np.ndarray, studies: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, float, list[str]] | None:
-    """Fit shared per-gene age trends with study-specific intercepts."""
+) -> AgeAwareStudyReference | None:
+    """Fit a shared age trend and additive, equally weighted study offsets."""
     values = _dense_features(x)
     ages = np.asarray(ages, dtype=float)
     studies = np.asarray(studies, dtype=str)
     study_levels = sorted(np.unique(studies))
     if values.ndim != 2 or len(ages) != values.shape[0] or len(studies) != len(ages):
         raise ValueError("Age-reference features, ages, and studies must align")
-    if len(study_levels) < 2 or len(np.unique(ages)) < 2:
+    if not study_levels or len(np.unique(ages)) < 2:
         return None
 
     age_center = float(ages.mean())
@@ -538,121 +609,122 @@ def _fit_age_reference_expression(
     )
     if rank < design.shape[1]:
         return None
-    study_intercept = (
-        coefficients[0]
-        + coefficients[2:].sum(axis=0) / len(study_levels)
+    study_intercepts = {study_levels[0]: coefficients[0]}
+    for index, study in enumerate(study_levels[1:], start=2):
+        study_intercepts[study] = coefficients[0] + coefficients[index]
+    intercept = np.mean(list(study_intercepts.values()), axis=0)
+    offsets = {
+        study: study_intercept - intercept
+        for study, study_intercept in study_intercepts.items()
+    }
+    return AgeAwareStudyReference(
+        intercept=intercept,
+        age_slope=coefficients[1],
+        age_center=age_center,
+        study_offsets=offsets,
     )
-    return study_intercept, coefficients[1], age_center, study_levels
 
 
 def _age_reference_values(
-    reference: tuple[np.ndarray, np.ndarray, float, list[str]], ages: np.ndarray
+    reference: AgeAwareStudyReference, ages: np.ndarray
 ) -> np.ndarray:
-    """Evaluate the mean-across-studies gene expression trend at given ages."""
-    intercept, age_slope, age_center, _ = reference
-    return intercept[None, :] + (
-        np.asarray(ages, dtype=float)[:, None] - age_center
-    ) * age_slope[None, :]
+    """Evaluate the mean-across-training-studies expression trend at each age."""
+    return reference.intercept[None, :] + (
+        np.asarray(ages, dtype=float)[:, None] - reference.age_center
+    ) * reference.age_slope[None, :]
 
 
-def _target_expression_calibration(
-    x_train,
-    y_train: np.ndarray,
-    train_studies: np.ndarray,
-    x_external,
-    y_external: np.ndarray,
-    external_studies: np.ndarray,
-    external_gene_available: np.ndarray,
+def _correct_training_study_offsets(
+    x, reference: AgeAwareStudyReference, studies: np.ndarray,
+) -> np.ndarray:
+    """Subtract fitted training-study offsets without removing the age trend."""
+    values = _dense_features(x).copy()
+    for study in np.unique(studies.astype(str)):
+        if study not in reference.study_offsets:
+            raise ValueError(f"Age-aware reference has no offset for training study {study}")
+        values[studies.astype(str) == study] -= reference.study_offsets[study]
+    return values
+
+
+def _age_aware_target_correction(
+    reference: AgeAwareStudyReference,
+    x_target,
+    target_ages: np.ndarray,
+    target_studies: np.ndarray,
+    gene_availability_by_study: dict[str, np.ndarray],
     *,
     calibration_samples: int,
-    repeats: int,
     seed: int,
-) -> tuple[pd.DataFrame, dict[str, dict]]:
-    """Evaluate age-protected target-study mean shifts on repeated donor splits."""
-    train_values = _dense_features(x_train)
-    external_values = _dense_features(x_external)
-    y_external = np.asarray(y_external, dtype=float)
-    external_studies = np.asarray(external_studies, dtype=str)
-    reference = _fit_age_reference_expression(
-        train_values, y_train, train_studies
-    )
-    if reference is None:
-        return pd.DataFrame(), {
-            study: {"status": "non_estimable_training_age_reference"}
-            for study in sorted(np.unique(external_studies))
-        }
-
+    calibration_indices_by_study: dict[str, np.ndarray] | None = None,
+) -> tuple[np.ndarray, np.ndarray, list[dict]]:
+    """Correct target cohorts using disjoint, known-age calibration donors."""
+    if calibration_samples < 1:
+        raise ValueError("Age-aware study-offset correction needs at least one calibration donor")
+    values = _dense_features(x_target)
+    target_ages = np.asarray(target_ages, dtype=float)
+    target_studies = np.asarray(target_studies, dtype=str)
+    corrected = values.copy()
+    evaluation_mask = np.ones(len(values), dtype=bool)
     records = []
-    summaries = {}
-    for study in sorted(np.unique(external_studies)):
-        study_indices = np.flatnonzero(external_studies == study)
+    for study in sorted(np.unique(target_studies)):
+        study_indices = np.flatnonzero(target_studies == study)
         n_study = len(study_indices)
         if n_study <= calibration_samples:
-            summaries[study] = {
-                "status": "too_few_samples_for_calibration_and_evaluation",
-                "n_external_samples": n_study,
-                "n_calibration_samples": calibration_samples,
-                "n_evaluation_samples": max(n_study - calibration_samples, 0),
-            }
-            continue
-
-        study_seed = seed + int.from_bytes(
-            hashlib.sha256(study.encode("utf-8")).digest()[:4], "little"
-        )
-        rng = np.random.default_rng(study_seed)
-        study_records = []
-        for repeat in range(repeats):
-            calibration_local = rng.choice(
-                n_study, size=calibration_samples, replace=False
+            raise ClockEligibilityError(
+                f"Age-aware study-offset clock needs more than {calibration_samples} "
+                f"eligible samples in {study}; found {n_study}"
             )
-            calibration_indices = study_indices[calibration_local]
-            evaluation_mask = np.ones(n_study, dtype=bool)
-            evaluation_mask[calibration_local] = False
-            evaluation_indices = study_indices[evaluation_mask]
-
-            calibration_reference = _age_reference_values(
-                reference, y_external[calibration_indices]
+        if calibration_indices_by_study is not None:
+            calibration_indices = np.asarray(
+                calibration_indices_by_study.get(study, []), dtype=int
             )
-            residuals = external_values[calibration_indices] - calibration_reference
-            site_shift = residuals.mean(axis=0)
-            site_shift[~external_gene_available] = 0.0
-
-            study_records.append({
-                "study": study,
-                "repeat": repeat + 1,
-                "n_calibration_samples": calibration_samples,
-                "n_evaluation_samples": len(evaluation_indices),
-                "calibration_age_min": float(y_external[calibration_indices].min()),
-                "calibration_age_max": float(y_external[calibration_indices].max()),
-                "evaluation_age_min": float(y_external[evaluation_indices].min()),
-                "evaluation_age_max": float(y_external[evaluation_indices].max()),
-                "mean_absolute_expression_shift": float(
-                    np.abs(site_shift[external_gene_available]).mean()
-                ),
-                "site_shift": site_shift,
-                "evaluation_indices": evaluation_indices,
-            })
-
-        summaries[study] = {
-            "status": "completed",
-            "n_external_samples": n_study,
+            if len(calibration_indices) != calibration_samples or not np.isin(
+                calibration_indices, study_indices
+            ).all():
+                raise ValueError(
+                    f"Age-aware prediction needs exactly {calibration_samples} calibration "
+                    f"rows from target study {study}"
+                )
+        else:
+            study_seed = seed + int.from_bytes(
+                hashlib.sha256(study.encode("utf-8")).digest()[:4], "little"
+            )
+            rng = np.random.default_rng(study_seed)
+            calibration_indices = study_indices[
+                rng.choice(n_study, size=calibration_samples, replace=False)
+            ]
+        study_evaluation = np.ones(n_study, dtype=bool)
+        study_evaluation[np.isin(study_indices, calibration_indices)] = False
+        evaluation_indices = study_indices[study_evaluation]
+        shift = (
+            values[calibration_indices]
+            - _age_reference_values(reference, target_ages[calibration_indices])
+        ).mean(axis=0)
+        if not np.isfinite(shift).all():
+            raise ValueError(
+                f"Age-aware calibration donors in {study} need finite known ages"
+            )
+        gene_available = gene_availability_by_study[study]
+        shift[~gene_available] = 0.0
+        corrected[study_indices] -= shift
+        evaluation_mask[calibration_indices] = False
+        records.append({
+            "study": study,
             "n_calibration_samples": calibration_samples,
-            "n_evaluation_samples_per_repeat": n_study - calibration_samples,
-            "n_repeats": repeats,
-            "calibration_age_minimum_mean": float(np.mean([
-                record["calibration_age_min"] for record in study_records
-            ])),
-            "calibration_age_maximum_mean": float(np.mean([
-                record["calibration_age_max"] for record in study_records
-            ])),
-            "mean_absolute_expression_shift": float(np.mean([
-                record["mean_absolute_expression_shift"] for record in study_records
-            ])),
-        }
-        records.extend(study_records)
-
-    # Feature matrices stay local to evaluation; publish only split summaries.
-    return pd.DataFrame(records), summaries
+            "n_evaluation_samples": len(evaluation_indices),
+            "calibration_age_min": float(target_ages[calibration_indices].min()),
+            "calibration_age_max": float(target_ages[calibration_indices].max()),
+            "evaluation_age_min": _optional_float(
+                np.nanmin(target_ages[evaluation_indices])
+                if np.isfinite(target_ages[evaluation_indices]).any() else None
+            ),
+            "evaluation_age_max": _optional_float(
+                np.nanmax(target_ages[evaluation_indices])
+                if np.isfinite(target_ages[evaluation_indices]).any() else None
+            ),
+            "mean_absolute_expression_shift": float(np.abs(shift[gene_available]).mean()),
+        })
+    return corrected, evaluation_mask, records
 
 
 def fit_age_clocks(
@@ -665,7 +737,6 @@ def fit_age_clocks(
     l1_ratios: list[float] | None = None,
     method_names: list[str] | None = None,
     calibration_samples: int = 10,
-    calibration_repeats: int = 50,
     calibration_seed: int = 42,
     cv: bool = True,
     n_jobs: int = 1,
@@ -681,8 +752,6 @@ def fit_age_clocks(
         raise ValueError("n_jobs must be at least 1")
     if calibration_samples < 0:
         raise ValueError("calibration_samples must be zero or greater")
-    if calibration_samples and calibration_repeats < 1:
-        raise ValueError("calibration_repeats must be at least 1 when calibration is enabled")
     pipeline_config = _load_config(config_path)
     adata = ad.read_h5ad(input_path)
     available_studies = set(adata.obs["study"].astype(str).unique())
@@ -734,18 +803,19 @@ def fit_age_clocks(
             "CV fold and from all development studies for final fitting"
         ),
         "external_expression_use": "raw pseudobulk counts transformed only after training and tuning",
-        "target_expression_calibration": {
-            "method": "age-protected per-gene additive shift",
+        "age_aware_study_offset_calibration": {
+            "method": "known-age per-gene additive target-study offset",
             "calibration_samples_per_target_study": calibration_samples,
-            "repeated_splits": calibration_repeats if calibration_samples else 0,
             "seed": calibration_seed,
-            "age_reference": (
-                "per-gene linear age trend with study-specific intercepts and "
-                "equal total study weights; reference intercepts averaged "
-                "equally across training studies"
+            "training_correction": (
+                "per-gene linear age trend with equally study-weighted additive "
+                "training-study offsets; offsets are subtracted before clock fitting"
             ),
-            "evaluation": "calibration donors excluded; compare raw and corrected predictions on the same held-out donors",
-        } if calibration_samples else {"method": "disabled"},
+            "prediction": (
+                "known-age calibration donors estimate the target-study offset and "
+                "are excluded from scored predictions"
+            ),
+        },
         "training_studies": training_studies,
         "external_studies": external_studies,
         "cross_validation": "leave-one-training-study-out; fold-specific gene intersection" if cv else "disabled",
@@ -809,6 +879,10 @@ def fit_age_clocks(
             raise ValueError("At least one age-clock method must be selected")
         methods = [method for method in available_methods if method.name in requested_methods]
     manifest["selected_methods"] = [method.name for method in methods]
+    if any(method.age_aware_study_offset for method in methods) and calibration_samples < 1:
+        raise ValueError(
+            "The age-aware study-offset clock needs AGE_CLOCK_CALIBRATION_SAMPLES >= 1"
+        )
     fitted = []
 
     for method in methods:
@@ -822,6 +896,7 @@ def fit_age_clocks(
         if cv:
             fold_data = []
             fold_coverage = {}
+            fold_calibration = {}
             study_values = train_meta["study"].to_numpy(dtype=str)
             for held_out_study in train_study_ids:
                 validation_mask = study_values == held_out_study
@@ -835,6 +910,8 @@ def fit_age_clocks(
                 x_validation = _log_cpm(
                     adata, train_positions[validation_indices], fold_genes
                 )
+                validation_meta = train_meta.iloc[validation_indices].copy()
+                calibration_records = []
                 if method.within_study_zscore:
                     x_fit, _ = within_study_gene_zscore(
                         x_fit, fold_train_meta["study"].to_numpy()
@@ -843,10 +920,40 @@ def fit_age_clocks(
                         x_validation,
                         train_meta.iloc[validation_indices]["study"].to_numpy(),
                     )
+                elif method.age_aware_study_offset:
+                    reference = _fit_age_reference_expression(
+                        x_fit,
+                        y_train[fit_indices],
+                        fold_train_meta["study"].to_numpy(dtype=str),
+                    )
+                    if reference is None:
+                        raise ClockEligibilityError(
+                            f"Age-aware study-offset clock cannot estimate an age trend "
+                            f"for CV fold holding out {held_out_study}"
+                        )
+                    x_fit = _correct_training_study_offsets(
+                        x_fit, reference, fold_train_meta["study"].to_numpy(dtype=str)
+                    )
+                    x_validation, evaluation_mask, calibration_records = (
+                        _age_aware_target_correction(
+                            reference,
+                            x_validation,
+                            validation_meta["age"].to_numpy(dtype=float),
+                            validation_meta["study"].to_numpy(dtype=str),
+                            {held_out_study: _gene_availability_for_study(
+                                adata, fold_genes, held_out_study
+                            )},
+                            calibration_samples=calibration_samples,
+                            seed=calibration_seed,
+                        )
+                    )
+                    x_validation = x_validation[evaluation_mask]
+                    validation_meta = validation_meta.iloc[np.flatnonzero(evaluation_mask)].copy()
                 fold_coverage[held_out_study] = _gene_coverage(
                     adata, train_positions[validation_indices], fold_genes
                 )[0]
                 fold_weights = _sample_weights(fold_train_meta["study"], method)
+                fold_calibration[held_out_study] = calibration_records
                 fold_data.append((
                     held_out_study,
                     fold_genes,
@@ -854,7 +961,8 @@ def fit_age_clocks(
                     y_train[fit_indices],
                     fold_weights,
                     x_validation,
-                    y_train[validation_indices],
+                    validation_meta["age"].to_numpy(dtype=float),
+                    validation_meta,
                 ))
 
             parameter_candidates = list(ParameterGrid(method.parameter_grid))
@@ -862,7 +970,7 @@ def fit_age_clocks(
                 {**parameters, "candidate_order": candidate_index}
                 for candidate_index, parameters in enumerate(parameter_candidates)
             ]
-            for fold_index, (study, _, x_fit, y_fit, weights, x_valid, y_valid) in enumerate(
+            for fold_index, (study, _, x_fit, y_fit, weights, x_valid, y_valid, _) in enumerate(
                 fold_data, start=1
             ):
                 LOGGER.info(
@@ -914,12 +1022,20 @@ def fit_age_clocks(
                     "iteration_limit_reached": bool(best_row[f"iteration_limit_reached_{study}"]),
                     "n_iterations": _optional_float(best_row[f"n_iterations_{study}"]),
                     "dual_gap": _optional_float(best_row[f"dual_gap_{study}"]),
+                    "n_calibration_samples": (
+                        fold_calibration[study][0]["n_calibration_samples"]
+                        if fold_calibration[study] else 0
+                    ),
+                    "n_evaluation_samples": (
+                        fold_calibration[study][0]["n_evaluation_samples"]
+                        if fold_calibration[study] else int((train_meta["study"] == study).sum())
+                    ),
                 }
                 for study in train_study_ids
             ]
             cv_oof_frames = []
             fold_coefficient_coverage = {}
-            for fold_index, (study, fold_genes, x_fit, y_fit, weights, x_valid, y_valid) in enumerate(
+            for fold_index, (study, fold_genes, x_fit, y_fit, weights, x_valid, y_valid, held_out) in enumerate(
                 fold_data, start=1
             ):
                 estimator = _fit_estimator(method, best_parameters, x_fit, y_fit, weights)
@@ -931,7 +1047,6 @@ def fit_age_clocks(
                 fold_coefficient_coverage[study] = _coefficient_coverage(
                     adata, fold_genes, fold_coefficients, study
                 )
-                held_out = train_meta.loc[train_meta["study"] == study].copy()
                 if len(held_out) != len(predicted):
                     raise RuntimeError(f"CV prediction alignment failed for study {study}")
                 held_out["predicted_age"] = predicted
@@ -957,11 +1072,22 @@ def fit_age_clocks(
             adata, train_study_ids, final_genes
         )
         x_final = _log_cpm(adata, train_positions, final_genes)
-        x_final_raw = x_final
         final_zscore_diagnostics = []
+        age_aware_reference = None
         if method.within_study_zscore:
             x_final, final_zscore_diagnostics = within_study_gene_zscore(
                 x_final, train_meta["study"].to_numpy()
+            )
+        elif method.age_aware_study_offset:
+            age_aware_reference = _fit_age_reference_expression(
+                x_final, y_train, train_meta["study"].to_numpy(dtype=str)
+            )
+            if age_aware_reference is None:
+                raise ClockEligibilityError(
+                    "Age-aware study-offset clock cannot estimate the training age trend"
+                )
+            x_final = _correct_training_study_offsets(
+                x_final, age_aware_reference, train_meta["study"].to_numpy(dtype=str)
             )
         final_weights = _sample_weights(train_meta["study"], method)
         estimator = _fit_estimator(
@@ -978,7 +1104,7 @@ def fit_age_clocks(
             "cv_oof_predictions": cv_oof_predictions,
             "training_gene_intersection": final_gene_intersection,
             "within_study_zscore_diagnostics": final_zscore_diagnostics,
-            "training_features_raw": x_final_raw,
+            "age_aware_reference": age_aware_reference,
         })
 
     # Generate external features only after every method has completed tuning and fitting.
@@ -991,12 +1117,28 @@ def fit_age_clocks(
             getattr(estimator.named_steps[method.coefficient_step], "coef_", None)
             if method.coefficient_step else None
         )
-        x_external_raw = _log_cpm(adata, external_positions, genes)
-        x_external = x_external_raw
+        x_external = _log_cpm(adata, external_positions, genes)
         external_zscore_diagnostics = []
+        age_aware_calibration = []
+        external_evaluation_mask = np.ones(len(external_meta), dtype=bool)
         if method.within_study_zscore:
             x_external, external_zscore_diagnostics = within_study_gene_zscore(
                 x_external, external_meta["study"].to_numpy()
+            )
+        elif method.age_aware_study_offset:
+            x_external, external_evaluation_mask, age_aware_calibration = (
+                _age_aware_target_correction(
+                    item["age_aware_reference"],
+                    x_external,
+                    external_meta["age"].to_numpy(dtype=float),
+                    external_meta["study"].to_numpy(dtype=str),
+                    {
+                        study: _gene_availability_for_study(adata, genes, study)
+                        for study in external_meta["study"].astype(str).unique()
+                    },
+                    calibration_samples=calibration_samples,
+                    seed=calibration_seed,
+                )
             )
         external_coverage = _gene_coverage(adata, external_positions, genes)
         for coverage in external_coverage:
@@ -1010,88 +1152,8 @@ def fit_age_clocks(
                     coverage["study"],
                     100 * coverage["missing_coefficient_weight_fraction"],
                 )
-        predicted = estimator.predict(x_external)
-        calibration_splits = pd.DataFrame()
-        calibration_summary = {}
-        if calibration_samples:
-            if method.within_study_zscore:
-                calibration_summary = {
-                    study: {
-                        "status": "not_compatible_with_whole_cohort_zscore",
-                        "n_external_samples": int(
-                            (external_meta["study"].astype(str) == study).sum()
-                        ),
-                    }
-                    for study in sorted(external_meta["study"].astype(str).unique())
-                }
-            else:
-                calibration_splits, calibration_summary = _target_expression_calibration(
-                    item["training_features_raw"],
-                    y_train,
-                    train_meta["study"].to_numpy(dtype=str),
-                    x_external_raw,
-                    external_meta["age"].to_numpy(dtype=float),
-                    external_meta["study"].to_numpy(dtype=str),
-                    np.isin(genes, np.asarray(adata.var_names, dtype=str)),
-                    calibration_samples=calibration_samples,
-                    repeats=calibration_repeats,
-                    seed=calibration_seed,
-                )
-                comparison_rows = []
-                if not calibration_splits.empty:
-                    for split in calibration_splits.itertuples(index=False):
-                        evaluation_indices = split.evaluation_indices
-                        y_evaluation = external_meta.iloc[evaluation_indices][
-                            "age"
-                        ].to_numpy(dtype=float)
-                        raw_evaluation = estimator.predict(
-                            x_external_raw[evaluation_indices]
-                        )
-                        evaluation_features = _dense_features(
-                            x_external_raw[evaluation_indices]
-                        )
-                        corrected_evaluation = estimator.predict(
-                            evaluation_features - split.site_shift[None, :]
-                        )
-                        for calibration_name, values in (
-                            ("none", raw_evaluation),
-                            ("age_protected_mean_shift", corrected_evaluation),
-                        ):
-                            comparison_rows.append({
-                                "study": split.study,
-                                "repeat": split.repeat,
-                                "calibration": calibration_name,
-                                "n_calibration_samples": split.n_calibration_samples,
-                                "n_evaluation_samples": len(y_evaluation),
-                                "mae_years": float(mean_absolute_error(y_evaluation, values)),
-                                "rmse_years": float(np.sqrt(mean_squared_error(y_evaluation, values))),
-                                "mean_error_years": float(np.mean(values - y_evaluation)),
-                                "calibration_age_min": split.calibration_age_min,
-                                "calibration_age_max": split.calibration_age_max,
-                                "evaluation_age_min": split.evaluation_age_min,
-                                "evaluation_age_max": split.evaluation_age_max,
-                                "mean_absolute_expression_shift": split.mean_absolute_expression_shift,
-                            })
-                calibration_splits = pd.DataFrame(comparison_rows)
-                for study, summary in calibration_summary.items():
-                    if summary.get("status") != "completed":
-                        continue
-                    study_rows = calibration_splits.loc[
-                        calibration_splits["study"] == study
-                    ]
-                    summary["metrics"] = {
-                        name: {
-                            "mean_mae_years": float(group["mae_years"].mean()),
-                            "sd_mae_across_repeats_years": float(
-                                group["mae_years"].std(ddof=1)
-                                if len(group) > 1 else 0.0
-                            ),
-                            "mean_rmse_years": float(group["rmse_years"].mean()),
-                            "mean_bias_years": float(group["mean_error_years"].mean()),
-                        }
-                        for name, group in study_rows.groupby("calibration", sort=True)
-                    }
-        predictions = external_meta.copy()
+        predictions = external_meta.iloc[np.flatnonzero(external_evaluation_mask)].copy()
+        predicted = estimator.predict(x_external[external_evaluation_mask])
         coverage_by_study = {record["study"]: record for record in external_coverage}
         for name in (
             "n_model_genes", "n_available_genes", "fraction_available",
@@ -1123,6 +1185,7 @@ def fit_age_clocks(
             "feature_representation": method.feature_representation,
             "training_weighting": "equal total weight per study" if method.equal_study_weight else "equal weight per sample",
             "within_study_zscore": method.within_study_zscore,
+            "age_aware_study_offset": method.age_aware_study_offset,
             "cell_type": selected_cell_type,
             "n_genes": len(genes),
             "n_training_samples": len(train_meta),
@@ -1134,6 +1197,7 @@ def fit_age_clocks(
             "training_gene_intersection": item["training_gene_intersection"],
             "within_study_zscore_diagnostics": item["within_study_zscore_diagnostics"],
             "external_within_study_zscore_diagnostics": external_zscore_diagnostics,
+            "age_aware_target_calibration": age_aware_calibration,
             "training_age_coverage_by_study": training_age_coverage,
             "best_parameters": item["best_parameters"],
             "best_training_cv_mae_years": item["cv_best_mae"],
@@ -1143,11 +1207,10 @@ def fit_age_clocks(
             "external_metrics_by_study": metrics_by_study,
             "external_metrics_pooled": _metrics(predictions["age"], predicted),
             "external_metrics_macro_study_mae_years": _mean_study_mae(predictions),
-            "target_expression_calibration": calibration_summary,
         }
         item.update({
             "predictions": predictions,
-            "calibration_splits": calibration_splits,
+            "age_aware_calibration": age_aware_calibration,
             "coefficients": coefficients,
             "model": model,
             "result": result,
@@ -1171,7 +1234,7 @@ def publish_age_clock_fit(fit: ClockFit, output_dir: Path) -> dict:
         identity_fields = (
             "input", "configuration_sha256", "cell_type",
             "training_studies", "external_studies",
-            "target_expression_calibration",
+            "age_aware_study_offset_calibration",
         )
         compatible = all(previous.get(key) == manifest.get(key) for key in identity_fields)
         if compatible:
@@ -1206,12 +1269,8 @@ def publish_age_clock_fit(fit: ClockFit, output_dir: Path) -> dict:
         result["model"] = str(method_dir / "model.joblib")
         result["predictions"] = str(method_dir / "external_predictions.csv")
         item["predictions"].to_csv(method_dir / "external_predictions.csv", index=True)
-        calibration_splits = item.get("calibration_splits", pd.DataFrame())
         calibration_path = method_dir / "external_expression_calibration_repeats.csv"
-        if not calibration_splits.empty:
-            calibration_splits.to_csv(calibration_path, index=False)
-        else:
-            calibration_path.unlink(missing_ok=True)
+        calibration_path.unlink(missing_ok=True)
         coefficients = item["coefficients"]
         if method.coefficient_step and coefficients is not None:
             pd.DataFrame({
@@ -1235,6 +1294,11 @@ def publish_age_clock_fit(fit: ClockFit, output_dir: Path) -> dict:
             "target": "age_years",
             "normalization": manifest["normalization"],
             "within_study_zscore": method.within_study_zscore,
+            "age_aware_study_offset": method.age_aware_study_offset,
+            "age_aware_reference": item["age_aware_reference"],
+            "age_aware_calibration_samples": manifest[
+                "age_aware_study_offset_calibration"
+            ]["calibration_samples_per_target_study"],
             "missing_gene_policy": manifest["missing_gene_policy"],
             "configuration_sha256": manifest["configuration_sha256"],
             "software_versions": manifest["software_versions"],
@@ -1277,7 +1341,6 @@ def train_age_clocks(
     l1_ratios: list[float] | None = None,
     method_names: list[str] | None = None,
     calibration_samples: int = 10,
-    calibration_repeats: int = 50,
     calibration_seed: int = 42,
     cv: bool = True,
     n_jobs: int = 1,
@@ -1287,7 +1350,7 @@ def train_age_clocks(
         input_path, config_path, external_studies,
         cell_type_filter=cell_type_filter, alphas=alphas, l1_ratios=l1_ratios,
         method_names=method_names, calibration_samples=calibration_samples,
-        calibration_repeats=calibration_repeats, calibration_seed=calibration_seed,
+        calibration_seed=calibration_seed,
         cv=cv,
         n_jobs=n_jobs,
     )
@@ -1304,7 +1367,6 @@ def train_all_age_clocks(
     l1_ratios: list[float] | None = None,
     method_names: list[str] | None = None,
     calibration_samples: int = 10,
-    calibration_repeats: int = 50,
     calibration_seed: int = 42,
     cv: bool = True,
     n_jobs: int = 1,
@@ -1338,7 +1400,6 @@ def train_all_age_clocks(
                 input_path, config_path, external_studies,
                 cell_type_filter=cell_type, alphas=alphas, l1_ratios=l1_ratios,
                 method_names=method_names, calibration_samples=calibration_samples,
-                calibration_repeats=calibration_repeats,
                 calibration_seed=calibration_seed, cv=cv,
                 n_jobs=n_jobs,
             )
@@ -1404,12 +1465,6 @@ def main() -> None:
         help="Known-age target donors per study used for expression calibration; 0 disables it",
     )
     parser.add_argument(
-        "--calibration-repeats",
-        type=int,
-        default=50,
-        help="Repeated calibration/evaluation splits per target study (default: 50)",
-    )
-    parser.add_argument(
         "--calibration-seed",
         type=int,
         default=42,
@@ -1430,7 +1485,6 @@ def main() -> None:
             if args.methods else None
         ),
         "calibration_samples": args.calibration_samples,
-        "calibration_repeats": args.calibration_repeats,
         "calibration_seed": args.calibration_seed,
         "cv": not args.no_cv,
         "n_jobs": args.n_jobs,

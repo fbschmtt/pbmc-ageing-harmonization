@@ -9,7 +9,13 @@ import pandas as pd
 
 from pbmc_pipeline.utils import slugify
 
-METHODS = ("elastic_net", "equal_study_elastic_net", "rank_elastic_net")
+METHODS = (
+    "elastic_net",
+    "equal_study_elastic_net",
+    "rank_elastic_net",
+    "study_zscore_elastic_net",
+    "age_aware_study_offset_elastic_net",
+)
 METHOD_OUTPUTS = (
     "model.joblib",
     "external_predictions.csv",

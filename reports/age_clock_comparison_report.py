@@ -42,7 +42,7 @@ if manifest.get("synthetic_test_data"):
 
 summary = []
 study_rows = []
-calibration_rows = []
+age_aware_rows = []
 prediction_frames = []
 for method in methods:
     summary.append({
@@ -76,28 +76,8 @@ for method in methods:
                 predictions["study"].astype(str) == study, "age_error_years"
             ].mean(),
         })
-    for study, calibration in method.get("target_expression_calibration", {}).items():
-        metrics = calibration.get("metrics", {})
-        raw = metrics.get("none", {})
-        corrected = metrics.get("age_protected_mean_shift", {})
-        calibration_rows.append({
-            "method": method["method_name"],
-            "study": study,
-            "status": calibration.get("status"),
-            "calibration donors": calibration.get("n_calibration_samples"),
-            "evaluation donors per split": calibration.get("n_evaluation_samples_per_repeat"),
-            "repeats": calibration.get("n_repeats"),
-            "raw held-out MAE (years)": raw.get("mean_mae_years"),
-            "corrected held-out MAE (years)": corrected.get("mean_mae_years"),
-            "MAE change (years)": (
-                corrected.get("mean_mae_years", float("nan"))
-                - raw.get("mean_mae_years", float("nan"))
-            ),
-            "corrected MAE SD across splits (years)": corrected.get(
-                "sd_mae_across_repeats_years"
-            ),
-            "corrected mean bias (years)": corrected.get("mean_bias_years"),
-        })
+    for record in method.get("age_aware_target_calibration", []):
+        age_aware_rows.append({"method": method["method_name"], **record})
 
 tuning_description = (
     "Hyperparameters are selected by leave-one-training-study-out validation; "
@@ -112,6 +92,15 @@ display(Markdown(
     "using this external comparison for selection makes these studies part of model development."
 ))
 display(pd.DataFrame(summary))
+if age_aware_rows:
+    display(Markdown(
+        "### Age-aware target-site calibration support\n\n"
+        "The age-aware clock used these known-age donors only to estimate each "
+        "target study's additive expression offset. They are excluded from its "
+        "reported predictions; the other clocks are evaluated on all eligible "
+        "external donors."
+    ))
+    display(pd.DataFrame(age_aware_rows))
 coverage_rows = [
     {"method": method["method_name"], **record}
     for method in methods
@@ -133,18 +122,6 @@ display_accessible_figure(
     figure,
     alt_text="Bar chart comparing external mean absolute age error by study and clock method.",
 )
-
-if calibration_rows:
-    display(Markdown(
-        "### Target-site gene-expression calibration\n\n"
-        "Each repeat randomly selects the configured number of known-age donors to estimate "
-        "an additive per-gene site shift after accounting for a shared linear age "
-        "trend and study-specific training intercepts. Calibration donors are "
-        "excluded from these scores; raw and corrected predictions use the same "
-        "remaining donors. The mean-shift correction does not estimate gene-wise "
-        "scale changes."
-    ))
-    display(pd.DataFrame(calibration_rows))
 
 all_predictions = pd.concat(prediction_frames, ignore_index=True)
 figure, axis = plt.subplots(figsize=(7, 6))
@@ -188,4 +165,13 @@ if any(method.get("within_study_zscore") for method in methods):
         "prediction; a single-sample input has no within-study variation and "
         "normalizes to zero. The recorded normalization diagnostics include "
         "study sample counts and genes with zero within-study variance."
+    ))
+if any(method.get("age_aware_study_offset") for method in methods):
+    display(Markdown(
+        "The age-aware study-offset clock first removes additive offsets fitted "
+        "across the development studies while retaining each gene's age trend. "
+        "For an unseen study it uses the configured known-age calibration donors "
+        "to estimate that study's offset; those donors are excluded from its "
+        "reported external and CV predictions. Its results therefore evaluate a "
+        "labeled target-site calibration protocol, not calibration-free deployment."
     ))

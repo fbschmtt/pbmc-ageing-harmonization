@@ -102,6 +102,46 @@ def test_focused_fit_can_select_only_the_study_zscore_clock(clock_input, tmp_pat
     ] is True
 
 
+def test_age_aware_clock_corrects_before_fitting_and_uses_target_calibrators(clock_input, tmp_path):
+    adata, _, _, _ = clock_input
+    manifest = _train_fixture(
+        clock_input,
+        tmp_path / "clock",
+        method_names=["age_aware_study_offset_elastic_net"],
+        cv=False,
+    )
+
+    assert [method["method"] for method in manifest["methods"]] == [
+        "age_aware_study_offset_elastic_net"
+    ]
+    result = manifest["methods"][0]
+    assert result["age_aware_study_offset"] is True
+    assert result["n_external_samples"] == 4
+    assert {record["n_calibration_samples"] for record in result[
+        "age_aware_target_calibration"
+    ]} == {2}
+    model_path = (
+        tmp_path / "clock/cd14-monocyte/ageing_clock/"
+        "age_aware_study_offset_elastic_net/model.joblib"
+    )
+    with pytest.raises(ValueError, match="calibration_row_positions"):
+        predict_age_clock(model_path, adata, np.arange(8, 16))
+    predictions = predict_age_clock(
+        model_path, adata, np.arange(8, 16),
+        calibration_row_positions=np.array([8, 9, 12, 13]),
+    )
+    assert predictions.shape == (8,)
+    assert np.isfinite(predictions).all()
+    deployment = adata.copy()
+    deployment.obs.loc[["bulk_10", "bulk_11", "bulk_14", "bulk_15"], "age"] = np.nan
+    predictions_without_evaluation_ages = predict_age_clock(
+        model_path, deployment, np.arange(8, 16),
+        calibration_row_positions=np.array([8, 9, 12, 13]),
+    )
+    assert np.isfinite(predictions_without_evaluation_ages).all()
+    assert not (model_path.parent / "external_expression_calibration_repeats.csv").exists()
+
+
 def test_focused_fit_preserves_compatible_prior_methods(clock_input, tmp_path):
     output_dir = tmp_path / "clock"
     first = _train_fixture(
@@ -213,7 +253,8 @@ def _train_fixture(clock_input, output_dir, **kwargs):
     _, _, input_path, config_path = clock_input
     return train_age_clocks(
         input_path, config_path, output_dir, ["external_a", "external_b"],
-        cell_type_filter="cd14-monocyte", alphas=[0.1], l1_ratios=[0.5], **kwargs,
+        cell_type_filter="cd14-monocyte", alphas=[0.1], l1_ratios=[0.5],
+        calibration_samples=2, **kwargs,
     )
 
 
@@ -222,7 +263,7 @@ def test_all_cell_type_runner_discovers_and_fits_available_types(clock_input, tm
 
     manifests = train_all_age_clocks(
         input_path, config_path, tmp_path / "clock", ["external_a", "external_b"],
-        alphas=[0.1], l1_ratios=[0.5], cv=False,
+        alphas=[0.1], l1_ratios=[0.5], calibration_samples=2, cv=False,
     )
 
     assert list(manifests) == ["CD14 monocyte"]
@@ -240,7 +281,7 @@ def test_all_cell_type_runner_skips_type_missing_from_studies(clock_input, tmp_p
     with caplog.at_level("ERROR"):
         manifests = train_all_age_clocks(
             input_path, config_path, tmp_path / "clock", ["external_a", "external_b"],
-            alphas=[0.1], l1_ratios=[0.5], cv=False,
+            alphas=[0.1], l1_ratios=[0.5], calibration_samples=2, cv=False,
         )
 
     assert list(manifests) == ["CD14 monocyte"]
@@ -273,7 +314,7 @@ def test_all_cell_type_runner_continues_after_unexpected_fit_error(
     with caplog.at_level("ERROR"), pytest.raises(ClockFitFailuresError, match="1 cell type"):
         train_all_age_clocks(
             input_path, config_path, tmp_path / "clock", ["external_a", "external_b"],
-            alphas=[0.1], l1_ratios=[0.5], cv=False,
+            alphas=[0.1], l1_ratios=[0.5], calibration_samples=2, cv=False,
         )
 
     assert (tmp_path / "clock/cd14-monocyte/ageing_clock/age_clock.json").is_file()
@@ -296,7 +337,7 @@ def test_all_cell_type_runner_does_not_catch_publication_errors(clock_input, tmp
     with pytest.raises(OSError, match="deliberate publication failure"):
         train_all_age_clocks(
             input_path, config_path, tmp_path / "clock", ["external_a", "external_b"],
-            alphas=[0.1], l1_ratios=[0.5], cv=False,
+            alphas=[0.1], l1_ratios=[0.5], calibration_samples=2, cv=False,
         )
 
 
@@ -309,7 +350,7 @@ def test_module_cli_rank_model_loads_in_a_separate_process_context(clock_input, 
         sys.executable, "-m", "pbmc_pipeline.age_clock", "--input", str(input_path),
         "--config", str(config_path), "--output-dir", str(output),
         "--external-studies", "external_a,external_b", "--cell-type", "cd14-monocyte",
-        "--no-cv",
+            "--calibration-samples", "2", "--no-cv",
     ], env=env, check=True, capture_output=True, text=True)
     model = output / "cd14-monocyte/ageing_clock/rank_elastic_net/model.joblib"
     bundle = joblib.load(model)
@@ -416,7 +457,8 @@ def test_cv_candidate_parallelism_records_convergence_diagnostics(clock_input, t
     _, _, input_path, config_path = clock_input
     manifest = train_age_clocks(
         input_path, config_path, tmp_path / "clock", ["external_a", "external_b"],
-        cell_type_filter="cd14-monocyte", alphas=[0.1, 1.0], l1_ratios=[0.5], n_jobs=2,
+        cell_type_filter="cd14-monocyte", alphas=[0.1, 1.0], l1_ratios=[0.5],
+        calibration_samples=2, n_jobs=2,
     )
 
     assert manifest["cv_parallel_jobs"] == 2

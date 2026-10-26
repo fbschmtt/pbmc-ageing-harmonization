@@ -98,6 +98,13 @@ if missing_weight_warnings:
     ))
     display(pd.DataFrame(missing_weight_warnings))
 
+calibration_note = (
+    "This age-aware method uses known-age target-study calibration donors to estimate "
+    "an additive expression offset before prediction; those donors are excluded from "
+    "its reported scores."
+    if cell_type_records[0].get("age_aware_study_offset")
+    else "Predictions are not calibrated by study."
+)
 display(Markdown(
     f"Training studies: **{', '.join(training_studies)}**. External studies: "
     f"**{', '.join(external_studies)}**. CPM is computed from the available genes "
@@ -109,7 +116,7 @@ display(Markdown(
     "Feature scaling is learned on training samples inside each cross-validation "
     "fold. The gene universe is selected from that fold's training studies. "
     f"{cell_type_records[0]['method_description']} "
-    "Predictions are not calibrated by study."
+    f"{calibration_note}"
 ))
 
 # %% [markdown]
@@ -789,6 +796,7 @@ for item in cell_type_records:
 # ## Interpretation and limits
 #
 # External errors describe transfer for the selected studies and their observed
-# age ranges. They do not prove generalization to every future site. Calibration
-# values are shown as diagnostics only; applying them would change the stated
-# no-calibration objective. The synthetic fixture is explicitly marked above.
+# age ranges. They do not prove generalization to every future site. The
+# age-aware method instead evaluates the explicitly labeled target-site protocol
+# described above; the other methods remain calibration-free. The synthetic
+# fixture is explicitly marked above.
