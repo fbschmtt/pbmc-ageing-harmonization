@@ -54,7 +54,14 @@ def generate_age_clock_report(
             "--KernelManager.transport_encryption=required",
             f"--output-dir={report_dir}", str(notebook),
         ], cwd=project_root, env=env, check=True)
-        set_notebook_title(executed, "Cell-type transcriptomic age clocks | PBMC ageing")
+        manifest = json.loads((report_dir / "age_clock.json").read_text())
+        first_record = manifest.get("cell_types", [{}])[0]
+        method_title = first_record.get("method_name", "Transcriptomic")
+        cell_type = first_record.get("cell_type", "cell type")
+        set_notebook_title(
+            executed,
+            f"{cell_type} · {method_title} age clock | PBMC ageing",
+        )
         subprocess.run([
             sys.executable, "-m", "jupyter", "nbconvert", "--to", "html",
             "--HTMLExporter.exclude_input=True",

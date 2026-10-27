@@ -243,6 +243,7 @@ def _fit_covariate_model(
     alpha: float,
     cpus: int,
     pearson_residuals_path: Path | None = None,
+    additional_contrasts: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, pd.DataFrame]:
     from formulaic_contrasts import FormulaicContrasts
     from pydeseq2.dds import DeseqDataSet
@@ -377,6 +378,27 @@ def _fit_covariate_model(
         if covariate == "age_bin":
             combined = attach_trajectory_statistics(combined, dds, design_matrix, levels)
         coefficient_results[covariate] = combined
+    for covariate, weights in (additional_contrasts or {}).items():
+        missing_terms = sorted(set(weights) - set(design_matrix.columns))
+        if missing_terms:
+            raise _NonEstimableModel(
+                f"contrast {covariate!r} requires design terms that are absent: {missing_terms}"
+            )
+        contrast = np.zeros(design_matrix.shape[1], dtype=float)
+        for term, weight in weights.items():
+            contrast[list(design_matrix.columns).index(term)] = weight
+        stats = DeseqStats(
+            dds,
+            contrast=contrast,
+            alpha=alpha,
+            n_cpus=cpus,
+            quiet=True,
+        )
+        stats.summary()
+        result = stats.results_df.copy()
+        result["covariate"] = covariate
+        result["contrast"] = "predicted age 25 vs age 5"
+        coefficient_results[covariate] = result.rename_axis("gene").reset_index()
     return coefficient_results
 
 
@@ -396,6 +418,7 @@ def _run_model(
     test_mode: bool,
     synthetic_test_data: bool,
     save_pearson_residuals: bool = False,
+    additional_contrasts: dict[str, dict[str, float]] | None = None,
 ) -> dict:
     details: dict = {
         "model": model_name,
@@ -530,6 +553,7 @@ def _run_model(
             alpha=alpha,
             cpus=cpus,
             pearson_residuals_path=residuals_path,
+            additional_contrasts=additional_contrasts,
         )
     except _NonEstimableModel as exc:
         details.update({"status": "skipped", "reason": str(exc)})
@@ -916,11 +940,17 @@ def _run_cell_type_differential_expression(
         ),
         categories=["adult", "juvenile"],
     )
+    juvenile_age_boundary = float(comparison["maximum_age_years_exclusive"])
     developmental_metadata["juvenile_age"] = (
-        developmental_metadata["age"]
+        (developmental_metadata["age"] - juvenile_age_boundary)
         * (developmental_metadata["juvenile"] == "juvenile").astype(float)
     )
     developmental_covariates = ["adult_age", "juvenile_age"]
+    age_25_vs_5_contrast = {
+        "age": 20.0,
+        "juvenile[T.juvenile]": -1.0,
+        "juvenile_age": juvenile_age_boundary - 5.0,
+    }
     developmental_fit = _run_model(
         adata=type_adata,
         obs=type_obs,
@@ -935,6 +965,9 @@ def _run_cell_type_differential_expression(
         output_dir=output_dir,
         test_mode=test_mode,
         synthetic_test_data=synthetic_test_data,
+        additional_contrasts={
+            "age_25_vs_5": age_25_vs_5_contrast,
+        },
     )
     developmental_fit.update({
         "purpose": "developmental_adult_effect_comparison",

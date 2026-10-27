@@ -220,12 +220,18 @@ def test_training_gene_intersection_reports_genes_dropped_per_study():
 @pytest.fixture
 def clock_input(tmp_path):
     studies = np.repeat(["train_a", "train_b", "external_a", "external_b"], 4)
+    study_indices = np.repeat(np.arange(4), 4)
+    age_indices = np.tile(np.arange(4), 4)
+    # Counterbalance sex across studies at every age while retaining both sexes
+    # within each study, so default fits can exercise sex-aware site adjustment.
+    sexes = np.where((study_indices + age_indices) % 2 == 0, "female", "male")
     rng = np.random.default_rng(12)
     matrix = rng.poisson(30, (len(studies), 6))
     obs = pd.DataFrame({
         "study": studies,
         "sample": [f"sample_{i}" for i in range(len(studies))],
         "age": np.tile([25.0, 40.0, 55.0, 70.0], 4),
+        "sex": sexes,
         "n_cells": 15,
         "total_counts": matrix.sum(axis=1),
         "aifi_l2_majority": "CD14 monocyte",
@@ -270,6 +276,11 @@ def test_all_cell_type_runner_discovers_and_fits_available_types(clock_input, tm
     assert (
         tmp_path / "clock/cd14-monocyte/ageing_clock/elastic_net/model.joblib"
     ).is_file()
+    assert (
+        tmp_path / "clock/cd14-monocyte/ageing_clock/"
+        "age_sex_aware_study_offset_elastic_net/model.joblib"
+    ).is_file()
+    assert manifests["CD14 monocyte"]["skipped_methods"] == []
 
 
 def test_all_cell_type_runner_skips_type_missing_from_studies(clock_input, tmp_path, caplog):

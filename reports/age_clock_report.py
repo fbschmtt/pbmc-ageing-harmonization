@@ -57,7 +57,11 @@ display(HTML(render_report_header(
         "Continuous-age models trained on pseudobulk expression. "
         "External studies were kept out of feature selection, scaling, and tuning."
     ),
-    metrics=header_metrics,
+    metrics=[
+        ("Clock type", cell_type_records[0]["method"]),
+        ("Cell type", cell_type_records[0]["cell_type"]),
+        *header_metrics,
+    ],
 )))
 
 if synthetic:
@@ -578,6 +582,102 @@ display_accessible_figure(
     figure,
     alt_text="External observed age versus predicted age, with separate panels for cell types and points colored by study.",
 )
+
+posthoc_calibration_path = report_dir / "posthoc_calibration_predictions.csv"
+if posthoc_calibration_path.is_file() and any(
+    "posthoc_calibrated_age" in prediction_tables[item["cell_type"]]
+    for item in cell_type_records
+):
+    calibration_predictions = pd.read_csv(posthoc_calibration_path)
+    posthoc_rows = []
+    for item in cell_type_records:
+        cell_type = item["cell_type"]
+        fitted = item.get("posthoc_age_calibration_by_study", {})
+        for study, calibration in fitted.items():
+            if calibration.get("status") != "fitted":
+                posthoc_rows.append({
+                    "cell type": cell_type,
+                    "study": study,
+                    "status": calibration.get("status"),
+                    "calibration donors": calibration.get("n_calibration_predictions"),
+                })
+                continue
+            raw_metrics = item["external_metrics_by_study"][study]
+            adjusted = item["posthoc_external_metrics_by_study"][study]
+            posthoc_rows.append({
+                "cell type": cell_type,
+                "study": study,
+                "calibration donors": calibration["n_calibration_predictions"],
+                "mapping slope": calibration["slope"],
+                "mapping intercept (years)": calibration["intercept_years"],
+                "raw MAE (years)": raw_metrics["mae_years"],
+                "post-hoc MAE (years)": adjusted["mae_years"],
+                "raw RMSE (years)": raw_metrics["rmse_years"],
+                "post-hoc RMSE (years)": adjusted["rmse_years"],
+            })
+    display(Markdown(
+        "## Exploratory post-hoc age calibration\n\n"
+        "For each external study, a linear mapping from predicted age to known age "
+        "was fitted using leave-one-calibration-donor-out predictions. Each donor's "
+        "prediction used an expression offset estimated from the other calibration "
+        "donors. The fitted mapping is applied to the external evaluation donors; "
+        "the original predictions and primary metrics above are unchanged."
+    ))
+    display(pd.DataFrame(posthoc_rows))
+    n_studies = len(cell_type_records[0]["external_metrics_by_study"])
+    figure, axes = plt.subplots(
+        1, n_studies, figsize=(6.2 * n_studies, 5), squeeze=False
+    )
+    for axis, (study, _) in zip(
+        axes.flat,
+        sorted(cell_type_records[0]["external_metrics_by_study"].items()),
+    ):
+        item = cell_type_records[0]
+        cell_type = item["cell_type"]
+        evaluation = prediction_tables[cell_type].loc[
+            prediction_tables[cell_type]["study"].astype(str) == study
+        ]
+        calibrators = calibration_predictions.loc[
+            calibration_predictions["study"].astype(str) == study
+        ]
+        sns.scatterplot(
+            data=calibrators, x="age", y="predicted_age", marker="^",
+            s=70, alpha=0.85, label="Calibration donors (leave-one-out)", ax=axis,
+        )
+        sns.scatterplot(
+            data=evaluation, x="age", y="predicted_age", s=42,
+            label="Evaluation donors (raw)", ax=axis,
+        )
+        if "posthoc_calibrated_age" in evaluation:
+            sns.scatterplot(
+                data=evaluation, x="age", y="posthoc_calibrated_age",
+                marker="X", s=48, label="Evaluation donors (post-hoc)", ax=axis,
+            )
+        values = np.concatenate([
+            calibrators["age"].to_numpy(float),
+            calibrators["predicted_age"].to_numpy(float),
+            evaluation["age"].to_numpy(float),
+            evaluation["predicted_age"].to_numpy(float),
+            evaluation.get(
+                "posthoc_calibrated_age", pd.Series(dtype=float)
+            ).dropna().to_numpy(float),
+        ])
+        limits = [float(np.nanmin(values)), float(np.nanmax(values))]
+        axis.plot(limits, limits, color="#333333", linestyle="--", linewidth=1)
+        axis.set(
+            xlim=limits, ylim=limits, title=study,
+            xlabel="Observed age (years)", ylabel="Predicted age (years)",
+        )
+        axis.legend(fontsize=8)
+    figure.suptitle("Age-aware clock: exploratory post-hoc calibration", y=1.02)
+    figure.tight_layout()
+    display_accessible_figure(
+        figure,
+        alt_text=(
+            "Observed versus predicted ages by external study, showing leave-one-out "
+            "calibration donor predictions and raw and post-hoc evaluation predictions."
+        ),
+    )
 
 figure, axes = plt.subplots(1, len(cell_type_records), figsize=(7 * len(cell_type_records), 4.5),
                             squeeze=False)

@@ -52,6 +52,7 @@ class AgeAwareStudyReference:
     age_slope: np.ndarray
     age_center: float
     study_offsets: dict[str, np.ndarray]
+    male_effect: np.ndarray | None = None
 
 
 @dataclass
@@ -82,6 +83,8 @@ class ClockMethod:
     equal_study_weight: bool = False
     within_study_zscore: bool = False
     age_aware_study_offset: bool = False
+    sex_adjusted_study_offset: bool = False
+    posthoc_age_calibration: bool = False
     weighted_steps: tuple[str, ...] = ("scale", "regression")
     gene_selector: Callable[[object, list[str]], list[str]] | None = None
 
@@ -178,6 +181,28 @@ def _clock_methods(alphas: list[float], l1_ratios: list[float]) -> list[ClockMet
                 "standard deviation; model intercept fitted"
             ),
             age_aware_study_offset=True,
+            posthoc_age_calibration=True,
+        ),
+        ClockMethod(
+            name="age_sex_aware_study_offset_elastic_net",
+            display_name="Age-and-sex-aware study-offset elastic net",
+            description=(
+                "Fits gene-wise sex main effects, a shared age slope, and additive "
+                "training-study offsets. Known-age, known-sex target donors estimate "
+                "a study offset; sex is not a predictor in the elastic net."
+            ),
+            estimator_factory=_elastic_net_pipeline,
+            parameter_grid=common_grid,
+            default_parameters={"regression__alpha": 0.1, "regression__l1_ratio": 0.5},
+            feature_representation=(
+                "log-CPM with age- and sex-adjusted additive study-offset correction"
+            ),
+            scaling_description=(
+                "age- and sex-aware additive study-offset correction, then "
+                "training-only standard deviation; model intercept fitted"
+            ),
+            age_aware_study_offset=True,
+            sex_adjusted_study_offset=True,
         ),
     ]
 
@@ -251,6 +276,48 @@ def _metadata_for_type(adata, pipeline: dict, cell_type: str) -> tuple[pd.DataFr
             "n_eligible_samples": int((keep & in_study).sum()),
         }
     return obs.loc[keep].copy(), counts
+
+
+def _sex_values(metadata: pd.DataFrame) -> np.ndarray:
+    """Return validated canonical sex labels for sex-aware site adjustment."""
+    if "sex" not in metadata:
+        raise ValueError("Sex-adjusted study offsets require pseudobulk 'sex' metadata")
+    sexes = metadata["sex"].astype("string").str.strip().str.lower()
+    invalid = sexes.isna() | ~sexes.isin(["female", "male"])
+    if invalid.any():
+        values = sorted(sexes.loc[invalid].fillna("<missing>").astype(str).unique())
+        raise ValueError(
+            "Sex-adjusted study offsets require female/male labels; "
+            f"found {values}"
+        )
+    return sexes.astype(str).to_numpy()
+
+
+def _sex_adjustment_unavailability(
+    train_meta: pd.DataFrame,
+    external_meta: pd.DataFrame,
+    train_study_ids: list[str],
+    *,
+    cv: bool,
+) -> str | None:
+    """Explain why sex-aware site adjustment cannot be estimated for this run."""
+    try:
+        train_sexes = _sex_values(train_meta)
+        _sex_values(external_meta)
+    except ValueError as error:
+        return str(error)
+    if set(np.unique(train_sexes)) != {"female", "male"}:
+        return "sex-aware study offsets need both female and male training samples"
+    if cv:
+        studies = train_meta["study"].astype(str).to_numpy()
+        for held_out in train_study_ids:
+            fold_sexes = train_sexes[studies != held_out]
+            if set(np.unique(fold_sexes)) != {"female", "male"}:
+                return (
+                    "sex-aware study offsets need both female and male samples in "
+                    f"each CV training fold; fold without {held_out!r} lacks one sex"
+                )
+    return None
 
 
 def _training_gene_names(adata, studies: list[str]) -> list[str]:
@@ -435,6 +502,10 @@ def predict_age_clock(
             )
         metadata = adata.obs.iloc[row_positions]
         ages = pd.to_numeric(metadata["age"], errors="coerce").to_numpy(dtype=float)
+        sexes = (
+            _sex_values(metadata)
+            if bundle.get("sex_adjusted_study_offset", False) else None
+        )
         row_lookup = {position: index for index, position in enumerate(row_positions)}
         calibration_positions = np.asarray(calibration_row_positions, dtype=int)
         if not np.isin(calibration_positions, row_positions).all():
@@ -451,6 +522,7 @@ def predict_age_clock(
         matrix, _, _ = _age_aware_target_correction(
             bundle["age_aware_reference"], matrix, ages,
             metadata["study"].astype(str).to_numpy(), availability,
+            target_sexes=sexes,
             calibration_samples=int(bundle["age_aware_calibration_samples"]),
             seed=0,
             calibration_indices_by_study={
@@ -581,9 +653,9 @@ def _dense_features(matrix) -> np.ndarray:
 
 
 def _fit_age_reference_expression(
-    x, ages: np.ndarray, studies: np.ndarray
+    x, ages: np.ndarray, studies: np.ndarray, sexes: np.ndarray | None = None,
 ) -> AgeAwareStudyReference | None:
-    """Fit a shared age trend and additive, equally weighted study offsets."""
+    """Fit shared age/optional sex trends and equally weighted study offsets."""
     values = _dense_features(x)
     ages = np.asarray(ages, dtype=float)
     studies = np.asarray(studies, dtype=str)
@@ -593,12 +665,30 @@ def _fit_age_reference_expression(
     if not study_levels or len(np.unique(ages)) < 2:
         return None
 
+    male_indicator = None
+    if sexes is not None:
+        sexes = np.asarray(sexes, dtype=str)
+        if len(sexes) != len(ages):
+            raise ValueError("Age-reference sexes must align with expression rows")
+        if not set(np.unique(sexes)).issubset({"female", "male"}):
+            raise ValueError("Sex-adjusted study offsets require female/male sex labels")
+        if set(np.unique(sexes)) != {"female", "male"}:
+            raise ValueError(
+                "Sex-adjusted study offsets need both female and male training samples"
+            )
+        male_indicator = (sexes == "male").astype(float)
+
     age_center = float(ages.mean())
-    design = np.column_stack([
+    design_columns = [
         np.ones(len(ages)),
         ages - age_center,
-        *((studies == study).astype(float) for study in study_levels[1:]),
-    ])
+    ]
+    if male_indicator is not None:
+        design_columns.append(male_indicator)
+    design_columns.extend(
+        (studies == study).astype(float) for study in study_levels[1:]
+    )
+    design = np.column_stack(design_columns)
     study_counts = pd.Series(studies).value_counts().to_dict()
     row_weights = np.asarray([1.0 / study_counts[study] for study in studies])
     sqrt_weights = np.sqrt(row_weights)
@@ -609,8 +699,9 @@ def _fit_age_reference_expression(
     )
     if rank < design.shape[1]:
         return None
+    study_start = 2 + int(male_indicator is not None)
     study_intercepts = {study_levels[0]: coefficients[0]}
-    for index, study in enumerate(study_levels[1:], start=2):
+    for index, study in enumerate(study_levels[1:], start=study_start):
         study_intercepts[study] = coefficients[0] + coefficients[index]
     intercept = np.mean(list(study_intercepts.values()), axis=0)
     offsets = {
@@ -622,16 +713,26 @@ def _fit_age_reference_expression(
         age_slope=coefficients[1],
         age_center=age_center,
         study_offsets=offsets,
+        male_effect=(coefficients[2] if male_indicator is not None else None),
     )
 
 
 def _age_reference_values(
-    reference: AgeAwareStudyReference, ages: np.ndarray
+    reference: AgeAwareStudyReference, ages: np.ndarray,
+    sexes: np.ndarray | None = None,
 ) -> np.ndarray:
     """Evaluate the mean-across-training-studies expression trend at each age."""
-    return reference.intercept[None, :] + (
+    values = reference.intercept[None, :] + (
         np.asarray(ages, dtype=float)[:, None] - reference.age_center
     ) * reference.age_slope[None, :]
+    if reference.male_effect is not None:
+        if sexes is None:
+            raise ValueError("Sex-adjusted age reference requires sex labels")
+        sexes = np.asarray(sexes, dtype=str)
+        if not set(np.unique(sexes)).issubset({"female", "male"}):
+            raise ValueError("Sex-adjusted study offsets require female/male sex labels")
+        values += (sexes == "male")[:, None] * reference.male_effect[None, :]
+    return values
 
 
 def _correct_training_study_offsets(
@@ -653,6 +754,7 @@ def _age_aware_target_correction(
     target_studies: np.ndarray,
     gene_availability_by_study: dict[str, np.ndarray],
     *,
+    target_sexes: np.ndarray | None = None,
     calibration_samples: int,
     seed: int,
     calibration_indices_by_study: dict[str, np.ndarray] | None = None,
@@ -663,6 +765,12 @@ def _age_aware_target_correction(
     values = _dense_features(x_target)
     target_ages = np.asarray(target_ages, dtype=float)
     target_studies = np.asarray(target_studies, dtype=str)
+    if reference.male_effect is not None:
+        if target_sexes is None:
+            raise ValueError("Sex-adjusted study-offset correction requires sex labels")
+        target_sexes = np.asarray(target_sexes, dtype=str)
+        if len(target_sexes) != len(target_ages):
+            raise ValueError("Target sexes must align with expression rows")
     corrected = values.copy()
     evaluation_mask = np.ones(len(values), dtype=bool)
     records = []
@@ -698,7 +806,11 @@ def _age_aware_target_correction(
         evaluation_indices = study_indices[study_evaluation]
         shift = (
             values[calibration_indices]
-            - _age_reference_values(reference, target_ages[calibration_indices])
+            - _age_reference_values(
+                reference,
+                target_ages[calibration_indices],
+                target_sexes[calibration_indices] if target_sexes is not None else None,
+            )
         ).mean(axis=0)
         if not np.isfinite(shift).all():
             raise ValueError(
@@ -725,6 +837,61 @@ def _age_aware_target_correction(
             "mean_absolute_expression_shift": float(np.abs(shift[gene_available]).mean()),
         })
     return corrected, evaluation_mask, records
+
+
+def _crossfit_target_calibration_predictions(
+    *,
+    estimator,
+    reference: AgeAwareStudyReference,
+    x_target,
+    target_ages: np.ndarray,
+    target_studies: np.ndarray,
+    calibration_mask: np.ndarray,
+    gene_availability_by_study: dict[str, np.ndarray],
+    target_sexes: np.ndarray | None,
+    seed: int,
+    sample_ids: np.ndarray,
+) -> pd.DataFrame:
+    """Predict calibration donors using offsets estimated without each donor."""
+    values = _dense_features(x_target)
+    ages = np.asarray(target_ages, dtype=float)
+    studies = np.asarray(target_studies, dtype=str)
+    calibration_mask = np.asarray(calibration_mask, dtype=bool)
+    ids = np.asarray(sample_ids, dtype=str)
+    sexes = np.asarray(target_sexes, dtype=str) if target_sexes is not None else None
+    rows = []
+    for study in sorted(np.unique(studies)):
+        study_rows = np.flatnonzero(studies == study)
+        calibrators = study_rows[calibration_mask[study_rows]]
+        if len(calibrators) < 2:
+            continue
+        global_to_local = {position: index for index, position in enumerate(study_rows)}
+        study_sexes = sexes[study_rows] if sexes is not None else None
+        for held_out in calibrators:
+            fit_calibrators = calibrators[calibrators != held_out]
+            local_calibrators = np.asarray(
+                [global_to_local[position] for position in fit_calibrators], dtype=int
+            )
+            corrected, _, _ = _age_aware_target_correction(
+                reference,
+                values[study_rows],
+                ages[study_rows],
+                studies[study_rows],
+                {study: gene_availability_by_study[study]},
+                target_sexes=study_sexes,
+                calibration_samples=len(local_calibrators),
+                seed=seed,
+                calibration_indices_by_study={study: local_calibrators},
+            )
+            local_held_out = global_to_local[held_out]
+            prediction = estimator.predict(corrected[local_held_out:local_held_out + 1])[0]
+            rows.append({
+                "sample_id": ids[held_out],
+                "study": study,
+                "age": float(ages[held_out]),
+                "predicted_age": float(prediction),
+            })
+    return pd.DataFrame(rows, columns=["sample_id", "study", "age", "predicted_age"])
 
 
 def fit_age_clocks(
@@ -878,6 +1045,22 @@ def fit_age_clocks(
         if not requested_methods:
             raise ValueError("At least one age-clock method must be selected")
         methods = [method for method in available_methods if method.name in requested_methods]
+    skipped_methods = []
+    eligible_methods = []
+    for method in methods:
+        if method.sex_adjusted_study_offset:
+            reason = _sex_adjustment_unavailability(
+                train_meta, external_meta, train_study_ids, cv=cv
+            )
+            if reason is not None:
+                if method_names is not None:
+                    raise ValueError(f"{method.name} cannot run: {reason}")
+                LOGGER.warning("Skipping age-clock method %s: %s", method.name, reason)
+                skipped_methods.append({"method": method.name, "reason": reason})
+                continue
+        eligible_methods.append(method)
+    methods = eligible_methods
+    manifest["skipped_methods"] = skipped_methods
     manifest["selected_methods"] = [method.name for method in methods]
     if any(method.age_aware_study_offset for method in methods) and calibration_samples < 1:
         raise ValueError(
@@ -921,10 +1104,19 @@ def fit_age_clocks(
                         train_meta.iloc[validation_indices]["study"].to_numpy(),
                     )
                 elif method.age_aware_study_offset:
+                    fold_train_sexes = (
+                        _sex_values(fold_train_meta)
+                        if method.sex_adjusted_study_offset else None
+                    )
+                    validation_sexes = (
+                        _sex_values(validation_meta)
+                        if method.sex_adjusted_study_offset else None
+                    )
                     reference = _fit_age_reference_expression(
                         x_fit,
                         y_train[fit_indices],
                         fold_train_meta["study"].to_numpy(dtype=str),
+                        sexes=fold_train_sexes,
                     )
                     if reference is None:
                         raise ClockEligibilityError(
@@ -943,6 +1135,7 @@ def fit_age_clocks(
                             {held_out_study: _gene_availability_for_study(
                                 adata, fold_genes, held_out_study
                             )},
+                            target_sexes=validation_sexes,
                             calibration_samples=calibration_samples,
                             seed=calibration_seed,
                         )
@@ -1079,8 +1272,13 @@ def fit_age_clocks(
                 x_final, train_meta["study"].to_numpy()
             )
         elif method.age_aware_study_offset:
+            train_sexes = (
+                _sex_values(train_meta)
+                if method.sex_adjusted_study_offset else None
+            )
             age_aware_reference = _fit_age_reference_expression(
-                x_final, y_train, train_meta["study"].to_numpy(dtype=str)
+                x_final, y_train, train_meta["study"].to_numpy(dtype=str),
+                sexes=train_sexes,
             )
             if age_aware_reference is None:
                 raise ClockEligibilityError(
@@ -1120,12 +1318,22 @@ def fit_age_clocks(
         x_external = _log_cpm(adata, external_positions, genes)
         external_zscore_diagnostics = []
         age_aware_calibration = []
+        external_sexes = None
+        posthoc_calibration_predictions = pd.DataFrame(
+            columns=["sample_id", "study", "age", "predicted_age"]
+        )
+        posthoc_calibration_by_study = {}
+        posthoc_metrics_by_study = {}
         external_evaluation_mask = np.ones(len(external_meta), dtype=bool)
         if method.within_study_zscore:
             x_external, external_zscore_diagnostics = within_study_gene_zscore(
                 x_external, external_meta["study"].to_numpy()
             )
         elif method.age_aware_study_offset:
+            external_sexes = (
+                _sex_values(external_meta)
+                if method.sex_adjusted_study_offset else None
+            )
             x_external, external_evaluation_mask, age_aware_calibration = (
                 _age_aware_target_correction(
                     item["age_aware_reference"],
@@ -1136,6 +1344,7 @@ def fit_age_clocks(
                         study: _gene_availability_for_study(adata, genes, study)
                         for study in external_meta["study"].astype(str).unique()
                     },
+                    target_sexes=external_sexes,
                     calibration_samples=calibration_samples,
                     seed=calibration_seed,
                 )
@@ -1164,6 +1373,59 @@ def fit_age_clocks(
             )
         predictions["predicted_age"] = predicted
         predictions["age_error_years"] = predicted - predictions["age"].to_numpy(float)
+        if method.posthoc_age_calibration:
+            posthoc_calibration_predictions = _crossfit_target_calibration_predictions(
+                estimator=estimator,
+                reference=item["age_aware_reference"],
+                x_target=x_external,
+                target_ages=external_meta["age"].to_numpy(dtype=float),
+                target_studies=external_meta["study"].to_numpy(dtype=str),
+                calibration_mask=~external_evaluation_mask,
+                gene_availability_by_study={
+                    study: _gene_availability_for_study(adata, genes, study)
+                    for study in external_meta["study"].astype(str).unique()
+                },
+                target_sexes=external_sexes,
+                seed=calibration_seed,
+                sample_ids=external_meta.index.to_numpy(dtype=str),
+            )
+            posthoc_predictions = np.full(len(predictions), np.nan, dtype=float)
+            for study, calibration_group in posthoc_calibration_predictions.groupby(
+                "study", observed=True, sort=True
+            ):
+                study_mask = predictions["study"].astype(str).to_numpy() == str(study)
+                study_positions = np.flatnonzero(study_mask)
+                status = {
+                    "study": str(study),
+                    "n_calibration_predictions": len(calibration_group),
+                }
+                if len(calibration_group) < 3:
+                    status["status"] = "skipped: fewer than three cross-fitted calibration predictions"
+                    posthoc_calibration_by_study[str(study)] = status
+                    continue
+                calibration_x = calibration_group["predicted_age"].to_numpy(float)
+                calibration_y = calibration_group["age"].to_numpy(float)
+                if np.unique(calibration_x).size < 2:
+                    status["status"] = "skipped: calibration predictions have no variation"
+                    posthoc_calibration_by_study[str(study)] = status
+                    continue
+                slope, intercept = np.polyfit(calibration_x, calibration_y, 1)
+                calibrated = intercept + slope * predictions.iloc[
+                    study_positions
+                ]["predicted_age"].to_numpy(float)
+                posthoc_predictions[study_positions] = calibrated
+                posthoc_metrics_by_study[str(study)] = _metrics(
+                    predictions.iloc[study_positions]["age"], calibrated
+                )
+                status.update({
+                    "status": "fitted",
+                    "slope": float(slope),
+                    "intercept_years": float(intercept),
+                    "external_metrics": posthoc_metrics_by_study[str(study)],
+                })
+                posthoc_calibration_by_study[str(study)] = status
+            if posthoc_calibration_by_study:
+                predictions["posthoc_calibrated_age"] = posthoc_predictions
         metrics_by_study = {
             str(study): _metrics(group["age"], group["predicted_age"].to_numpy(float))
             for study, group in predictions.groupby("study", observed=True, sort=True)
@@ -1186,6 +1448,8 @@ def fit_age_clocks(
             "training_weighting": "equal total weight per study" if method.equal_study_weight else "equal weight per sample",
             "within_study_zscore": method.within_study_zscore,
             "age_aware_study_offset": method.age_aware_study_offset,
+            "sex_adjusted_study_offset": method.sex_adjusted_study_offset,
+            "posthoc_age_calibration": method.posthoc_age_calibration,
             "cell_type": selected_cell_type,
             "n_genes": len(genes),
             "n_training_samples": len(train_meta),
@@ -1207,10 +1471,13 @@ def fit_age_clocks(
             "external_metrics_by_study": metrics_by_study,
             "external_metrics_pooled": _metrics(predictions["age"], predicted),
             "external_metrics_macro_study_mae_years": _mean_study_mae(predictions),
+            "posthoc_age_calibration_by_study": posthoc_calibration_by_study,
+            "posthoc_external_metrics_by_study": posthoc_metrics_by_study,
         }
         item.update({
             "predictions": predictions,
             "age_aware_calibration": age_aware_calibration,
+            "posthoc_calibration_predictions": posthoc_calibration_predictions,
             "coefficients": coefficients,
             "model": model,
             "result": result,
@@ -1269,6 +1536,14 @@ def publish_age_clock_fit(fit: ClockFit, output_dir: Path) -> dict:
         result["model"] = str(method_dir / "model.joblib")
         result["predictions"] = str(method_dir / "external_predictions.csv")
         item["predictions"].to_csv(method_dir / "external_predictions.csv", index=True)
+        posthoc_calibration_predictions = item.get(
+            "posthoc_calibration_predictions", pd.DataFrame()
+        )
+        posthoc_path = method_dir / "posthoc_calibration_predictions.csv"
+        if not posthoc_calibration_predictions.empty:
+            posthoc_calibration_predictions.to_csv(posthoc_path, index=False)
+        else:
+            posthoc_path.unlink(missing_ok=True)
         calibration_path = method_dir / "external_expression_calibration_repeats.csv"
         calibration_path.unlink(missing_ok=True)
         coefficients = item["coefficients"]
@@ -1295,6 +1570,7 @@ def publish_age_clock_fit(fit: ClockFit, output_dir: Path) -> dict:
             "normalization": manifest["normalization"],
             "within_study_zscore": method.within_study_zscore,
             "age_aware_study_offset": method.age_aware_study_offset,
+            "sex_adjusted_study_offset": method.sex_adjusted_study_offset,
             "age_aware_reference": item["age_aware_reference"],
             "age_aware_calibration_samples": manifest[
                 "age_aware_study_offset_calibration"

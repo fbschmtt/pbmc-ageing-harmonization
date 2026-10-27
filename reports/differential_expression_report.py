@@ -2591,41 +2591,58 @@ if de_dir:
                                 support_samples = developmental_support_samples.dropna(
                                     subset=[support_column, "age"],
                                 ).copy()
-                                support_order = sorted(
-                                    support_samples[support_column].astype(str).unique()
+                                juvenile_boundary = float(
+                                    developmental_age_fit.get(
+                                        "developmental_age_range", {}
+                                    ).get("maximum_age_years_exclusive", 20)
                                 )
-                                figure, axis = plt.subplots(
-                                    figsize=(max(10, 0.42 * len(support_order) + 5), 4.8)
+                                support_samples["age"] = pd.to_numeric(
+                                    support_samples["age"], errors="coerce"
                                 )
-                                sns.stripplot(
-                                    data=support_samples,
-                                    x=support_column,
-                                    y="age",
-                                    hue="sex" if "sex" in support_samples else None,
-                                    order=support_order,
-                                    hue_order=(
-                                        sorted(support_samples["sex"].dropna().astype(str).unique())
-                                        if "sex" in support_samples else None
-                                    ),
-                                    dodge="sex" in support_samples,
-                                    jitter=0.18,
-                                    alpha=0.8,
-                                    ax=axis,
-                                )
-                                axis.set_xlabel(
-                                    "Study site" if support_column == "study_site" else "Study"
-                                )
-                                axis.set_ylabel("Age (years)")
-                                axis.set_title("Age support by study site (juvenile <20, adult ≥20 years)")
-                                axis.tick_params(axis="x", rotation=75, labelsize=7)
-                                if axis.legend_ is not None:
-                                    axis.legend(title="Sex", fontsize=8, title_fontsize=8)
-                                figure.tight_layout()
-                                display_collapsible_figure(
-                                    figure,
-                                    "Juvenile and adult age support by study site",
-                                    open_by_default=True,
-                                )
+                                support_samples = support_samples.loc[
+                                    support_samples["age"] < juvenile_boundary
+                                ].copy()
+                            if support_path.is_file() and not developmental_support_samples.empty:
+                                if not support_samples.empty:
+                                    support_order = sorted(
+                                        support_samples[support_column].astype(str).unique()
+                                    )
+                                    figure, axis = plt.subplots(
+                                        figsize=(max(10, 0.42 * len(support_order) + 5), 4.8)
+                                    )
+                                    sns.stripplot(
+                                        data=support_samples,
+                                        x=support_column,
+                                        y="age",
+                                        hue="sex" if "sex" in support_samples else None,
+                                        order=support_order,
+                                        hue_order=(
+                                            sorted(support_samples["sex"].dropna().astype(str).unique())
+                                            if "sex" in support_samples else None
+                                        ),
+                                        dodge="sex" in support_samples,
+                                        jitter=0.18,
+                                        alpha=0.8,
+                                        ax=axis,
+                                    )
+                                    axis.set_xlabel(
+                                        "Study site" if support_column == "study_site" else "Study"
+                                    )
+                                    axis.set_ylabel("Age (years)")
+                                    axis.set_title(
+                                        f"Juvenile age support by study site (age <{juvenile_boundary:g})"
+                                    )
+                                    axis.tick_params(axis="x", rotation=75, labelsize=7)
+                                    if axis.legend_ is not None:
+                                        axis.legend(title="Sex", fontsize=8, title_fontsize=8)
+                                    figure.tight_layout()
+                                    display_collapsible_figure(
+                                        figure,
+                                        "Juvenile sample age support by study site",
+                                        open_by_default=True,
+                                    )
+                                else:
+                                    display(Markdown("_No juvenile samples were retained for the shared age model._"))
                             else:
                                 display(Markdown("_No samples were retained for the shared age model._"))
                         else:
@@ -2634,8 +2651,8 @@ if de_dir:
                             ))
                         display(Markdown(
                             "Each point is a gene from one joint model fit across all eligible ages. "
-                            "The model shares study-site intercepts across age groups and estimates "
-                            "separate juvenile (<20 years) and adult (≥20 years) age slopes. The "
+                            "It includes separate juvenile and adult intercepts at the age-group "
+                            "boundary and estimates a within-group slope for each group. The "
                             "juvenile slope is the adult age coefficient plus the juvenile-by-age "
                             "interaction. Points require a non-missing adjusted p-value for both "
                             "slope contrasts; no significance cutoff is used. Both panels use the "
@@ -2715,6 +2732,84 @@ if de_dir:
                                 f"(n={len(plot_age_effects):,} genes)"
                             )
                             plt.show()
+                        age_25_vs_5_path = Path(de_dir) / developmental_age_fit.get(
+                            "results_by_covariate", {}
+                        ).get("age_25_vs_5", "")
+                        if age_25_vs_5_path.is_file():
+                            age_25_vs_5 = pd.read_csv(age_25_vs_5_path)
+                            if required_age_columns.issubset(age_25_vs_5.columns):
+                                predicted_effects = developmental_age[
+                                    ["gene", "log2FoldChange"]
+                                ].rename(columns={
+                                    "log2FoldChange": "juvenile_effect",
+                                }).merge(
+                                    age_25_vs_5[["gene", "log2FoldChange", "padj"]].rename(
+                                        columns={
+                                            "log2FoldChange": "age_25_vs_5_effect",
+                                            "padj": "age_25_vs_5_padj",
+                                        }
+                                    ),
+                                    on="gene", how="inner", validate="one_to_one",
+                                )
+                                predicted_effects["age_25_vs_5_padj"] = pd.to_numeric(
+                                    predicted_effects["age_25_vs_5_padj"], errors="coerce"
+                                )
+                                predicted_effects = predicted_effects.replace(
+                                    [np.inf, -np.inf], np.nan
+                                ).dropna(subset=[
+                                    "juvenile_effect", "age_25_vs_5_effect",
+                                ])
+                                if not predicted_effects.empty:
+                                    figure, axis = plt.subplots(figsize=(8.4, 6.4))
+                                    valid_padj = predicted_effects["age_25_vs_5_padj"].between(0, 1)
+                                    significant_25_vs_5 = (
+                                        valid_padj
+                                        & (predicted_effects["age_25_vs_5_padj"] < developmental_alpha)
+                                    )
+                                    not_significant_25_vs_5 = valid_padj & ~significant_25_vs_5
+                                    missing_padj_25_vs_5 = ~valid_padj
+                                    for mask, color, label in (
+                                        (not_significant_25_vs_5, "#aab4bf", "Not FDR significant"),
+                                        (significant_25_vs_5, "#c44e52", f"FDR < {developmental_alpha:g}"),
+                                        (missing_padj_25_vs_5, "#d8cdb3", "No adjusted p-value"),
+                                    ):
+                                        if mask.any():
+                                            axis.scatter(
+                                                predicted_effects.loc[mask, "juvenile_effect"],
+                                                predicted_effects.loc[mask, "age_25_vs_5_effect"],
+                                                color=color, s=16, alpha=0.65,
+                                                linewidths=0, label=label,
+                                            )
+                                    axis.axhline(0, color="#666666", linewidth=0.8)
+                                    axis.axvline(0, color="#666666", linewidth=0.8)
+                                    x_limit = max(
+                                        float(predicted_effects["juvenile_effect"].abs().max()) * 1.05,
+                                        0.01,
+                                    )
+                                    y_limit = max(
+                                        float(predicted_effects["age_25_vs_5_effect"].abs().max()) * 1.05,
+                                        0.01,
+                                    )
+                                    axis.set(
+                                        xlim=(-x_limit, x_limit),
+                                        ylim=(-y_limit, y_limit),
+                                        xlabel="Juvenile age effect (age <20 years)\n"
+                                        "raw log2 fold change per year",
+                                        ylabel="Predicted age 25 vs age 5\n"
+                                        "log2 fold change",
+                                        title=(
+                                            f"{cell_type_name}: juvenile slope versus "
+                                            f"predicted age 25 vs age 5 "
+                                            f"(n={len(predicted_effects):,} genes)"
+                                        ),
+                                    )
+                                    axis.legend(frameon=True, fontsize=8)
+                                    figure.tight_layout()
+                                    display_collapsible_figure(
+                                        figure,
+                                        "Juvenile age effect versus predicted age 25 vs age 5",
+                                        open_by_default=True,
+                                    )
                         if not developmental_volcano.empty:
                             developmental_volcano["minus_log10_padj"] = -np.log10(
                                 developmental_volcano["padj"].clip(
