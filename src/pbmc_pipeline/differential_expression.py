@@ -738,7 +738,7 @@ def _prepare_developmental_metadata(
     return metadata.loc[~at_or_above_maximum].copy(), support, exclusions, excluded
 
 
-def _load_pseudobulk(input_path: Path, pipeline: dict):
+def _load_pseudobulk(input_path: Path, pipeline: dict, *, backed: bool = False):
     """Load and validate the merged pseudobulk input and its configured labels."""
     import anndata as ad
 
@@ -746,20 +746,25 @@ def _load_pseudobulk(input_path: Path, pipeline: dict):
     if spec["method"] != "pydeseq2":
         raise ValueError("Only the configured PyDESeq2 method is supported")
     split_by = spec["split_by"]
-    adata = ad.read_h5ad(input_path)
-    required = {
-        "study", "study_site", "sample", "age", "sex", "n_cells", "total_counts", split_by,
-    }
-    missing = sorted(required - set(adata.obs.columns))
-    if missing:
-        raise ValueError(f"{input_path}: pseudobulk metadata columns are missing: {missing}")
-    if not adata.obs_names.is_unique:
-        raise ValueError(f"{input_path}: pseudobulk identifiers must be unique")
-    if not adata.var_names.is_unique:
-        raise ValueError(f"{input_path}: gene identifiers must be unique")
-    labels = adata.obs[split_by].astype("string")
-    if labels.isna().any() or (labels.str.strip() == "").any():
-        raise ValueError(f"{input_path}: split column {split_by!r} contains missing labels")
+    adata = ad.read_h5ad(input_path, backed="r") if backed else ad.read_h5ad(input_path)
+    try:
+        required = {
+            "study", "study_site", "sample", "age", "sex", "n_cells", "total_counts", split_by,
+        }
+        missing = sorted(required - set(adata.obs.columns))
+        if missing:
+            raise ValueError(f"{input_path}: pseudobulk metadata columns are missing: {missing}")
+        if not adata.obs_names.is_unique:
+            raise ValueError(f"{input_path}: pseudobulk identifiers must be unique")
+        if not adata.var_names.is_unique:
+            raise ValueError(f"{input_path}: gene identifiers must be unique")
+        labels = adata.obs[split_by].astype("string")
+        if labels.isna().any() or (labels.str.strip() == "").any():
+            raise ValueError(f"{input_path}: split column {split_by!r} contains missing labels")
+    except Exception:
+        if backed:
+            adata.file.close()
+        raise
     return adata, spec, labels
 
 
@@ -835,9 +840,12 @@ def _sample_abundance_input(
 
 
 def list_pseudobulk_cell_types(input_path: Path, pipeline: dict) -> list[tuple[str, str]]:
-    """List configured split labels without creating any per-type pseudobulk files."""
-    _, _, labels = _load_pseudobulk(input_path, pipeline)
-    return _cell_type_index(labels)
+    """List configured split labels without loading the expression matrix."""
+    adata, _, labels = _load_pseudobulk(input_path, pipeline, backed=True)
+    try:
+        return _cell_type_index(labels)
+    finally:
+        adata.file.close()
 
 
 def _run_cell_type_differential_expression(

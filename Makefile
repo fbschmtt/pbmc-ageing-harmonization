@@ -206,18 +206,15 @@ check-de-prerequisites:
 	fi
 
 run-de: check-de-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Fit pseudobulk DE models and render per-type DE reports
-	$(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression -work-dir $(WORK_DIR) --outdir $(OUTDIR) --pseudobulk_input "$(PSEUDOBULK_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume
-	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
+	status=0; $(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression -work-dir $(WORK_DIR) --outdir $(OUTDIR) --pseudobulk_input "$(PSEUDOBULK_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume || status=$$?; python3 scripts/render_report_index.py --outdir "$(OUTDIR)"; index_status=$$?; test $$status -ne 0 || status=$$index_status; exit $$status
 
 run-de-test: OUTDIR = output/test
 run-de-test: PSEUDOBULK_INPUT = output/test/harmonization/merged/pseudobulk_merged.h5ad
 run-de-test: check-de-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Fit DE and render per-type reports from an existing test pseudobulk merge
-	$(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --pseudobulk_input "$(PSEUDOBULK_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
-	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
+	status=0; $(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --pseudobulk_input "$(PSEUDOBULK_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) || status=$$?; python3 scripts/render_report_index.py --outdir "$(OUTDIR)"; index_status=$$?; test $$status -ne 0 || status=$$index_status; exit $$status
 
 render-de-reports: image-python ## Render per-type DE reports from existing model results
-	$(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression -work-dir $(WORK_DIR) --outdir $(OUTDIR) --per_type_de_dir "$(PER_TYPE_DIR)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume
-	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
+	status=0; $(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression -work-dir $(WORK_DIR) --outdir $(OUTDIR) --per_type_de_dir "$(PER_TYPE_DIR)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume || status=$$?; python3 scripts/render_report_index.py --outdir "$(OUTDIR)"; index_status=$$?; test $$status -ne 0 || status=$$index_status; exit $$status
 
 render-de-reports-test: OUTDIR = output/test
 render-de-reports-test: PER_TYPE_DIR = $(OUTDIR)/analysis/per_type

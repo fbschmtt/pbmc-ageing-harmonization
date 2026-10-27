@@ -9,30 +9,67 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
+from datetime import datetime, timezone
 from pathlib import Path
+
+import psutil
 
 from .report_toc import populate_html_toc, set_notebook_title
 
 
 def _run_report_command(command, *, cwd: Path, env: dict[str, str], log_path: Path) -> None:
-    """Record notebook rendering commands and surface a useful failure."""
-    result = subprocess.run(
-        command, cwd=cwd, env=env, capture_output=True, text=True, check=False,
-    )
-    with log_path.open("a") as log:
-        log.write(f"$ {shlex.join(command)}\n")
-        for stream in (result.stdout, result.stderr):
-            if stream:
-                log.write(stream)
-                if not stream.endswith("\n"):
-                    log.write("\n")
-    if result.returncode:
-        if result.stdout:
-            sys.stdout.write(result.stdout)
-        if result.stderr:
-            sys.stderr.write(result.stderr)
+    """Stream and timestamp report commands so long renders remain observable."""
+    started_at = time.monotonic()
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with log_path.open("a", buffering=1) as log:
+        log.write(f"[{timestamp}] START $ {shlex.join(command)}\n")
+        process = subprocess.Popen(
+            command, cwd=cwd, env=env, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, bufsize=1,
+        )
+        assert process.stdout is not None
+        stop_monitor = threading.Event()
+        log_lock = threading.Lock()
+
+        def log_process_memory() -> None:
+            try:
+                root = psutil.Process(process.pid)
+                while True:
+                    processes = [root, *root.children(recursive=True)]
+                    rss_bytes = sum(proc.memory_info().rss for proc in processes)
+                    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                    with log_lock:
+                        log.write(
+                            f"[{timestamp}] RESOURCE rss_sum_mib={rss_bytes / 1024**2:.1f} "
+                            f"process_count={len(processes)}\n"
+                        )
+                    if stop_monitor.wait(60):
+                        return
+            except (psutil.Error, OSError):
+                return
+
+        monitor = threading.Thread(target=log_process_memory, daemon=True)
+        monitor.start()
+        tail = ""
+        for line in process.stdout:
+            with log_lock:
+                log.write(line)
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            tail = (tail + line)[-8192:]
+        returncode = process.wait()
+        stop_monitor.set()
+        monitor.join()
+        elapsed = time.monotonic() - started_at
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        log.write(
+            f"[{timestamp}] END exit_code={returncode} elapsed_seconds={elapsed:.1f}\n"
+        )
+    if returncode:
         raise subprocess.CalledProcessError(
-            result.returncode, command, output=result.stdout, stderr=result.stderr,
+            returncode, command, output=tail,
         )
 
 

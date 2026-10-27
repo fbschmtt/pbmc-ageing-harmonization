@@ -95,6 +95,7 @@ process RENDER_CROSS_CELL_TYPE_ANALYSIS_REPORT {
 
 process RENDER_PER_TYPE_DIFFERENTIAL_EXPRESSION_REPORTS {
     tag { slug }
+    errorStrategy 'ignore'
     publishDir "${params.outdir}/analysis/per_type", mode: 'copy', overwrite: true,
         saveAs: { filename ->
             filename.startsWith("${slug}/differential_expression/") ? filename : null
