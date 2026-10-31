@@ -73,7 +73,10 @@ It runs the core pipeline on available downsampled real-data fixtures, checks
 the integration benchmark, fits and checks a generated pseudobulk fixture for
 positive DE coverage, profiles two top age-associated genes per cell type,
 smoke-tests a focused gene report, and renders single cell analysis reports
-from the real merge plus per-type DE reports from the synthetic fixture. The
+for three representative types from the real merge plus per-type DE reports
+from the synthetic fixture. Set `VERIFY_CELL_TYPES` to change this subset.
+Running `make run-cell-type-analysis-test` directly without `CELL_TYPES` still
+analyses all types. The
 benchmark artifact retains cell labels, UMAP coordinates, and neighbour graphs
 without raw counts. Use
 `STUDIES=<list>` to select a different core-test set. Existing fixtures are preserved; use
@@ -462,8 +465,8 @@ which validation to run.
 | Rerender single cell analysis reports from existing analysis artifacts | `make render-cell-type-reports[-test]` | Use `make render-cell-type[-test] CELL_TYPE=<slug>` to refresh one report. |
 | Rerender per-type pseudobulk DE reports from existing model results | `make render-de-reports[-test]` | Runs one render task per cell type. Requires current per-type model outputs and `abundance_input.tsv`; rendering also executes abundance models, residual clustering, and WGCNA. It does not refit PyDESeq2. Rerun `make run-de[-test]` to regenerate missing abundance inputs. |
 | Rebuild the central report index | `make render-report-index` | It is also refreshed automatically after core, integration-benchmark, DE, cell-type, and age-clock workflow targets. |
-| Cell-type splitting or shared analysis | `make run-test`, then `make run-cell-type-analysis-test` | Use `make run-all-test` when the complete ordered test workflow is needed. |
-| Positive pseudobulk DE fitting | `make run-de-synthetic-test` and `make check-synthetic-de-results` | This fixture is independent of the core merge and renders per-type DE plus cross-cell-type reports. To check single cell analysis reports too, run `make run-test`, `make run-cell-type-analysis-test`, and `make check-synthetic-de-reports`. |
+| Cell-type splitting or shared analysis | `make run-test`, then `make run-cell-type-analysis-test CELL_TYPES=<slug,slug>` | Omit `CELL_TYPES` to analyze every type. Use `make run-all-test` only when the ordered workflow is needed. |
+| Positive pseudobulk DE fitting | `make run-de-synthetic-test` and `make check-synthetic-de-results` | This fixture is independent of the core merge and renders per-type DE plus cross-cell-type reports. To also render single-cell reports, run `make run-test` followed by `make run-cell-type-analysis-test CELL_TYPES=<slug,slug>`; omit `CELL_TYPES` to analyze all types. |
 | Cell-type transcriptomic age clocks | `make run-age-clock` | Fits sample-weighted, study-balanced, within-sample rank, within-study gene z-score, age-aware study-offset, and age-and-sex-aware study-offset elastic-net clocks for one type selected with `CELL_TYPE` (default `cd14-monocyte`; label or slug). Set `AGE_CLOCK_METHODS=<comma-separated IDs>` to fit a subset; omit it to fit all eligible methods. The z-score clock is the label-free naïve study normalization: it centers and scales every gene within the available target-study cohort, so it cannot score a single sample. The age-aware clock fits per-gene age trends and additive training-study offsets before regression, then uses `AGE_CLOCK_CALIBRATION_SAMPLES` known-age target donors (default 10) to estimate a target-study offset before predicting the remaining donors. Its calibration donors are excluded from CV and external scores; it is a labeled target-site protocol, not calibration-free deployment. The `age_sex_aware_study_offset_elastic_net` method additionally uses sex to estimate the training and target study offsets; sex is not an ElasticNet predictor, and sex effects remain in its expression features. Its reference fit includes a sex main effect but assumes a shared age slope across sexes. It requires canonical female/male labels in the external samples and both sexes in training and every leave-one-study-out training fold. If all methods are requested and this metadata or overlap is unavailable, the method is recorded under `skipped_methods` in the clock manifest while other methods continue; explicitly requesting this method raises an error. The age-aware method assumes stable age effects, additive site shifts, and reasonably comparable calibration and evaluation populations. The standard `age_aware_study_offset_elastic_net` report also shows an exploratory post-hoc linear age mapping fit from leave-one-calibration-donor-out calibration predictions; it is reported separately from the original external predictions and metrics. Both age-aware methods use pooled training-derived elastic-net feature scaling, not target-study SD scaling. Training and held-out external evaluation apply the shared adult inclusion rule (age ≥20); juvenile pseudobulks are excluded and counted in the inclusion diagnostics. The low-level raw-pseudobulk prediction helper can technically score juveniles, but those predictions are outside this adult clock's validated domain. CV candidates run with `AGE_CLOCK_N_JOBS=20` by default; lower it to limit CPU use. Use `make run-age-clocks` to fit every cell type present in the pseudobulk. It logs and skips types with no eligible samples in any configured training or external study; an unexpected type-specific fit failure is recorded with its traceback in `analysis/per_type/age_clock_all_types_summary.json`, successful types are still reported, and the target then exits nonzero. Defaults to holding out `nehar_belaid26,perez22`; these relatively small studies retain as much training data as possible while spanning a broad validation age range. Override with any comma-separated list via `AGE_CLOCK_EXTERNAL_STUDIES=study_a,study_b`. Per-method reports and a merged comparison go to `analysis/per_type/<slug>/ageing_clock/`. Smoke-test with `make run-age-clock-synthetic-test` and check that expected output files exist with `make check-age-clock-synthetic-test`; both are included in `make run-all-test` and `make verify`. |
 | Focused gene-by-cell-type profile | `make profile-gene CELL_TYPE=<label-or-slug> GENE=<gene-id>` | Use `make run-gene-profile-synthetic-test` to fit and render a planted synthetic gene and check the report end to end. |
 | Top merged age-DE gene profiles | `make profile-top-age-genes-test` | Uses the synthetic DE fixture and profiles two genes per cell type; included in `make run-all-test`. |
@@ -471,9 +474,9 @@ which validation to run.
 | Focused profiles of top merged age-DE genes | `make profile-top-age-genes` | Runs ten profiles per cell type by adjusted p-value; set `TOP_AGE_GENE_COUNT` to change the number. Requires completed merged DE results and pseudobulk input. |
 | Core workflow for one or a few studies | `make run-test STUDIES=<list>` | Omit `STUDIES` for the representative AIDA25/CIMA/Terekhova26 set; use `STUDIES=all` for every available fixture. |
 | Global integration/annotation diagnostics | `make run-integration-benchmark[-test]` | Run after an existing single-cell merge; `make run-all-test` also exercises its test form. |
-| Ordered Docker integration test | `make run-all-test` | Use `make verify` when local lint, unit, and documentation checks are also needed. |
+| Ordered Docker integration test | `make run-all-test` | Includes the synthetic DE, clock, and profile checks plus the default three single-cell types. |
 | Markdown documentation or Make target names | `make docs-check` | Also run the target described by changed commands. |
-| Broad cross-cutting or release validation | `make verify` | This is deliberately non-resumed and uses the representative test set by default; pass `STUDIES=all` for every available fixture. |
+| Broad cross-cutting or release validation | `make verify` | Reserve this non-resumed, full workflow for cross-cutting or release checks. Prefer the focused targets above for routine changes. Pass `STUDIES=all` to use every available fixture. |
 | Production analysis | `make run` | It is resumable; use only after the relevant focused checks pass. |
 
 Nextflow submission alone is not a passing workflow check: confirm each task's
@@ -1042,11 +1045,21 @@ included in `make run-all-test` and `make verify`.
 integration benchmark on available downsampled real-data fixtures, then fits
 the separate synthetic pseudobulk DE fixture and checks its results. The
 synthetic age-clock smoke test creates its own synthetic pseudobulk and checks
-that model, prediction, CV, report, and index files exist, then the suite
+that model, prediction, CV, report, and index files exist. Inside
+`run-all-test` and `verify`, this smoke test defaults to the `elastic_net` clock
+with a one-point CV grid to keep routine verification fast. Set
+`VERIFY_AGE_CLOCK_METHODS` and, if needed, `VERIFY_AGE_CLOCK_ALPHAS` and
+`VERIFY_AGE_CLOCK_L1_RATIOS` to broaden that coverage. Running
+`make run-age-clock-synthetic-test` directly still fits all six clocks on the
+full default CV grid; follow it with `make check-age-clock-synthetic-test` to
+check all six. The suite then
 profiles its top two merged age-DE genes per cell type, runs the focused
 synthetic gene-profile smoke test, renders per-type DE and combined
 cross-cell-type reports from that synthetic fixture, and renders single cell
-analysis reports from the real merge/splits.
+analysis reports for three representative types from the real merge/splits.
+Set `VERIFY_CELL_TYPES` to change this subset. Running
+`make run-cell-type-analysis-test` directly without `CELL_TYPES` still analyses
+all types.
 `make verify` runs it after linting, unit
 tests, Nextflow lint, and documentation checks. `STUDIES=<list>` changes only
 the core test inputs; use `STUDIES=all` for all available fixtures. The synthetic WGCNA fixture exercises the ordinary

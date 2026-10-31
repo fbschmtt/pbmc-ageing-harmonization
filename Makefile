@@ -45,6 +45,12 @@ AGE_CLOCK_EXTERNAL_STUDIES ?= nehar_belaid26,perez22
 AGE_CLOCK_N_JOBS ?= 20
 AGE_CLOCK_METHODS ?=
 AGE_CLOCK_METHOD_ARGS = $(if $(strip $(AGE_CLOCK_METHODS)),--methods "$(AGE_CLOCK_METHODS)",)
+VERIFY_AGE_CLOCK_METHODS ?= elastic_net
+VERIFY_AGE_CLOCK_ALPHAS ?= 0.1
+VERIFY_AGE_CLOCK_L1_RATIOS ?= 0.5
+VERIFY_CELL_TYPES ?= cd14-monocyte,naive-cd4-t-cell,cd56dim-nk-cell
+CELL_TYPE_FILTER_ARGS = $(if $(strip $(CELL_TYPES)),--cell_types "$(CELL_TYPES)",)
+AGE_CLOCK_SEARCH_ARGS = $(if $(strip $(AGE_CLOCK_ALPHAS)),--alphas "$(AGE_CLOCK_ALPHAS)",) $(if $(strip $(AGE_CLOCK_L1_RATIOS)),--l1-ratios "$(AGE_CLOCK_L1_RATIOS)",)
 AGE_CLOCK_CALIBRATION_SAMPLES ?= 10
 AGE_CLOCK_CALIBRATION_SEED ?= 42
 AGE_CLOCK_CALIBRATION_ARGS = --calibration-samples "$(AGE_CLOCK_CALIBRATION_SAMPLES)" --calibration-seed "$(AGE_CLOCK_CALIBRATION_SEED)"
@@ -126,11 +132,11 @@ run-all-test: run-test ## Run core, benchmark, DE, age clocks, profiles, and cel
 	$(MAKE) check-integration-benchmark-test STUDIES="$(STUDIES)"
 	$(MAKE) run-de-synthetic-test STUDIES="$(STUDIES)"
 	$(MAKE) check-synthetic-de-results STUDIES="$(STUDIES)"
-	$(MAKE) run-age-clock-synthetic-test STUDIES="$(STUDIES)"
-	$(MAKE) check-age-clock-synthetic-test STUDIES="$(STUDIES)"
+	$(MAKE) run-age-clock-synthetic-test STUDIES="$(STUDIES)" AGE_CLOCK_METHODS="$(VERIFY_AGE_CLOCK_METHODS)" AGE_CLOCK_ALPHAS="$(VERIFY_AGE_CLOCK_ALPHAS)" AGE_CLOCK_L1_RATIOS="$(VERIFY_AGE_CLOCK_L1_RATIOS)"
+	$(MAKE) check-age-clock-synthetic-test STUDIES="$(STUDIES)" AGE_CLOCK_METHODS="$(VERIFY_AGE_CLOCK_METHODS)"
 	$(MAKE) profile-top-age-genes-test STUDIES="$(STUDIES)"
 	$(MAKE) run-gene-profile-synthetic-test STUDIES="$(STUDIES)"
-	$(MAKE) run-cell-type-analysis-test STUDIES="$(STUDIES)"
+	$(MAKE) run-cell-type-analysis-test STUDIES="$(STUDIES)" CELL_TYPES="$(VERIFY_CELL_TYPES)"
 	$(MAKE) check-synthetic-de-reports STUDIES="$(STUDIES)"
 
 validate-study:
@@ -287,12 +293,12 @@ run-age-clock-synthetic-test: SYNTHETIC_DE_DIR = $(OUTDIR)/analysis/combined/syn
 run-age-clock-synthetic-test: AGE_CLOCK_DIR = $(OUTDIR)/analysis/per_type
 run-age-clock-synthetic-test: $(PYTHON_CONTAINER_PREREQS) ## Smoke-test the default CELL_TYPE age-clock fit on synthetic DE pseudobulks
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.synthetic_de --config config/pipeline.json --output "$(SYNTHETIC_DE_DIR)/pseudobulk_merged.h5ad"
-	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock --input "$(SYNTHETIC_DE_DIR)/pseudobulk_merged.h5ad" --config config/pipeline.json --output-dir "$(AGE_CLOCK_DIR)" --external-studies synthetic_study_c --cell-type "$(CELL_TYPE)" --n-jobs "$(AGE_CLOCK_N_JOBS)" $(AGE_CLOCK_CALIBRATION_ARGS)
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock --input "$(SYNTHETIC_DE_DIR)/pseudobulk_merged.h5ad" --config config/pipeline.json --output-dir "$(AGE_CLOCK_DIR)" --external-studies synthetic_study_c --cell-type "$(CELL_TYPE)" --n-jobs "$(AGE_CLOCK_N_JOBS)" $(AGE_CLOCK_METHOD_ARGS) $(AGE_CLOCK_SEARCH_ARGS) $(AGE_CLOCK_CALIBRATION_ARGS)
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock_report --report-root "$(AGE_CLOCK_DIR)" --cell-type "$(CELL_TYPE)" --template reports/age_clock_report.py --comparison-template reports/age_clock_comparison_report.py --project-root /work
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 check-age-clock-synthetic-test: $(PYTHON_CONTAINER_PREREQS) ## Check that expected synthetic age-clock output files exist
-	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/check_age_clock.py --outdir output/test --cell-type "$(CELL_TYPE)"
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/check_age_clock.py --outdir output/test --cell-type "$(CELL_TYPE)" $(AGE_CLOCK_METHOD_ARGS)
 
 check-age-clock-prerequisites:
 	@if test ! -f "$(PSEUDOBULK_INPUT)"; then \
@@ -378,8 +384,8 @@ check-cell-type-analysis-test-prerequisites:
 
 run-cell-type-analysis-test: OUTDIR = output/test
 run-cell-type-analysis-test: MERGED_INPUT = output/test/harmonization/merged/single_cell_merged.h5ad
-run-cell-type-analysis-test: check-cell-type-analysis-test-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Analyse and render all cell types from an existing test merge
-	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(MERGED_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
+run-cell-type-analysis-test: check-cell-type-analysis-test-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Analyse and render cell types from an existing test merge; set CELL_TYPES to select a subset
+	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --merged_input "$(MERGED_INPUT)" $(CELL_TYPE_FILTER_ARGS) --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 split-cell-types-test: OUTDIR = output/test

@@ -41,6 +41,9 @@ def test_age_trajectory_report_and_clustering_choices_are_explicit_and_validated
     assert age_trajectory["residual_umap_neighbors"] == 50
     assert age_trajectory["report_top_n_genes"] == 30
     assert age_trajectory["cross_report_top_n_genes"] == 100
+    assert pipeline["differential_expression"][
+        "study_comparison_minimum_samples_per_bin"
+    ] == 5
     assert pipeline["differential_expression"]["expression_atlas"]["minimum_study_cell_type_total_counts"] == 1_000_000
     wgcna = pipeline["cell_type_analysis"]["residual_wgcna"]
     assert ResidualWGCNASettings.from_mapping(wgcna).to_mapping() == wgcna
@@ -52,6 +55,13 @@ def test_age_trajectory_report_and_clustering_choices_are_explicit_and_validated
     invalid["differential_expression"]["age_trajectory"]["umap_min_dist"] = 1.1
     with pytest.raises(ConfigurationError, match="umap_min_dist"):
         validate_configuration(invalid, studies, schema, input_sources)
+
+    invalid_study_comparison = copy.deepcopy(pipeline)
+    invalid_study_comparison["differential_expression"][
+        "study_comparison_minimum_samples_per_bin"
+    ] = 1
+    with pytest.raises(ConfigurationError, match="study_comparison_minimum_samples_per_bin"):
+        validate_configuration(invalid_study_comparison, studies, schema, input_sources)
 
     incomplete = age_trajectory.copy()
     incomplete.pop("umap_min_dist")

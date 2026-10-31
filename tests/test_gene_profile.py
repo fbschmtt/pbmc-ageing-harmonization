@@ -20,6 +20,7 @@ from scripts.profile_gene import (
     _collect_cross_cell_type_trajectories,
     _exploratory_infant_adult_contrast,
     _fit_profile,
+    _fit_study_age_bin_trajectories,
     _prepare_model_for_cache,
 )
 
@@ -70,6 +71,58 @@ def test_cross_cell_type_trajectories_read_completed_age_bin_fits(tmp_path) -> N
     assert trajectories["age_bin"].tolist() == ["20-30", "30-40"]
     assert trajectories["cell_type"].tolist() == ["CD14 monocyte", "CD14 monocyte"]
     assert support["status"].tolist() == ["complete"]
+
+
+def test_study_age_bin_trajectories_align_missing_reference_and_keep_gaps() -> None:
+    metadata = pd.DataFrame({
+        "study": ["reference_a"] * 10 + ["reference_b"] * 10 + ["missing_reference"] * 10,
+        "age_bin": (
+            ["20-30"] * 5 + ["30-40"] * 5
+            + ["20-30"] * 5 + ["30-40"] * 5
+            + ["30-40"] * 5 + ["50-60"] * 5
+        ),
+    })
+    expression = np.array(
+        [2.0] * 5 + [3.0] * 5 + [4.0] * 5 + [6.0] * 5
+        + [10.0] * 5 + [12.0] * 5
+    )
+
+    trajectories, support = _fit_study_age_bin_trajectories(
+        metadata, expression, minimum_samples_per_bin=5,
+        reference_bin_start_age=20, bin_width=10,
+    )
+
+    missing_reference = trajectories.loc[
+        trajectories["study"] == "missing_reference"
+    ].set_index("age_bin")
+    assert missing_reference.loc["30-40", "aligned_expression"] == 3.0
+    assert missing_reference.loc["50-60", "aligned_expression"] == 5.0
+    assert (missing_reference["alignment_bin"] == "30-40").all()
+    reference_baselines = trajectories.loc[
+        trajectories["age_bin"] == "20-30", "aligned_expression",
+    ]
+    assert reference_baselines.tolist() == [3.0, 3.0]
+    missing_gap = support.loc[
+        (support["study"] == "missing_reference") & (support["age_bin"] == "40-50")
+    ].iloc[0]
+    assert missing_gap["status"] == "missing"
+    assert missing_gap["n_samples"] == 0
+
+
+def test_study_age_bin_trajectories_exclude_bins_below_cutoff_and_handle_no_reference() -> None:
+    metadata = pd.DataFrame({
+        "study": ["study_a"] * 4 + ["study_b"] * 5,
+        "age_bin": ["20-30"] * 4 + ["30-40"] * 5,
+    })
+
+    trajectories, support = _fit_study_age_bin_trajectories(
+        metadata, np.arange(9, dtype=float), minimum_samples_per_bin=5,
+        reference_bin_start_age=20, bin_width=10,
+    )
+
+    assert trajectories.empty
+    assert set(support.loc[support["status"] == "below minimum", "study"]) == {"study_a"}
+    assert set(support.loc[support["status"] == "unaligned", "study"]) == {"study_b"}
 
 
 def test_profile_model_cache_drops_series_metadata_before_h5ad_write(tmp_path) -> None:

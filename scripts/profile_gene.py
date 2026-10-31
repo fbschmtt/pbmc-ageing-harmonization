@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.stats import t as student_t
 
 from pbmc_pipeline.config import read_json
 from pbmc_pipeline.covariates import categorical_levels
@@ -116,6 +117,155 @@ _CROSS_TRAJECTORY_COLUMNS = [
     "omnibus_padj",
 ]
 _CROSS_TRAJECTORY_SUPPORT_COLUMNS = ["cell_type", "status", "reason", "source"]
+
+
+_STUDY_AGE_BIN_COLUMNS = [
+    "study", "age_bin", "age_bin_start", "n_samples", "mean_expression",
+    "ci_lower", "ci_upper", "alignment_bin", "alignment_offset",
+    "aligned_expression", "aligned_ci_lower", "aligned_ci_upper",
+]
+_STUDY_AGE_BIN_SUPPORT_COLUMNS = [
+    "study", "age_bin", "n_samples", "status", "reason",
+]
+
+
+def _fit_study_age_bin_trajectories(
+    metadata: pd.DataFrame,
+    expression,
+    *,
+    minimum_samples_per_bin: int,
+    reference_bin_start_age: int,
+    bin_width: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Estimate per-study age-bin means and align studies to the reference bin.
+
+    Estimates remain on one pooled log(normalized count + 1) scale. When a
+    Each study's observed reference-bin mean is shifted to the equally weighted
+    mean reference-bin level across studies. When a study lacks a sufficiently
+    supported reference bin, its youngest supported bin is used as the anchor
+    instead. This changes only the intercept, preserving trajectory amplitude
+    and direction.
+    """
+    if minimum_samples_per_bin < 2 or bin_width < 1:
+        raise ValueError("Age-bin sample minimum must be at least 2 and width must be positive")
+    values = np.asarray(expression, dtype=float)
+    if len(values) != len(metadata):
+        raise ValueError("Expression values and age-bin metadata must have matching rows")
+    if not np.isfinite(values).all():
+        raise ValueError("Study age-bin fitting requires finite expression values")
+
+    data = metadata.reset_index(drop=True).copy()
+    if data.empty:
+        return (
+            pd.DataFrame(columns=_STUDY_AGE_BIN_COLUMNS),
+            pd.DataFrame(columns=_STUDY_AGE_BIN_SUPPORT_COLUMNS),
+        )
+    data["_expression"] = values
+    data["_study"] = data["study"].astype(str)
+    data["_age_bin_start"] = data["age_bin"].astype(str).str.split(
+        "-", n=1,
+    ).str[0].astype(int)
+    observed_starts = data["_age_bin_start"].astype(int)
+    all_age_bin_starts = list(range(
+        int(observed_starts.min()), int(observed_starts.max()) + bin_width,
+        bin_width,
+    ))
+    estimates = []
+    support = []
+    for study, study_rows in data.groupby("_study", sort=True):
+        study_bins = []
+        for age_bin_start in all_age_bin_starts:
+            rows = study_rows.loc[study_rows["_age_bin_start"] == age_bin_start]
+            count = len(rows)
+            age_bin = f"{age_bin_start}-{age_bin_start + bin_width}"
+            if count < minimum_samples_per_bin:
+                support.append({
+                    "study": study, "age_bin": age_bin, "n_samples": count,
+                    "status": "missing" if count == 0 else "below minimum",
+                    "reason": (
+                        "No samples in this age bin."
+                        if count == 0 else
+                        f"Requires at least {minimum_samples_per_bin} samples per bin."
+                    ),
+                })
+                continue
+            mean = float(rows["_expression"].mean())
+            if count > 1:
+                margin = float(student_t.ppf(0.975, count - 1) * rows["_expression"].std(ddof=1) / np.sqrt(count))
+            else:
+                margin = np.nan
+            study_bins.append({
+                "study": study, "age_bin": age_bin,
+                "age_bin_start": int(age_bin_start), "n_samples": count,
+                "mean_expression": mean,
+                "ci_lower": mean - margin if np.isfinite(margin) else np.nan,
+                "ci_upper": mean + margin if np.isfinite(margin) else np.nan,
+            })
+        if not study_bins:
+            support.append({
+                "study": study, "age_bin": "", "n_samples": 0,
+                "status": "unavailable",
+                "reason": "No age bin met the per-bin sample minimum.",
+            })
+            continue
+        estimates.extend(study_bins)
+
+    result = pd.DataFrame(estimates)
+    if result.empty:
+        return (
+            pd.DataFrame(columns=_STUDY_AGE_BIN_COLUMNS),
+            pd.DataFrame(support, columns=_STUDY_AGE_BIN_SUPPORT_COLUMNS),
+        )
+    reference_bin = f"{reference_bin_start_age}-{reference_bin_start_age + bin_width}"
+    reference_studies = result.loc[
+        result["age_bin"] == reference_bin, "study",
+    ].unique()
+    if len(reference_studies) == 0:
+        for study in result["study"].unique():
+            support.append({
+                "study": study, "age_bin": reference_bin, "n_samples": 0,
+                "status": "unaligned",
+                "reason": f"No study has {reference_bin} with sufficient support; alignment is unavailable.",
+            })
+        return (
+            pd.DataFrame(columns=_STUDY_AGE_BIN_COLUMNS),
+            pd.DataFrame(support, columns=_STUDY_AGE_BIN_SUPPORT_COLUMNS),
+        )
+
+    reference_level = float(result.loc[
+        result["age_bin"] == reference_bin, "mean_expression",
+    ].mean())
+    result["alignment_bin"] = reference_bin
+    offsets = {}
+    for study, rows in result.groupby("study", sort=True):
+        reference_rows = rows.loc[rows["age_bin"] == reference_bin]
+        if not reference_rows.empty:
+            anchor = float(reference_rows["mean_expression"].iloc[0])
+            alignment_bin = reference_bin
+        else:
+            youngest = rows.sort_values("age_bin_start", kind="stable").iloc[0]
+            anchor = float(youngest["mean_expression"])
+            alignment_bin = str(youngest["age_bin"])
+        offsets[study] = reference_level - anchor
+        result.loc[result["study"] == study, "alignment_bin"] = alignment_bin
+        support.append({
+            "study": study, "age_bin": alignment_bin,
+            "n_samples": int(rows.loc[rows["age_bin"] == alignment_bin, "n_samples"].iloc[0]),
+            "status": "aligned",
+            "reason": (
+                f"{reference_bin} aligned to the equal-weighted mean level across studies."
+                if alignment_bin == reference_bin else
+                f"{reference_bin} unavailable; youngest supported bin aligned to the mean reference-bin level."
+            ),
+        })
+    result["alignment_offset"] = result["study"].map(offsets)
+    result["aligned_expression"] = result["mean_expression"] + result["alignment_offset"]
+    result["aligned_ci_lower"] = result["ci_lower"] + result["alignment_offset"]
+    result["aligned_ci_upper"] = result["ci_upper"] + result["alignment_offset"]
+    result = result.reindex(columns=_STUDY_AGE_BIN_COLUMNS).sort_values(
+        ["study", "age_bin_start"], kind="stable",
+    ).reset_index(drop=True)
+    return result, pd.DataFrame(support, columns=_STUDY_AGE_BIN_SUPPORT_COLUMNS)
 
 
 def _collect_cross_cell_type_trajectories(
@@ -703,6 +853,23 @@ def _fit_profile(
         })
     age_bin_predictions = pd.DataFrame(age_bin_predictions)
 
+    study_trajectory_settings = pipeline["differential_expression"]["age_trajectory"]
+    study_age_bin_trajectories, study_age_bin_trajectory_support = (
+        _fit_study_age_bin_trajectories(
+            age_bin_model_metadata,
+            age_bin_log_expression,
+            minimum_samples_per_bin=int(
+                pipeline["differential_expression"][
+                    "study_comparison_minimum_samples_per_bin"
+                ]
+            ),
+            reference_bin_start_age=int(
+                study_trajectory_settings["reference_bin_start_age"]
+            ),
+            bin_width=bin_width,
+        )
+    )
+
     # Allow study-specific age slopes with study intercepts. Study site is
     # omitted here because it is nested within study and would be redundant.
     slope_model_metadata = model_metadata.copy()
@@ -1159,6 +1326,12 @@ def _fit_profile(
     age_bin_samples.to_csv(output_dir / "naive_age_bin_samples.csv", index=False)
     age_bin_model_result.to_csv(output_dir / "naive_age_bin_model_result.csv", index=False)
     age_bin_predictions.to_csv(output_dir / "naive_age_bin_predictions.csv", index=False)
+    study_age_bin_trajectories.to_csv(
+        output_dir / "study_age_bin_trajectories.csv", index=False,
+    )
+    study_age_bin_trajectory_support.to_csv(
+        output_dir / "study_age_bin_trajectory_support.csv", index=False,
+    )
     age_bin_top_correlations.to_csv(
         output_dir / "age_bin_residual_correlations.csv", index=False,
     )
@@ -1241,6 +1414,15 @@ def _fit_profile(
             "bin_width_years": bin_width,
             "bins": observed_age_bins,
             "reference_bin": observed_age_bins[0],
+            "study_trajectory_minimum_samples_per_bin": int(
+                pipeline["differential_expression"][
+                    "study_comparison_minimum_samples_per_bin"
+                ]
+            ),
+            "study_trajectory_reference_bin": (
+                f"{study_trajectory_settings['reference_bin_start_age']}-"
+                f"{int(study_trajectory_settings['reference_bin_start_age']) + bin_width}"
+            ),
             "n_samples": len(age_bin_model_metadata),
             "geometric_mean_total_counts": age_bin_geometric_mean,
             "normalization_n_samples": int(valid_all_type_totals.sum()),
@@ -1275,6 +1457,7 @@ def _fit_profile(
             "age_bin_residual_correlations.csv", "age_bin_correlated_gene_residuals.csv",
             "naive_study_slope_model_result.csv", "naive_study_slopes.csv",
             "naive_study_slope_predictions.csv",
+            "study_age_bin_trajectories.csv", "study_age_bin_trajectory_support.csv",
             "cross_cell_type_age_trajectories.csv",
             "cross_cell_type_age_trajectory_support.csv",
             "naive_mixed_model_fixed_effects.csv", "naive_mixed_model_study_slopes.csv",

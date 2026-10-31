@@ -149,6 +149,7 @@
       "residual_leiden_min_clusters": 10,
       "residual_marker_max_clusters": 16
     },
+    "study_comparison_minimum_samples_per_bin": 5,
     "expression_atlas": {
       "minimum_study_cell_type_total_counts": 1000000,
       "cpm_pseudocount": 1.0,

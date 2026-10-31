@@ -533,18 +533,18 @@ unreplicated intronic-read contrast.
 
 ## Running and verification
 
-Use Make targets rather than raw Nextflow or Docker commands:
+Use Make targets rather than raw Nextflow or Docker commands. For routine
+changes, choose the smallest focused validation target; reserve `make verify`
+for cross-cutting or release-level checks:
 
 ```bash
 make help
 make lint test-unit
 make workflow-lint
 make run-test STUDIES=wang25
-make run-all-test
-make verify
+make run-cell-type-test CELL_TYPE=cd14-monocyte
 make run-all STUDIES=all
 make split-cell-types-test
-make run-cell-type-test CELL_TYPE=cd14-monocyte
 make render-cell-type-test CELL_TYPE=cd14-monocyte
 make docs-update
 make docs-check
@@ -580,16 +580,17 @@ rebuilds the index using the cell-type manifest when available, or scanning
 published per-type reports otherwise, which keeps its links synchronized when
 cell types change. Harmonization and benchmark reports are linked when their
 published files are present.
-`make verify` runs linting, unit tests, Nextflow lint, image builds, and fresh
-Docker workflows for the representative test set by default. After the core
-merge it runs and checks the integration benchmark report, then generates
-synthetic pseudobulk data for positive DE fits, checks the completed models and
-planted markers, profiles the top two merged age-DE genes per cell type,
-exercises the focused synthetic gene-profile report, renders per-type DE
-reports from synthetic data, and renders single cell analysis reports from the
-fresh core test merge. Reserve it for cross-cutting or release-level validation;
-pass `STUDIES=all` for every available fixture or `STUDIES=<list>` for another
-focused verification. The synthetic fixture has
+`make verify` is a broad, non-resumed check for cross-cutting changes and
+release validation; routine changes should use the focused targets above.
+It runs linting, unit tests, Nextflow lint, documentation checks, image builds,
+and fresh Docker workflows for the representative test set by default. After
+the core merge it checks the integration benchmark, generates synthetic
+pseudobulk data for positive DE fits, checks the completed models and planted
+markers, runs the default one-method synthetic age-clock smoke test, profiles
+the top two merged age-DE genes per cell type, exercises the synthetic
+gene-profile report, renders per-type DE reports, and analyzes three
+single-cell types by default. Set `VERIFY_CELL_TYPES` to choose those types.
+Pass `STUDIES=all` for every available fixture. The synthetic fixture has
 only two cell types, so other reports exercise the ordinary no-DE path. It is
 workflow coverage rather than a realistic model of study balance or biological
 effects: covariate availability and gene presence are deliberately simple, and

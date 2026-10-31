@@ -5,7 +5,6 @@ include {
     ANALYSE_CELL_TYPE
     RENDER_CELL_TYPE_REPORT
     WRITE_CELL_TYPE_MANIFEST
-    SPLIT_AND_ANALYSE_CELL_TYPES
     ANALYSE_EXISTING_CELL_TYPE_SPLITS
     RENDER_CELL_TYPE_REPORTS
 } from './modules/cell_type_analysis'
@@ -53,8 +52,23 @@ workflow {
                 file(root.resolve(pipeline.models.aifi_l1 as String), checkIfExists: true),
                 file(root.resolve(pipeline.models.aifi_l2 as String), checkIfExists: true),
             ])
-            SPLIT_AND_ANALYSE_CELL_TYPES(merged_input, pipeline_config)
-            report_inputs = SPLIT_AND_ANALYSE_CELL_TYPES.out
+            SPLIT_CELL_TYPES(merged_input, pipeline_config)
+            def primitives = SPLIT_CELL_TYPES.out.cells.flatten()
+                .map { primitive -> tuple(primitive.baseName, primitive) }
+            if (params.cell_types) {
+                def selected_cell_types = params.cell_types.toString()
+                    .split(',').collect { value -> value.trim() }
+                    .findAll { value -> value } as Set
+                if (selected_cell_types.isEmpty()) {
+                    error '--cell_types must contain at least one comma-separated cell-type slug'
+                }
+                log.info "Analysing selected cell types: ${selected_cell_types.sort().join(', ')}"
+                primitives = primitives.filter { slug, _primitive ->
+                    selected_cell_types.contains(slug.toString())
+                }
+            }
+            ANALYSE_CELL_TYPE(primitives, pipeline_config)
+            report_inputs = primitives.join(ANALYSE_CELL_TYPE.out.analysis)
         }
     }
 

@@ -61,6 +61,12 @@ cross_cell_type_trajectories = pd.read_csv(
 cross_cell_type_trajectory_support = pd.read_csv(
     profile_dir / "cross_cell_type_age_trajectory_support.csv",
 )
+study_age_bin_trajectories = pd.read_csv(
+    profile_dir / "study_age_bin_trajectories.csv",
+)
+study_age_bin_trajectory_support = pd.read_csv(
+    profile_dir / "study_age_bin_trajectory_support.csv",
+)
 
 display(HTML(render_report_header(
     title=f"{gene} · {cell_type}",
@@ -132,6 +138,103 @@ else:
         "[cross_cell_type_age_trajectory_support.csv](cross_cell_type_age_trajectory_support.csv)."
     ))
     display(format_model_results(trajectory_summary))
+
+
+# %% [markdown]
+# # Fitting Age-Bin models per study
+#
+# Each study/bin estimate is the mean gene expression on the same pooled
+# log(normalized count + 1) scale. Bins below the configured sample minimum are
+# omitted. Every study is shifted to a common intercept: studies with a
+# supported 20–30 bin align that bin to its equal-weight mean across studies;
+# for studies without it, the youngest supported bin is used as the anchor.
+# This removes study-level baseline differences while keeping trajectory
+# strength and direction.
+# %%
+if study_age_bin_trajectories.empty:
+    reasons = "; ".join(
+        study_age_bin_trajectory_support["reason"].dropna().astype(str).unique()
+    ) or "No study age-bin estimates were available."
+    display(Markdown(f"_Per-study age-bin trajectories are unavailable: {reasons}_"))
+else:
+    plot_study_trajectories = study_age_bin_trajectories.copy()
+    minimum_n = summary["age_bin_model"]["study_trajectory_minimum_samples_per_bin"]
+    reference_bin = summary["age_bin_model"]["study_trajectory_reference_bin"]
+    bins = study_age_bin_trajectory_support["age_bin"].dropna().astype(str)
+    bins = bins.loc[bins.str.fullmatch(r"\d+-\d+")].drop_duplicates()
+    bin_table = pd.DataFrame({"age_bin": bins})
+    bin_table["age_bin_start"] = bin_table["age_bin"].str.split(
+        "-", n=1,
+    ).str[0].astype(int)
+    bin_table = bin_table.sort_values("age_bin_start", kind="stable")
+    age_starts = bin_table["age_bin_start"].to_numpy(dtype=float)
+    estimate_values = plot_study_trajectories["aligned_expression"].to_numpy(dtype=float)
+    estimate_values = estimate_values[np.isfinite(estimate_values)]
+    data_min, data_max = float(estimate_values.min()), float(estimate_values.max())
+    padding = max(
+        (data_max - data_min) * 0.08,
+        max(abs(data_min), abs(data_max), 1.0) * 0.02,
+    )
+    y_limits = (data_min - padding, data_max + padding)
+    figure, axis = plt.subplots(figsize=(10, 5.8))
+    clipped_ci_ends = []
+    for current_study, rows in plot_study_trajectories.groupby(
+        "study", observed=True, sort=True,
+    ):
+        rows = rows.set_index("age_bin_start").reindex(age_starts)
+        study_index = sorted(plot_study_trajectories["study"].unique()).index(
+            current_study
+        )
+        color = f"C{study_index % 10}"
+        axis.plot(
+            age_starts, rows["aligned_expression"], marker="o",
+            linewidth=2, label=str(current_study), color=color,
+        )
+        axis.fill_between(
+            age_starts,
+            rows["aligned_ci_lower"].to_numpy(dtype=float),
+            rows["aligned_ci_upper"].to_numpy(dtype=float), alpha=0.12,
+            color=color,
+        )
+        for age_start, ci_low, ci_high in zip(
+            age_starts,
+            rows["aligned_ci_lower"].to_numpy(dtype=float),
+            rows["aligned_ci_upper"].to_numpy(dtype=float),
+        ):
+            if np.isfinite(ci_low) and ci_low < y_limits[0]:
+                clipped_ci_ends.append((age_start, y_limits[0], "v", color))
+            if np.isfinite(ci_high) and ci_high > y_limits[1]:
+                clipped_ci_ends.append((age_start, y_limits[1], "^", color))
+    axis.set_ylim(*y_limits)
+    for age_start, boundary, direction, color in clipped_ci_ends:
+        axis.plot(
+            age_start, boundary, marker=direction, linestyle="", color=color,
+            markersize=5, clip_on=False, zorder=5,
+        )
+    axis.set_xticks(age_starts)
+    axis.set_xticklabels(bin_table["age_bin"].tolist())
+    axis.set_xlabel("Age bin (years)")
+    axis.set_ylabel("Aligned log(normalized count + 1)")
+    axis.set_title(f"{gene}: age-bin trajectories fitted within each study")
+    axis.legend(title="Study", fontsize=8, bbox_to_anchor=(1.02, 1), loc="upper left")
+    axis.grid(True, alpha=0.2)
+    figure.tight_layout()
+    plt.show()
+    display(Markdown(
+        f"Estimates require at least {minimum_n} samples per study/bin. "
+        f"The alignment reference is {reference_bin}. Each study's reference-bin "
+        "estimate is shifted to the equal-weighted mean reference level; when "
+        "that bin is missing, the youngest supported bin anchors the shift. "
+        "All studies share the same expression scale, and these intercept shifts "
+        "preserve trajectory strength and direction. Shaded bands are unadjusted "
+        "95% confidence intervals for "
+        "the bin means; they do not include uncertainty in alignment offsets. "
+        "The y-axis is set by the estimates, so CIs beyond its limits are "
+        "shortened and marked with arrows. See the trajectory and support "
+        "tables for sample counts and bins omitted by the cutoff."
+    ))
+    display(study_age_bin_trajectories)
+    display(study_age_bin_trajectory_support)
 
 
 def display_collapsible_figure(figure, summary):

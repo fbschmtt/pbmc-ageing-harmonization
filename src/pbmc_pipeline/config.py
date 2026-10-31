@@ -558,6 +558,18 @@ def validate_configuration(
                 "differential_expression.age_trajectory must be an object"
             )
         trajectory_settings = AgeTrajectorySettings.from_mapping(age_trajectory)
+        study_comparison_minimum = differential_expression.get(
+            "study_comparison_minimum_samples_per_bin"
+        )
+        if (
+            not isinstance(study_comparison_minimum, int)
+            or isinstance(study_comparison_minimum, bool)
+            or study_comparison_minimum < 2
+        ):
+            raise ConfigurationError(
+                "differential_expression."
+                "study_comparison_minimum_samples_per_bin must be an integer of at least 2"
+            )
         expression_atlas = differential_expression.get("expression_atlas")
         if not isinstance(expression_atlas, dict):
             raise ConfigurationError(

@@ -15,6 +15,7 @@ METHODS = (
     "rank_elastic_net",
     "study_zscore_elastic_net",
     "age_aware_study_offset_elastic_net",
+    "age_sex_aware_study_offset_elastic_net",
 )
 METHOD_OUTPUTS = (
     "model.joblib",
@@ -29,7 +30,15 @@ METHOD_OUTPUTS = (
 )
 
 
-def check_age_clock(outdir: Path, cell_type: str) -> None:
+def check_age_clock(
+    outdir: Path, cell_type: str, methods: tuple[str, ...] = METHODS,
+) -> None:
+    unknown_methods = sorted(set(methods) - set(METHODS))
+    if not methods or unknown_methods:
+        raise SystemExit(
+            f"Age-clock methods must be selected from {METHODS}; "
+            f"received {methods} (unknown={unknown_methods})"
+        )
     slug = slugify(cell_type)
     clock_root = outdir / "analysis" / "per_type" / slug / "ageing_clock"
     required = [
@@ -40,7 +49,7 @@ def check_age_clock(outdir: Path, cell_type: str) -> None:
     ]
     required.extend(
         clock_root / method / filename
-        for method in METHODS
+        for method in methods
         for filename in METHOD_OUTPUTS
     )
     missing = [
@@ -54,7 +63,7 @@ def check_age_clock(outdir: Path, cell_type: str) -> None:
     n_jobs = manifest.get("cv_parallel_jobs")
     if not isinstance(n_jobs, int) or n_jobs < 1:
         raise SystemExit(f"{clock_root / 'age_clock.json'} has invalid cv_parallel_jobs: {n_jobs!r}")
-    for method in METHODS:
+    for method in methods:
         method_root = clock_root / method
         metadata = json.loads((method_root / "metadata.json").read_text())
         diagnostics = metadata.get("fit_diagnostics", {})
@@ -87,8 +96,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--outdir", type=Path, default=Path("output/test"))
     parser.add_argument("--cell-type", default="cd14-monocyte")
+    parser.add_argument(
+        "--methods", default=",".join(METHODS),
+        help="Comma-separated clock IDs to check (default: all six methods)",
+    )
     args = parser.parse_args()
-    check_age_clock(args.outdir, args.cell_type)
+    check_age_clock(
+        args.outdir, args.cell_type,
+        tuple(name.strip() for name in args.methods.split(",") if name.strip()),
+    )
 
 
 if __name__ == "__main__":

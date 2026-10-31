@@ -37,6 +37,8 @@ def check_profile(profile_dir: Path, gene: str) -> None:
         "naive_study_slope_predictions.csv",
         "cross_cell_type_age_trajectories.csv",
         "cross_cell_type_age_trajectory_support.csv",
+        "study_age_bin_trajectories.csv",
+        "study_age_bin_trajectory_support.csv",
         "naive_mixed_model_fixed_effects.csv",
         "naive_mixed_model_study_slopes.csv",
         "naive_mixed_model_predictions.csv",
@@ -57,6 +59,7 @@ def check_profile(profile_dir: Path, gene: str) -> None:
     for heading in (
         "PyDESeq2", "Model and gene result", "Mean–dispersion position",
         "Cross-cell-type age trajectories",
+        "Fitting Age-Bin models per study",
         "Exploratory infant-to-adult comparison",
         "Pearson residuals", "Against Age", "Against Depth",
         "Correlated genes", "Naive normalized expression versus VST",
@@ -78,11 +81,12 @@ def check_profile(profile_dir: Path, gene: str) -> None:
     if "ordinary R² is not reported for the negative-binomial PyDESeq2 model" not in report_text:
         raise AssertionError("The report should explain why PyDESeq2 has no ordinary R²")
     if (
-        report.count("<h1") != 8
+        report.count("<h1") != 9
         or '<h1 id="PyDESeq2">' not in report
         or '<h1 id="Naive-normalization">' not in report
         or '<h1 id="Naive-linear-age-model">' not in report
         or '<h1 id="Naive-age-bin-model">' not in report
+        or '<h1 id="Fitting-Age-Bin-models-per-study">' not in report
         or '<h1 id="Naive-age-model-with-study-specific-slopes">' not in report
         or '<h1 id="Naive-mixed-age-model-with-study-fixed-intercepts-and-random-slopes">' not in report
         or '<h1 id="limma-voom">' not in report
@@ -96,6 +100,7 @@ def check_profile(profile_dir: Path, gene: str) -> None:
         "#Naive-normalization", "#Normalization-procedure",
         "#Naive-normalized-expression-versus-VST", "#Naive-linear-age-model",
         "#Naive-age-bin-model", "#Sample-level-expression-and-age-bin-levels",
+        "#Fitting-Age-Bin-models-per-study",
         "#Naive-age-model-with-study-specific-slopes", "#Per-study-age-slopes",
         "#Sample-level-expression-and-fitted-slopes", "#limma-voom", "#DESeq2",
         "#Naive-mixed-age-model-with-study-fixed-intercepts-and-random-slopes",
@@ -118,6 +123,12 @@ def check_profile(profile_dir: Path, gene: str) -> None:
         raise AssertionError("Residual plot metadata or the shared age plot call is missing")
     if 'hue="study"' not in code or 'genewise_dispersions' not in code:
         raise AssertionError("Correlation colors or the gene-wise dispersion marker are missing")
+    if (
+        "axis.set_ylim(*y_limits)" not in code
+        or "clipped_ci_ends.append" not in code
+        or "clip_on=False" not in code
+    ):
+        raise AssertionError("Per-study trajectory CIs should be clipped with boundary arrows")
     if "log10(total_counts)" not in report or 'gene_samples["log10_total_counts"]' not in code:
         raise AssertionError("Residual diagnostics are missing the depth axis")
     if (
