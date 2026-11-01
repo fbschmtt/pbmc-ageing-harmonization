@@ -1,0 +1,105 @@
+.choice-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 16px;
+  color: #50655f;
+  font-size: 12px;
+  font-weight: 700;
+}
+.choice-menu {
+  position: relative;
+  min-width: 0;
+}
+.choice-menu summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 39px;
+  padding: 9px 11px;
+  border: 1px solid #d4ded4;
+  border-radius: 5px;
+  background: #fffefa;
+  color: #1e4a43;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+.choice-menu summary::-webkit-details-marker {
+  display: none;
+}
+.choice-menu summary:hover,
+.choice-menu[open] summary {
+  background: var(--interaction-hover);
+  border-color: #aec6b9;
+}
+.choice-menu summary:focus-visible,
+.choice-panel button:focus-visible {
+  outline: 2px solid var(--interaction-focus);
+  outline-offset: 2px;
+}
+.choice-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.choice-chevron {
+  color: #47796f;
+  font-size: 17px;
+  line-height: 10px;
+  transition: transform 0.15s;
+}
+.choice-menu[open] .choice-chevron {
+  transform: rotate(180deg);
+}
+.choice-panel {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  width: max(100%, 230px);
+  max-width: min(340px, calc(100vw - 40px));
+  max-height: min(360px, 55vh);
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid #d4ded4;
+  border-radius: 6px;
+  background: #fffefa;
+  box-shadow: 0 12px 28px #20373320;
+}
+.choice-group {
+  margin: 8px 9px 4px !important;
+  color: #799089 !important;
+  font:
+    10px 'DM Mono',
+    monospace !important;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.choice-panel button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  border: 0;
+  border-radius: 4px;
+  padding: 9px 10px;
+  background: transparent;
+  color: #1e4a43;
+  font:
+    600 13px Manrope,
+    sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+.choice-panel button:hover,
+.choice-panel button[aria-checked='true'] {
+  background: var(--interaction-hover);
+}
+.choice-check {
+  color: #47796f;
+}

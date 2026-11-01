@@ -167,6 +167,7 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/...csv` (per-study and per-type combined covariate results)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/combined/age_bin_pearson_residuals.npz` and `age_bin_pearson_residuals_samples.csv` (sample × gene residuals and sample metadata from the age-bin model)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/age_model_diagnostics.csv` (sample support and raw-count inputs for the shared age-model diagnostic figure)
+- `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/reference_expression{,_per_study}.csv` and `reference_expression_metadata.json` (reference-bin CPM summaries and their rules)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/developmental/age_support_samples.csv` (all samples retained by the shared juvenile/adult age-slope model; the per-type report filters this to juvenile samples for its age-support plot)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/cell_type_result.json` (per-task fit record collected into the root manifest)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/{abundance_input.tsv,report.html,fraction_model_diagnostics.tsv}` (pseudobulk abundance input and per-type DE report outputs)

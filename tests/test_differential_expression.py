@@ -55,6 +55,8 @@ def test_sample_abundance_input_includes_zero_types_and_groups_by_study_and_samp
     obs = pd.DataFrame({
         "study": ["study_a"] * 5 + ["study_b"],
         "sample": ["shared"] * 3 + ["zero_type"] * 2 + ["shared"],
+        "study_site": ["site_a"] * 5 + ["site_b"],
+        "subject": ["donor_a"] * 3 + ["donor_b"] * 2 + ["donor_c"],
         "age": [30] * 3 + [40] * 2 + [50],
         "sex": ["female"] * 3 + ["male"] * 2 + ["female"],
         "smoking_status": ["no"] * 3 + ["yes"] * 2 + ["no"],
@@ -90,6 +92,8 @@ def test_sample_abundance_input_includes_zero_types_and_groups_by_study_and_samp
     }
     assert abundance["aifi_l2_majority"].unique().tolist() == ["T1"]
     assert abundance["aifi_l1_parent_for_l2"].unique().tolist() == ["T parent"]
+    assert abundance.loc[("study_a", "zero_type"), "study_site"] == "site_a"
+    assert abundance.loc[("study_a", "zero_type"), "subject"] == "donor_b"
 
 
 def test_developmental_covariate_results_do_not_overwrite_merged_results(tmp_path: Path) -> None:

@@ -2,8 +2,8 @@
 
 Configuration-driven processing of PBMC ageing scRNA-seq studies. It produces
 one harmonized H5AD per study, per-study sample × AIFI-L2 pseudobulks, and a
-cross-study pseudobulk matrix. An explicitly enabled pathway also creates a
-raw-count cross-study single-cell merge. A separate, opt-in integration
+cross-study pseudobulk matrix. The standard Make workflow also creates a
+raw-count cross-study single-cell merge, which can be disabled when not needed. A separate, opt-in integration
 benchmark compares unintegrated PCA, Harmony, and BBKNN representations and
 their method-specific cell graphs.
 
@@ -105,11 +105,6 @@ create the local environment with `make install`.
 It is not a substitute for Docker for the complete workflow: in particular, it
 does not provision the R, Seurat, reticulate, and anndata stack used for RDS
 conversion.
-
-## Current status
-
-Run the focused target in [Choosing a Make target](#choosing-a-make-target)
-before relying on a changed workflow or report.
 
 ## Data flow
 
@@ -365,8 +360,7 @@ The manifest records manual-only sources and their acquisition instructions.
 Synapse expression objects require portal access, the AIDA publisher
 attachment rejects unauthenticated programmatic requests, and the AIFI full
 H5AD link currently redirects through Allen's Google-authenticated workspace.
-The downloader does not implement these access flows. Some files currently
-present at production paths are test-scale subsets. Entries explicitly marked
+The downloader does not implement these access flows. Entries explicitly marked
 as allowing a local subset retain their published full-file size as download
 documentation; a normal download check reports `local_subset` rather than a
 size failure, while the strict preflight still rejects it. Confirm that acquired
@@ -438,7 +432,16 @@ Its `report.html` has separate embedding-integration and type-calling sections,
 including graph edge overlap and per-study-versus-benchmark AIFI-L2 concordance.
 `output/run_manifest.json` records requested, selected, and skipped studies,
 image references, configuration checksum, and checksums of the merged
-deliverables.
+deliverables. For Make-driven runs, `pipeline_revision` defaults to
+`git describe --always --dirty`: a tag-based description when available or an
+abbreviated commit ID, with `-dirty` for tracked changes. Untracked files are
+not identified, and a dirty marker does not preserve the changes themselves.
+`PIPELINE_REVISION` can override the value; direct Nextflow invocation defaults
+to `unknown` unless `--pipeline_revision` is supplied. The core run manifest
+identifies the core run; it does not prove that separately run DE analyses or
+reports used the same revision. DE metadata records its own configuration
+digest and PyDESeq2 version, while a site export has a separate export ID and
+exporter revision.
 
 ## Nextflow and Docker
 
@@ -467,7 +470,7 @@ which validation to run.
 | Rebuild the central report index | `make render-report-index` | It is also refreshed automatically after core, integration-benchmark, DE, cell-type, and age-clock workflow targets. |
 | Cell-type splitting or shared analysis | `make run-test`, then `make run-cell-type-analysis-test CELL_TYPES=<slug,slug>` | Omit `CELL_TYPES` to analyze every type. Use `make run-all-test` only when the ordered workflow is needed. |
 | Positive pseudobulk DE fitting | `make run-de-synthetic-test` and `make check-synthetic-de-results` | This fixture is independent of the core merge and renders per-type DE plus cross-cell-type reports. To also render single-cell reports, run `make run-test` followed by `make run-cell-type-analysis-test CELL_TYPES=<slug,slug>`; omit `CELL_TYPES` to analyze all types. |
-| Cell-type transcriptomic age clocks | `make run-age-clock` | Fits sample-weighted, study-balanced, within-sample rank, within-study gene z-score, age-aware study-offset, and age-and-sex-aware study-offset elastic-net clocks for one type selected with `CELL_TYPE` (default `cd14-monocyte`; label or slug). Set `AGE_CLOCK_METHODS=<comma-separated IDs>` to fit a subset; omit it to fit all eligible methods. The z-score clock is the label-free naïve study normalization: it centers and scales every gene within the available target-study cohort, so it cannot score a single sample. The age-aware clock fits per-gene age trends and additive training-study offsets before regression, then uses `AGE_CLOCK_CALIBRATION_SAMPLES` known-age target donors (default 10) to estimate a target-study offset before predicting the remaining donors. Its calibration donors are excluded from CV and external scores; it is a labeled target-site protocol, not calibration-free deployment. The `age_sex_aware_study_offset_elastic_net` method additionally uses sex to estimate the training and target study offsets; sex is not an ElasticNet predictor, and sex effects remain in its expression features. Its reference fit includes a sex main effect but assumes a shared age slope across sexes. It requires canonical female/male labels in the external samples and both sexes in training and every leave-one-study-out training fold. If all methods are requested and this metadata or overlap is unavailable, the method is recorded under `skipped_methods` in the clock manifest while other methods continue; explicitly requesting this method raises an error. The age-aware method assumes stable age effects, additive site shifts, and reasonably comparable calibration and evaluation populations. The standard `age_aware_study_offset_elastic_net` report also shows an exploratory post-hoc linear age mapping fit from leave-one-calibration-donor-out calibration predictions; it is reported separately from the original external predictions and metrics. Both age-aware methods use pooled training-derived elastic-net feature scaling, not target-study SD scaling. Training and held-out external evaluation apply the shared adult inclusion rule (age ≥20); juvenile pseudobulks are excluded and counted in the inclusion diagnostics. The low-level raw-pseudobulk prediction helper can technically score juveniles, but those predictions are outside this adult clock's validated domain. CV candidates run with `AGE_CLOCK_N_JOBS=20` by default; lower it to limit CPU use. Use `make run-age-clocks` to fit every cell type present in the pseudobulk. It logs and skips types with no eligible samples in any configured training or external study; an unexpected type-specific fit failure is recorded with its traceback in `analysis/per_type/age_clock_all_types_summary.json`, successful types are still reported, and the target then exits nonzero. Defaults to holding out `nehar_belaid26,perez22`; these relatively small studies retain as much training data as possible while spanning a broad validation age range. Override with any comma-separated list via `AGE_CLOCK_EXTERNAL_STUDIES=study_a,study_b`. Per-method reports and a merged comparison go to `analysis/per_type/<slug>/ageing_clock/`. Smoke-test with `make run-age-clock-synthetic-test` and check that expected output files exist with `make check-age-clock-synthetic-test`; both are included in `make run-all-test` and `make verify`. |
+| Cell-type transcriptomic age clocks | `make run-age-clock` | Fit all types with `make run-age-clocks`; see [age clocks](#age-clocks) for selection and validation. |
 | Focused gene-by-cell-type profile | `make profile-gene CELL_TYPE=<label-or-slug> GENE=<gene-id>` | Use `make run-gene-profile-synthetic-test` to fit and render a planted synthetic gene and check the report end to end. |
 | Top merged age-DE gene profiles | `make profile-top-age-genes-test` | Uses the synthetic DE fixture and profiles two genes per cell type; included in `make run-all-test`. |
 | DE from an existing test pseudobulk merge | `make run-de-test` | Requires `make run-test` first; the small core fixture may not have enough independent samples for successful fits. Use the synthetic target above for positive fitting coverage. |
@@ -475,6 +478,7 @@ which validation to run.
 | Core workflow for one or a few studies | `make run-test STUDIES=<list>` | Omit `STUDIES` for the representative AIDA25/CIMA/Terekhova26 set; use `STUDIES=all` for every available fixture. |
 | Global integration/annotation diagnostics | `make run-integration-benchmark[-test]` | Run after an existing single-cell merge; `make run-all-test` also exercises its test form. |
 | Ordered Docker integration test | `make run-all-test` | Includes the synthetic DE, clock, and profile checks plus the default three single-cell types. |
+| Static atlas export, frontend, or data contract | `make site-test site-test-browser` | Browser tests build an isolated synthetic release. `make site-build` validates the existing export; only run `make site-export` when intentionally replacing it. |
 | Markdown documentation or Make target names | `make docs-check` | Also run the target described by changed commands. |
 | Broad cross-cutting or release validation | `make verify` | Reserve this non-resumed, full workflow for cross-cutting or release checks. Prefer the focused targets above for routine changes. Pass `STUDIES=all` to use every available fixture. |
 | Production analysis | `make run` | It is resumable; use only after the relevant focused checks pass. |
@@ -524,9 +528,8 @@ opened directly in a browser or served from a static file host, plus an
 `executed.ipynb` that retains code and outputs for technical reproduction. The
 HTML report hides implementation cells and execution prompts, adds a compact
 summary/navigation layer, and is the reader-facing analysis artifact; the
-notebook is the audit artifact. These standalone pages are intentionally
-separate from any future project-level website or custom frontend, which should
-browse manifests and structured report tables rather than parse notebook HTML.
+notebook is the audit artifact. The separate [static presentation site](#static-presentation-site)
+uses exported structured results rather than parsing notebook HTML.
 
 #### Automatic table of contents
 
@@ -714,6 +717,23 @@ readable to Nextflow and use a `WORK_DIR` that supports symbolic links.
 
 ## Pseudobulk differential expression
 
+Each cell-type DE run also writes `reference_expression_per_study.csv`,
+`reference_expression.csv`, and `reference_expression_metadata.json` under its
+`differential_expression/` directory. For each eligible pseudobulk in the configured
+reference age bin, CPM uses the sum of measured gene counts as its denominator.
+Within each study, mean `log(CPM + 1)` is calculated for each measured gene; the
+combined summary averages those study means equally and transforms back to CPM.
+The CSVs report sample counts and, for the combined summary, contributing study
+counts. Genes unavailable in a study are excluded from that study's summary.
+These are descriptive, unadjusted summaries of the available cohort, not fitted
+or sex-standardized expression. The reference cohort applies the minimum-cell and
+configured subject-exclusion rules but does not require sex or study-site metadata.
+Test mode bypasses the minimum-cell threshold as recorded in the metadata.
+For older DE outputs without these CSVs, run `make run-de` using the existing
+pseudobulk merge; rerendering reports or exporting the site does not calculate
+them. The site's trajectory details show the combined CPM and support counts
+when the CSV is available.
+
 ### Gene universes
 
 The workflow intentionally uses different gene universes for different tasks:
@@ -742,6 +762,7 @@ studies, and sample counts so the actual support can be checked.
 | Juvenile versus adult age effects | Fits one model across all eligible ages with shared study-site intercepts, an age-group intercept at the juvenile/adult boundary, and separate within-group age slopes. It exports the adult age slope, the juvenile age slope, and a direct Wald contrast for predicted age 25 vs age 5, with gene-wise adjusted p-values for each contrast. The predicted contrast holds the other model covariates fixed and uses the fitted piecewise-linear trend; no study-specific slopes are fitted. Every otherwise eligible juvenile sample is retained. A rank-deficient shared design is recorded as non-estimable. The report shows juvenile-only age support, the adult-versus-juvenile slope comparison, and the age-25-versus-age-5 contrast against the juvenile slope, followed by the juvenile volcano plot and gene table. |
 | Age-trajectory DE | Replaces continuous age with age bins and retains the other core terms. It uses the configured age and bin-support filters; optional covariates are not added. |
 | Abundance changes | Fits adult-only, study-specific OLS models. Within each study, an optional covariate is included only if at least 95% of adult samples have a valid value and it varies. The model then uses complete cases across its selected terms. Smoking accepts only `yes` and `no`; other values are missing. These are study-specific estimates, not a pooled abundance effect. |
+| Age-bin abundance | Fits separate OLS fraction models per study and denominator, aligning each study's 20–30 reference to zero. Uses ten-year bins below age 90, the configured per-study minimum support, and available varying study site, sex, BMI, CMV and smoking covariates with the same 95% rule and complete cases. |
 | Gene profiles | The PyDESeq2 age model uses the combined primary design. The exploratory age-bin model uses the same core adjustments; the per-study-slope and mixed models adjust for sex and library depth. These profile models do not add BMI, CMV, or smoking. |
 | Expression atlas and residual WGCNA | Atlas technology contrasts are descriptive, not covariate-adjusted DE. WGCNA's metadata associations are post-fit associations with module eigengenes, not covariate adjustment in the gene-level fit. |
 
@@ -803,6 +824,22 @@ bootstrap, and plot implementation moved from the cell-type report section.
 Denominator and bootstrap settings are configured under
 `differential_expression.abundance`; diagnostics are published alongside each
 per-type DE report.
+
+The report also fits separate study-specific age-bin OLS fraction models for
+both retained-PBMC and L1-parent denominators. Each supported bin is contrasted
+with the same study's 20–30 bin; estimates are aligned at zero and are not
+absolute fractions. The minimum per bin is the configured
+`study_comparison_minimum_samples_per_bin`; a supported reference and at least
+one other bin are required. Intervals are pointwise 95% OLS intervals and
+reported p-values are unadjusted across bins. Missing reference bins, insufficient
+support, rank-deficient models, and legacy inputs without study-site metadata
+are recorded as skipped in `fraction_age_bins_metadata.json` rather than
+imputed. `fraction_age_bins.tsv` contains the estimates. Older DE outputs must
+be regenerated to include study-site metadata before rerendering these models.
+Fraction models retain zero-cell samples and therefore do not use cell-type
+pseudobulk sequencing depth, which does not exist for zero-cell samples.
+The sample selection follows the existing abundance analysis rather than the
+DE-specific subject and cell-type pseudobulk filters.
 
 The report fits adult-only (age ≥20), study-specific OLS models. A candidate
 covariate is included only when at least 95% of that study's adult samples have
@@ -1113,7 +1150,167 @@ are treated as missing. Categorical result tables name their
 comparison groups, including male versus female, yes CMV versus no CMV, and
 yes versus no smoking status.
 
+## Age clocks
+
+`make run-age-clock` fits sample-weighted, study-balanced, within-sample rank, within-study
+gene z-score, age-aware study-offset, and age-and-sex-aware study-offset elastic-net clocks
+for one type selected with `CELL_TYPE` (default `cd14-monocyte`; label or slug). Set
+`AGE_CLOCK_METHODS=<comma-separated IDs>` to fit a subset; omit it to fit all eligible
+methods.
+
+The z-score clock is the label-free naïve study normalization: it centers and scales every
+gene within the available target-study cohort, so it cannot score a single sample.
+
+The age-aware clock fits per-gene age trends and additive training-study offsets before
+regression, then uses `AGE_CLOCK_CALIBRATION_SAMPLES` known-age target donors (default 10)
+to estimate a target-study offset before predicting the remaining donors. Its calibration
+donors are excluded from CV and external scores; it is a labeled target-site protocol, not
+calibration-free deployment.
+
+The `age_sex_aware_study_offset_elastic_net` method additionally uses sex to estimate the
+training and target study offsets; sex is not an ElasticNet predictor, and sex effects
+remain in its expression features. Its reference fit includes a sex main effect but assumes
+a shared age slope across sexes. It requires canonical female/male labels in the external
+samples and both sexes in training and every leave-one-study-out training fold. If all
+methods are requested and this metadata or overlap is unavailable, the method is recorded
+under `skipped_methods` in the clock manifest while other methods continue; explicitly
+requesting this method raises an error.
+
+The age-aware method assumes stable age effects, additive site shifts, and reasonably
+comparable calibration and evaluation populations. The standard
+`age_aware_study_offset_elastic_net` report also shows an exploratory post-hoc linear age
+mapping fit from leave-one-calibration-donor-out calibration predictions; it is reported
+separately from the original external predictions and metrics. Both age-aware methods use
+pooled training-derived elastic-net feature scaling, not target-study SD scaling.
+
+Training and held-out external evaluation apply the shared adult inclusion rule (age ≥20);
+juvenile pseudobulks are excluded and counted in the inclusion diagnostics. The low-level
+raw-pseudobulk prediction helper can technically score juveniles, but those predictions are
+outside this adult clock's validated domain.
+
+CV candidates run with `AGE_CLOCK_N_JOBS=20` by default; lower it to limit CPU use. Use
+`make run-age-clocks` to fit every cell type present in the pseudobulk. It logs and skips
+types with no eligible samples in any configured training or external study; an unexpected
+type-specific fit failure is recorded with its traceback in
+`analysis/per_type/age_clock_all_types_summary.json`, successful types are still reported,
+and the target then exits nonzero.
+
+Defaults to holding out `nehar_belaid26,perez22`; these relatively small studies retain as
+much training data as possible while spanning a broad validation age range. Override with
+any comma-separated list via `AGE_CLOCK_EXTERNAL_STUDIES=study_a,study_b`. Per-method
+reports and a merged comparison go to `analysis/per_type/<slug>/ageing_clock/`.
+
+Smoke-test with `make run-age-clock-synthetic-test` and check that expected output files
+exist with `make check-age-clock-synthetic-test`; both are included in `make run-all-test`
+and `make verify`.
+
 ## Further reading
 
 See [INPUT_FILES.md](INPUT_FILES.md) for exact external paths and checksums and
 [IMPLEMENTATION.md](IMPLEMENTATION.md) for architecture and output contracts.
+
+## Static presentation site
+
+The `site/` directory contains the React/Vite frontend. It reads static assets
+exported from the pipeline; it does not run the analysis or require an API.
+The main views are:
+
+- **Differential expression:** choose a cell type and model contrast to explore
+  gene-level estimates in a volcano plot. The menu groups combined,
+  developmental and individual-study fits. Select a point or search for a gene
+  to see model details and, when available, its separate combined age-bin fit.
+- **Composition:** explore the per-study fraction-model forest plot, adjusted
+  age-bin changes, and reference fractions. The age plot offers parent-compartment
+  and retained-PBMC denominators; the forest plot uses the L1 parent.
+- **Age-bin trajectories:** explore retained results by gene or cell type,
+  compare profile shapes in the cross-type trajectory map, or view a gene × cell
+  type matrix for the selected gene set. The profile plots show the signed
+  largest age-bin change against the adjusted omnibus age-bin p-value.
+- **Pathways:** choose a predefined pathway or enter a custom gene set. The
+  shared set highlights matching genes in the DE and cell-type plots and the
+  trajectory map; the matrix displays its retained trajectory results.
+
+Selecting a gene in a plot carries it to the other views where a matching result
+is available. Selecting a cell type in differential expression, composition or the cell-type
+trajectory view carries it to the other views when that type has data there. Model and composition
+denominator choices remain selected when changing cell type or switching views;
+if the chosen model is unavailable for a type, the view says so until another
+model or cell type is selected. A separate shared pathway or gene set can be edited from the
+Pathways page or the relevant plots. These selections last while the page is
+open and reset on reload. Where the selected gene has no plottable DE estimate
+for the current model, the DE view explains that it is showing another result.
+The plots select an initial result to make the detail panel discoverable.
+
+Install frontend dependencies locally and export completed per-cell-type DE
+results, then start the development server:
+
+```bash
+make site-install
+make site-export
+make serve-frontend
+```
+
+Open `http://localhost:8000/`; set `SITE_PORT` to use a different port. The
+server has live reload. `make site-export` defaults to
+`output/analysis/per_type`, and `SITE_INPUT` selects another per-type output
+directory. For example, `make site-export SITE_INPUT=output/test/analysis/per_type`
+uses local test outputs. Synthetic and test-only results are labelled and are
+not biological findings. The server does not run the analysis or export data.
+
+Browser journey tests use a compact synthetic fixture and build in a temporary
+directory; they do not modify the exported site or run harmonization. On a fresh
+checkout, install the locked frontend dependencies and its matching browser once,
+then run the test target:
+
+```bash
+make site-install
+make site-browser-install
+make site-test-browser
+```
+
+The browser is installed under `site/.playwright-browsers/`. For an existing
+compatible browser binary, set `SITE_BROWSER_EXECUTABLE` when invoking
+`make site-test-browser` instead of downloading the test browser. The browser
+tests require local loopback access for their temporary static server.
+
+Shared spacing and interaction styles live in `site/src/styles.css`; plot and
+feature-specific styles live alongside their components. Page widths remain
+feature-specific so that reading pages and visualizations can use the space
+they need.
+
+`make site-test` tests the frontend and export contract; `make site-build`
+validates the exported release and creates a static deployable build in `site/dist/`.
+See the [static atlas data contract](site/DATA_CONTRACT.md) for release identity,
+asset schemas, provenance, omissions and publication checks. Exporting uses
+existing outputs and never reruns harmonization. Serve the contents of that
+directory from a static web host; the default Vite build expects deployment at
+the host root. Re-export and rebuild after updating the analysis results.
+Frontend dependencies and
+cache, generated exports, and the static build are ignored by Git. A fresh
+checkout can show pipeline results after export. Optional gene annotations and
+curated pathway sets are regenerated from available local sources during export
+and remain ignored by Git. The header reports the recorded analysis mode and
+site export date; the dataset and modelling pages display available source context and
+provenance limitations. Review the provenance, permissions and licences of all included assets before
+publishing. The structured JSON assets contain gene-level summaries, model context,
+supported trajectory records and aggregate study fraction diagnostics; they do
+not contain individual-level data or raw counts. Available per-type DE and combined trajectory
+HTML reports are also included and linked from the modelling page through a
+report index generated by the same renderer as the workflow index; they can contain
+sample-level identifiers and diagnostics. Linked auxiliary downloads inside those
+reports are not included. The trajectory views contain the subset selected
+for clustering, not all tested genes. Fraction means describe adult model samples
+and use the reported L1 parent as denominator; they are not fitted age effects.
+For the age plot, each study's adjusted baseline averages model predictions in
+the reference age bin across that study's fitted model cohort. This retains
+mean BMI and the observed proportions of included categorical covariates and
+sites. The displayed overall baseline averages these predictions equally across
+studies for the selected denominator, without weighting by sample counts. OLS
+predictions are not constrained to the 0–1 fraction range. The unadjusted mean
+among reference-bin samples remains separately recorded in the analysis output.
+The forest plot uses the existing per-study model coefficients and confidence
+intervals from `fraction_model_coefficients.tsv`. Rerender DE reports with
+`make render-de-reports` if those files are absent.
+
+The current DE export identifies its tissue as PBMC. Other workflow reports
+and analysis outputs remain available in the workflow output directory.

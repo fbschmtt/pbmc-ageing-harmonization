@@ -1,0 +1,38 @@
+{
+  "name": "ageing-online-atlas",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build:metadata": "node scripts/build-gene-metadata-index.mjs",
+    "fetch:panther": "node scripts/fetch-panther-data.mjs",
+    "build:pathways": "node scripts/build-pathway-index.mjs",
+    "build": "npm run check && vite build",
+    "preview": "vite preview",
+    "check": "tsc -b",
+    "test": "vitest run",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "verify": "npm run format:check && npm run test && npm run build",
+    "check:metadata": "node scripts/validate-gene-metadata-index.mjs",
+    "test:browser": "node tests/browser/journeys.mjs"
+  },
+  "dependencies": {
+    "@deck.gl/core": "9.3.7",
+    "@deck.gl/layers": "9.3.7",
+    "@deck.gl/react": "9.3.7",
+    "@vitejs/plugin-react": "6.0.5",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "typescript": "7.0.2",
+    "vite": "8.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "prettier": "3.6.2",
+    "vitest": "3.2.6",
+    "@playwright/test": "1.58.2"
+  }
+}

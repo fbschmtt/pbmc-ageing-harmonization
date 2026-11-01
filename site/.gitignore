@@ -1,0 +1,12 @@
+/data/
+/dist/
+node_modules/
+.npm-cache/
+*.tsbuildinfo
+public/data/
+public/pathways/*
+!public/pathways/.gitkeep
+data-inputs/*
+!data-inputs/cell-type-hierarchy.json
+
+.playwright-browsers/

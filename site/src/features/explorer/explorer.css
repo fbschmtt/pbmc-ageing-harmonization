@@ -1,0 +1,120 @@
+.filters .trajectory-highlight-genes {
+  margin-top: 18px;
+}
+.filters .map-reset {
+  margin-top: 10px;
+  border: 1px solid #cbd5ce;
+  border-radius: 3px;
+  padding: 7px 10px;
+  background: #fffefa;
+  color: #39554f;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.filters .filter-clear {
+  display: block;
+  margin-top: 7px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #526f67;
+  font-size: 11px;
+}
+.filters .filter-clear:disabled {
+  color: #a6aea9;
+  cursor: default;
+}
+.filters .map-reset:hover {
+  border-color: #7e978e;
+  background: #e6eee5;
+}
+.search-error {
+  margin: 8px 0 0;
+  color: #a04f42 !important;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.search-warning {
+  margin: 8px 0 0;
+  color: #6f746b !important;
+  font-size: 10px !important;
+}
+.filters .focus-status {
+  margin: 14px 0 0;
+  color: #405f57;
+  font-weight: 600;
+}
+.atlas-main.is-trajectory-page {
+  min-height: 100dvh;
+}
+.atlas-main.is-trajectory-page .explorer.explorer {
+  height: auto;
+  min-height: 0;
+  padding-top: 28px;
+  padding-bottom: 74px;
+  display: block;
+}
+.atlas-main.is-trajectory-page .explorer-layout {
+  min-height: 560px;
+  height: auto;
+}
+.atlas-main.is-trajectory-page .explorer-layout,
+.atlas-main.is-trajectory-page .map-panel {
+  background: transparent;
+}
+.atlas-main.is-trajectory-page .map-panel {
+  aspect-ratio: 16 / 9;
+  min-height: 0;
+}
+.atlas-main.is-trajectory-page .map-panel .umap {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.umap-deck {
+  position: relative;
+  overflow: hidden;
+  touch-action: none;
+}
+.umap-deck canvas {
+  outline: none;
+}
+.umap-tooltip {
+  max-width: 260px;
+  padding: 7px 9px !important;
+  border: 1px solid #d6ddd6;
+  border-radius: 3px;
+  background: #fffefa !important;
+  color: #294640 !important;
+  font:
+    11px 'DM Mono',
+    monospace !important;
+  box-shadow: 0 3px 14px #2037331a;
+}
+.map-panel .legend {
+  z-index: 2;
+  pointer-events: none;
+}
+.legend .gene-set-ring,
+.legend .selected-ring {
+  border: 1.5px solid #000;
+  background: transparent;
+}
+.legend .gene-set-ring {
+  background: var(--atlas-highlighted-brain);
+}
+.legend .selected-ring {
+  border-color: var(--atlas-selected);
+}
+@media (max-width: 900px) {
+  .atlas-main.is-trajectory-page .explorer-layout {
+    min-height: 0;
+  }
+  .atlas-main.is-trajectory-page .map-panel {
+    aspect-ratio: auto;
+  }
+  .atlas-main.is-trajectory-page .map-panel .umap {
+    min-height: 400px;
+  }
+}

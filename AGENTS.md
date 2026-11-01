@@ -20,8 +20,8 @@
 - Use Make targets as the entry points for linting, testing, Docker builds, and
   workflows. Choose the smallest target that covers the change; do not run
   `make verify` by default. `make verify` is the broad, non-resumed Docker
-  verification target and uses Docker layer caching plus all configured test
-  studies unless `STUDIES` is explicitly supplied.
+  verification target and uses Docker layer caching plus the configured
+  `TEST_STUDIES` selection unless `STUDIES` is explicitly supplied.
 - Use `make run` only for resumable production runs. Do not add `-resume`
   to `make verify` or `make run-test`.
 - Run `make lint test-unit` for Python-only changes and `make workflow-lint`
@@ -41,9 +41,9 @@
   inclusion filters. Then use `make run-cell-type-analysis-test` to check that
   synthetic DE artifacts reach the ordinary cell-type reports.
 - `make run-all-test` runs the fresh core test once, then runs and checks the
-  integration benchmark and its report, generates and fits the synthetic DE
-  fixture, and renders all cell-type reports from that merge with matching
-  synthetic DE results. `make verify` adds local static checks before calling
+  integration benchmark, synthetic DE, age-clock and gene-profile checks,
+  then renders reports for `VERIFY_CELL_TYPES` (three types by default) from
+  that merge with matching synthetic DE results. `make verify` adds local static checks before calling
   `make run-all-test`. Do not reintroduce a core-workflow prerequisite on
   `run-cell-type-analysis-test`.
 - When adding a required CLI argument or published output, find every invocation
@@ -53,9 +53,14 @@
   and the published deliverables before reporting a focused workflow as passed.
 - Run `make docs-check` after editing tracked Markdown documentation or Make
   target names.
-- Development test targets request every configured study, including
-  `nehar_belaid26`, and skip unavailable fixtures. Use an explicit `STUDIES`
-  list to narrow coverage; this is a Make-level selection only.
+- For frontend changes, use `make site-test` and `make site-test-browser`;
+  the browser test builds an isolated synthetic release. `make site-build`
+  validates the existing local export, while `make site-export` replaces it:
+  do not overwrite an existing export just to run tests.
+- `test-data`, `run-test`, `run-all-test`, and `verify` default to
+  `TEST_STUDIES` and skip unavailable fixtures. Use `STUDIES=all` for all
+  configured studies or an explicit list for a subset; this is a Make-level
+  selection only.
 - For temporary synthetic age-clock diagnostics, follow the
   [Synthetic age-clock experiments](README.md#synthetic-age-clock-experiments)
   guidance in the README.

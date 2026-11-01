@@ -14,6 +14,7 @@ DOCUMENTS = (
     ROOT / "IMPLEMENTATION.md",
     ROOT / "INPUT_FILES.md",
     ROOT / "input_data/README.md",
+    ROOT / "site/DATA_CONTRACT.md",
     ROOT / "aifi_models/README",
 )
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")

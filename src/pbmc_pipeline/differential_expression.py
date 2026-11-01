@@ -24,6 +24,7 @@ from .covariates import (
     normalize_cmv_status,
     normalize_smoking_status,
 )
+from .reference_expression import reference_expression
 from .utils import slugify
 
 LOGGER = logging.getLogger(__name__)
@@ -793,7 +794,8 @@ def _sample_abundance_input(
     if missing:
         raise ValueError(f"Pseudobulk observations lack abundance metadata: {sorted(missing)}")
     columns = required | {
-        column for column in ("sex", "bmi", "cmv", "smoking_status") if column in obs
+        column for column in ("study_site", "subject", "sex", "bmi", "cmv", "smoking_status")
+        if column in obs
     }
     result = obs.loc[:, sorted(columns)].copy()
     l2 = result["aifi_l2_majority"].astype(str)
@@ -809,7 +811,7 @@ def _sample_abundance_input(
         raise ValueError(f"Missing configured AIFI L2 → L1 parent mapping for: {[cell_type]}")
 
     metadata_columns = [
-        column for column in ("age", "sex", "bmi", "cmv", "smoking_status")
+        column for column in ("age", "study_site", "subject", "sex", "bmi", "cmv", "smoking_status")
         if column in result
     ]
     grouped_samples = result.groupby(sample_keys, observed=True)
@@ -869,6 +871,20 @@ def _run_cell_type_differential_expression(
     type_output_dir.mkdir(parents=True, exist_ok=True)
     abundance_obs = _sample_abundance_input(adata.obs, parent_map, cell_type)
     abundance_obs.to_csv(type_output_dir / "abundance_input.tsv", sep="\t", index=False)
+    per_study_expression, balanced_expression = reference_expression(
+        type_adata, spec, cell_type=cell_type, test_mode=test_mode
+    )
+    per_study_expression.to_csv(type_output_dir / "reference_expression_per_study.csv", index=False)
+    balanced_expression.to_csv(type_output_dir / "reference_expression.csv", index=False)
+    (type_output_dir / "reference_expression_metadata.json").write_text(json.dumps({
+        "reference_bin_start_age": spec["age_trajectory"]["reference_bin_start_age"],
+        "bin_width_years": spec["age_trajectory"]["bin_width_years"],
+        "method": "expm1(equal-study mean of per-study mean log1p(CPM))",
+        "denominator": "sum of measured pseudobulk gene counts per sample",
+        "pseudocount_cpm": 1,
+        "sample_inclusion": spec["sample_inclusion"],
+        "minimum_cells_filter_enabled": not test_mode,
+    }, indent=2) + "\n", encoding="utf-8")
     metadata, exclusions, excluded_samples = _prepare_metadata(
         type_obs, spec["sample_inclusion"], test_mode=test_mode
     )

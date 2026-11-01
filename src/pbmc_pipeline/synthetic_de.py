@@ -305,11 +305,19 @@ def main() -> None:
     trajectory_settings = AgeTrajectorySettings.from_mapping(
         pipeline["differential_expression"]["age_trajectory"]
     )
+    samples_per_study = args.samples_per_study
+    if samples_per_study is None:
+        total_bins = trajectory_settings.strict_age_cutoff_exclusive // trajectory_settings.bin_width_years
+        per_study_minimum = pipeline["differential_expression"]["study_comparison_minimum_samples_per_bin"]
+        samples_per_study = max(
+            _default_samples_per_study(trajectory_settings, len(SYNTHETIC_STUDY_TECHNOLOGIES)),
+            total_bins * per_study_minimum,
+        )
     output = create_synthetic_pseudobulk(
         args.output,
         trajectory_settings=trajectory_settings,
         seed=args.seed,
-        samples_per_study=args.samples_per_study,
+        samples_per_study=samples_per_study,
         cells_per_pseudobulk=args.cells_per_pseudobulk,
     )
     print(output)

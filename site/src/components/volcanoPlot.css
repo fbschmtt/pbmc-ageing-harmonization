@@ -1,0 +1,28 @@
+.volcano-plot {
+  margin: 0;
+  min-width: 0;
+}
+.volcano-plot svg {
+  display: block;
+  width: 100%;
+}
+.volcano-plot svg text {
+  font:
+    12px Manrope,
+    sans-serif;
+  fill: #4d625a;
+}
+.volcano-plot circle {
+  cursor: pointer;
+}
+.volcano-grid {
+  stroke: #e1e7df;
+}
+.volcano-zero {
+  stroke: #b8c5ba;
+  stroke-dasharray: 4 5;
+}
+.volcano-threshold {
+  stroke: #c5795d;
+  stroke-dasharray: 4 5;
+}

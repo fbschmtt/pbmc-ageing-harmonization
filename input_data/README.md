@@ -15,25 +15,9 @@ downloader as study inputs; use `make download-go-inputs` to retrieve only
 these files. They are not tracked in Git.
 
 Downsampled smoke-test fixtures are kept separately under `test_data/` and are
-created or refreshed with `make test-data`. The current ignored files at several
-production input paths in this checkout are also smoke-test-scale subsets
-(200 or 500 cells), not the complete published sources. The four CELLxGENE H5AD
-objects have authoritative expected byte sizes in the input registry, so the
-optional downloader reports these local subsets as `size_mismatch`. Do not use
-them as full production inputs. To replace a selected local file with its
-published download, opt in explicitly, for example
-`make download-inputs STUDIES=onek1k DOWNLOAD_FORCE=true`; this downloads the
-multi-gigabyte source object. Wang25's test fixture is an RDS, so test runs
-exercise the same RDS conversion process as production.
-This describes the ignored files in the development checkout; it does not
-describe or invalidate the full inputs used by the successful production run.
-
-The current study directories are `aida25/`, `aifi/`, `fachrul26/`,
-`nehar_belaid26/`, `onek1k/`, `perez22/`, `terekhova23/`, and `wang25/`. Keep
-source filenames intact so they
-remain recognizable against their accessions and publications. Generated
-conversions belong in `cache/`, and smoke-test fixtures belong in `test_data/`;
-neither is an immutable study input.
+created or refreshed with `make test-data`. Do not use test-scale subsets as
+production inputs. See [INPUT_FILES.md](../INPUT_FILES.md) for the configured
+studies and their source paths. Generated conversions belong in `cache/`.
 
 Fachrul26 and Perez22 carry the metadata needed by their adapters in the H5AD
 `.obs` tables, so they have no supplementary runtime dependencies. Their source

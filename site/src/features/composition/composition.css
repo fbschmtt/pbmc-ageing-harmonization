@@ -1,0 +1,364 @@
+.composition-page {
+  padding: 24px max(4vw, 34px) 60px;
+}
+.composition-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 30px;
+  margin-bottom: 16px;
+}
+.composition-intro {
+  max-width: 680px;
+  margin: 0;
+  color: #62706b;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.composition-mode {
+  display: flex;
+  flex: none;
+  border: 1px solid #bfcac3;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.composition-mode button {
+  padding: 9px 12px;
+  border: 0;
+  background: #fffefa;
+  color: #52645f;
+  font-size: 12px;
+  font-weight: 700;
+}
+.composition-mode button + button {
+  border-left: 1px solid #bfcac3;
+}
+.composition-mode button.active {
+  background: #1e4a43;
+  color: #fffefa;
+}
+.composition-layout {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  min-height: 560px;
+  border: 1px solid #d6ddd6;
+  background: #fffefa;
+}
+.composition-controls {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  padding: 22px;
+  border-right: 1px solid #d6ddd6;
+  background: #f3f4ed;
+}
+.composition-controls label {
+  display: grid;
+  gap: 8px;
+  color: #50655f;
+  font-size: 12px;
+  font-weight: 700;
+}
+.composition-controls select {
+  width: 100%;
+  padding: 9px;
+  border: 1px solid #cbd5ce;
+  border-radius: 3px;
+  background: #fffefa;
+  color: #203733;
+  font-size: 12px;
+}
+.composition-controls p {
+  margin: -12px 0 0;
+  color: #76817b;
+  font-size: 11px;
+}
+.composition-panel {
+  min-width: 0;
+  padding: 24px;
+}
+.composition-panel-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+.composition-panel-heading h2 {
+  margin: 0;
+}
+.composition-panel-heading > p {
+  max-width: 320px;
+  margin: 0;
+  color: #68756f;
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: right;
+}
+.composition-heatmap-scroll,
+.composition-forest-scroll {
+  overflow: auto;
+  border: 1px solid #dce1da;
+}
+.composition-heatmap {
+  width: 100%;
+  min-width: 800px;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.composition-heatmap th,
+.composition-heatmap td {
+  height: 34px;
+  padding: 6px 8px;
+  border-right: 1px solid #e0e4dc;
+  border-bottom: 1px solid #e0e4dc;
+  white-space: nowrap;
+}
+.composition-heatmap thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #eef1eb;
+  color: #52645f;
+  font-weight: 700;
+  text-align: center;
+}
+.composition-heatmap th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  min-width: 175px;
+  background: #f7f7f1;
+  text-align: left;
+}
+.composition-heatmap td {
+  min-width: 76px;
+  color: #243b37;
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  text-align: right;
+}
+.composition-caveat {
+  max-width: 900px;
+  margin: 16px 0 0;
+  color: #697670;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.composition-forest {
+  display: block;
+  width: 100%;
+  min-width: 720px;
+  background: #fffefa;
+}
+.composition-age-profile-wrap {
+  overflow-x: auto;
+  border: 1px solid #dce1da;
+}
+.composition-age-profile {
+  display: block;
+  width: 100%;
+  min-width: 720px;
+  background: #fffefa;
+}
+.age-profile-zero {
+  stroke: #9ba7a1;
+  stroke-dasharray: 4 4;
+}
+.age-profile-line {
+  fill: none;
+  stroke: var(--atlas-brain);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.2;
+}
+.age-profile-interval {
+  stroke: #536963;
+  stroke-width: 1.4;
+}
+.age-profile-point {
+  fill: #fffefa;
+  stroke: var(--atlas-brain);
+  stroke-width: 2.2;
+}
+.age-profile-tick,
+.age-profile-axis-label,
+.age-profile-axis-title {
+  fill: #66746e;
+  font-size: 10px;
+}
+.age-profile-axis-title {
+  font-size: 11px;
+  font-weight: 700;
+}
+.forest-zero {
+  stroke: #8e9b95;
+  stroke-dasharray: 3 3;
+}
+.forest-interval {
+  stroke: #50645e;
+  stroke-width: 1.5;
+}
+.forest-positive {
+  fill: var(--atlas-positive-change);
+}
+.forest-negative {
+  fill: var(--atlas-negative-change);
+}
+.forest-cell-label {
+  fill: #40534e;
+  font-size: 10px;
+}
+.forest-axis-label {
+  fill: #78847e;
+  font-size: 9px;
+}
+.composition-empty {
+  display: grid;
+  place-items: center;
+  min-height: 300px;
+  color: #6d7872;
+  background: #f4f1e9;
+}
+@media (max-width: 900px) {
+  .composition-heading,
+  .composition-panel-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+  .composition-panel-heading > p {
+    text-align: left;
+  }
+  .composition-layout {
+    grid-template-columns: 1fr;
+  }
+  .composition-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-right: 0;
+    border-bottom: 1px solid #d6ddd6;
+  }
+}
+@media (max-width: 520px) {
+  .composition-page {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+  .composition-controls {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pipeline-composition > .choice-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin: 16px 0;
+  font-size: 14px;
+}
+.pipeline-composition > .choice-field .choice-menu {
+  min-width: min(260px, 100%);
+}
+.pipeline-composition > .choice-field .choice-panel {
+  width: max(100%, 270px);
+}
+.pipeline-composition table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  text-align: left;
+}
+.pipeline-composition th,
+.pipeline-composition td {
+  border-bottom: 1px solid #d9ddd4;
+  padding: 12px;
+}
+
+.fraction-chart-panel {
+  background: white;
+  border: 1px solid #d9ddd4;
+  padding: 24px;
+  margin: 24px 0;
+}
+.fraction-chart-panel h2 {
+  margin: 0;
+  font-size: 28px;
+}
+.fraction-chart-panel p {
+  color: #65736f;
+  line-height: 1.6;
+}
+.fraction-chart-scroll {
+  overflow-x: auto;
+}
+.fraction-chart-scroll svg {
+  display: block;
+  width: 100%;
+  min-width: 620px;
+}
+.fraction-chart-text {
+  font:
+    12px Manrope,
+    sans-serif;
+  fill: #4d625a;
+}
+.fraction-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  font-size: 12px;
+  color: #4d625a;
+}
+.fraction-legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 6px;
+}
+.pipeline-composition {
+  max-width: 1300px;
+}
+
+.content-page.pipeline-composition {
+  width: 100%;
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 24px max(4vw, 34px) 60px;
+}
+.fraction-baseline {
+  max-width: 740px;
+  padding: 18px 22px;
+  background: #edf3ea;
+  border-left: 3px solid #568578;
+}
+.fraction-baseline .eyebrow {
+  display: block;
+  margin-bottom: 8px;
+}
+.fraction-baseline strong {
+  font-size: 26px;
+  font-weight: 600;
+  color: #1e4a43;
+}
+.fraction-baseline p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #526b60;
+}
+@media (max-width: 600px) {
+  .content-page.pipeline-composition {
+    padding: 24px 20px 60px;
+  }
+}
+
+.baseline-plot-scroll {
+  overflow-x: auto;
+  margin-top: 12px;
+}
+.baseline-plot-scroll svg {
+  display: block;
+  width: 100%;
+  min-width: 560px;
+}

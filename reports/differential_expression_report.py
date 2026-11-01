@@ -36,6 +36,7 @@ from pbmc_pipeline.covariates import (
     normalize_cmv_status,
     normalize_smoking_status,
 )
+from pbmc_pipeline.fraction_age import fit_fraction_age_bins
 from pbmc_pipeline.go_enrichment import (
     GeneSetEnrichmentRun,
     leading_edge_gene_preview,
@@ -1623,6 +1624,55 @@ display(Markdown(
 
 # %%
 display(Markdown("**Model sample restriction:** adults aged ≥20 years only."))
+fraction_age_results, fraction_age_status = fit_fraction_age_bins(
+    adata.obs,
+    settings=trajectory_settings,
+    min_denominator_cells=min_fraction_denominator,
+    minimum_samples_per_bin=int(pipeline["differential_expression"]["study_comparison_minimum_samples_per_bin"]),
+)
+fraction_age_results.insert(0, "cell_type", cell_type_name)
+fraction_age_results.insert(1, "aifi_l1_parent", parent)
+fraction_age_results.to_csv(output_dir / "fraction_age_bins.tsv", sep="\t", index=False)
+(output_dir / "fraction_age_bins_metadata.json").write_text(json.dumps(fraction_age_status, indent=2) + "\n")
+display(Markdown(
+    "### Study-specific adjusted fraction changes across age bins\n"
+    f"Each point is a within-study age-bin contrast relative to {trajectory_settings.reference_bin_start_age}–"
+    f"{trajectory_settings.reference_bin_start_age + trajectory_settings.bin_width_years}, aligned to zero. "
+    "Models use adult samples passing each denominator cutoff, with study site, sex, BMI, CMV, "
+    "and smoking included when available in at least 95% and varying, followed by complete-case filtering. "
+    "Only supported bins are fitted. Intervals are pointwise 95% OLS confidence intervals; "
+    "tests are not adjusted across bins. Effects are percentage-point changes in a relative fraction. "
+    "No pseudobulk expression-depth covariate is used because zero-cell types have no such depth."
+))
+if fraction_age_results.empty:
+    display(Markdown("_No estimable study-specific age-bin fraction model. See support diagnostics below._"))
+else:
+    figure, axes = plt.subplots(1, 2, figsize=(14, 5), squeeze=False, sharey=True)
+    for axis, (denominator, title) in zip(axes.flat, [
+        ("retained_pbmc", "Within retained PBMCs"), ("l1_parent", f"Within {parent}"),
+    ]):
+        subset = fraction_age_results.loc[fraction_age_results["denominator"] == denominator]
+        for study, rows in subset.groupby("study", sort=True):
+            rows = rows.sort_values("age_bin", key=lambda x: x.str.split("-").str[0].astype(int))
+            starts = rows["age_bin"].str.split("-").str[0].astype(int).to_numpy()
+            y = rows["estimate"].to_numpy(dtype=float) * 100
+            low = rows["ci_low"].to_numpy(dtype=float) * 100
+            high = rows["ci_high"].to_numpy(dtype=float) * 100
+            axis.errorbar(starts, y, yerr=[np.maximum(y - low, 0), np.maximum(high - y, 0)],
+                          marker="o", linestyle="none", capsize=3, color=palette.get(study), label=study)
+        axis.axhline(0, color="#555555", linestyle="--", linewidth=1)
+        axis.set_title(title)
+        axis.set_xlabel("Age-bin start (years)")
+        axis.set_ylabel(
+            f"Fraction change vs {trajectory_settings.reference_bin_start_age}–"
+            f"{trajectory_settings.reference_bin_start_age + trajectory_settings.bin_width_years} (percentage points)"
+        )
+        if not subset.empty:
+            axis.legend(title="Study", fontsize=8)
+    figure.tight_layout()
+    display_collapsible_figure(figure, "Study-specific adjusted age-bin fraction contrasts")
+display_collapsible_table(pd.DataFrame(fraction_age_status), "Show age-bin model and support status")
+
 parent_fraction_data = fraction_specs[1][0]
 parent_fraction_column = fraction_specs[1][1]
 fraction_model_settings = pipeline["differential_expression"]["abundance"]["fraction_model"]
@@ -1631,6 +1681,11 @@ fraction_coefficients, fraction_residual_diagnostics = fit_parent_fraction_model
     bootstrap_replicates=fraction_model_settings["binomial_bootstrap_replicates"],
     bootstrap_seed=fraction_model_settings["binomial_bootstrap_seed"],
 )
+# Publish the exact coefficients shown in the report for downstream presentation.
+fraction_coefficients.insert(0, "cell_type", cell_type_name)
+fraction_coefficients.insert(1, "aifi_l1_parent", parent)
+fraction_coefficients.insert(2, "response", parent_fraction_column)
+fraction_coefficients.to_csv(output_dir / "fraction_model_coefficients.tsv", sep="\t", index=False)
 fraction_residual_diagnostics.insert(0, "cell_type", cell_type_name)
 fraction_residual_diagnostics.insert(1, "aifi_l1_parent", parent)
 fraction_residual_diagnostics.insert(2, "response", parent_fraction_column)

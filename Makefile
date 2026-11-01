@@ -186,7 +186,7 @@ run: $(CORE_CONTAINER_PREREQS) ## Resumable production workflow; merge single-ce
 	$(NXF) run main.nf -profile $(NF_PROFILE),core -work-dir $(WORK_DIR) --outdir $(OUTDIR) --studies $(STUDIES) --python_image $(PYTHON_IMAGE) --r_image $(R_IMAGE) --pipeline_revision $(PIPELINE_REVISION) $(MERGE_ARGS) -resume
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
-run-all: ## Run the core workflow, pseudobulk DE, and all cell-type analyses/reports in order
+run-all: ## Run core, pseudobulk DE, top age-gene profiles, and cell-type analyses/reports
 	$(MAKE) run MERGE_SINGLE_CELL=true
 	$(MAKE) run-de
 	$(MAKE) profile-top-age-genes
@@ -224,7 +224,7 @@ render-de-reports: image-python ## Render per-type DE reports from existing mode
 
 render-de-reports-test: OUTDIR = output/test
 render-de-reports-test: PER_TYPE_DIR = $(OUTDIR)/analysis/per_type
-render-de-reports-test: render-de-reports ## Render per-type DE reports from existing synthetic-DE results
+render-de-reports-test: render-de-reports ## Render per-type DE reports from existing test results
 
 render-report-index: ## Rebuild the central HTML index for the reports currently published under OUTDIR
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
@@ -436,3 +436,31 @@ render-cell-type-reports-test: OUTDIR = output/test
 render-cell-type-reports-test: check-cell-type-reports-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Rerender all test cell-type reports from existing artifacts
 	$(NXF) run cell_type_analysis.nf -profile $(NF_PROFILE),cell_type_analysis,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --cell_type_input "$(OUTDIR)/analysis/per_type/*/split.h5ad" --cell_type_analysis_input "$(OUTDIR)/analysis/per_type/*/analysis" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION)
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
+
+SITE_INPUT ?= $(OUTDIR)/analysis/per_type
+SITE_PORT ?= 8000
+
+.PHONY: site-install site-browser-install site-export site-build site-test site-test-browser serve-frontend
+site-install: ## Install locked frontend dependencies locally
+	cd site && npm ci --cache .npm-cache --no-audit --no-fund
+
+site-browser-install: ## Install the locked browser locally for frontend browser tests
+	cd site && PLAYWRIGHT_BROWSERS_PATH="$(CURDIR)/site/.playwright-browsers" npx playwright install chromium
+
+site-export: ## Export completed per-cell-type DE results for the static site
+	node site/scripts/release.mjs "$(SITE_INPUT)" site/public/data
+
+site-build: ## Validate exported assets and build the static frontend
+	node site/scripts/verify-release.mjs site/public/data
+	cd site && npm run build
+
+site-test: ## Test the frontend and export contract
+	node site/scripts/export.contract.mjs
+	node site/scripts/release.contract.mjs
+	cd site && npm test
+
+site-test-browser: ## Build a synthetic release and run browser journeys
+	cd site && PLAYWRIGHT_BROWSERS_PATH="$(CURDIR)/site/.playwright-browsers" npm run test:browser
+
+serve-frontend: ## Serve the frontend locally with live reload
+	cd site && npm run dev -- --host 127.0.0.1 --port $(SITE_PORT) --strictPort

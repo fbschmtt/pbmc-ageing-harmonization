@@ -1,0 +1,8 @@
+dist/
+node_modules/
+public/data/
+public/pathways/
+.npm-cache/
+package-lock.json
+*.csv
+TODO_no_llms.txt

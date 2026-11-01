@@ -358,10 +358,19 @@ def check_reports(
             "per-sample residual clustering",
             "residual wgcna modules",
             "synthetic test data",
+            "study-specific adjusted fraction changes across age bins",
         ]
         missing = [item for item in required if item not in de_html]
         if missing:
             raise SystemExit(f"{report_path} is missing expected DE content: {missing}")
+        age_path = report_path.parent / "fraction_age_bins.tsv"
+        age_metadata_path = report_path.parent / "fraction_age_bins_metadata.json"
+        if not age_path.is_file() or not age_metadata_path.is_file():
+            raise SystemExit(f"{report_path} is missing fraction age-bin artifacts")
+        age_results = pd.read_csv(age_path, sep="\t")
+        reference = age_results.loc[age_results["age_bin"] == age_results["reference_bin"]]
+        if age_results.empty or reference.empty or not (reference["estimate"] == 0).all():
+            raise SystemExit(f"{age_path} lacks reference-aligned synthetic fraction fits")
         wgcna_dir = report_path.parent / "residual_wgcna"
         required_wgcna = [
             "soft_threshold.csv",

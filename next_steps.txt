@@ -1,0 +1,10 @@
+# Improve Dataset Tab With Per Study Diagnostics
+One idea: For the site, in the dataset tab, add the per study umaps, study type vs. aifi_l2 comparison etc. add basically most of the data from the per study harmonization runs. 
+Generally it seems attractive to have all this auto-generated, so new studies are very easy to add. But we might want to add sth like a per study metadata "site_comments" section where some notes are given on whats unusual or special about the given study.
+
+# Frontend Data Usage
+We will definitely have to try to optimize frontend data usage. Currently we only use synthetic data and local dev. Prod data is A LOT bigger. So this might actually be a breaking point for the static site idea. 
+I think filtering for some level of significance  + splitting the data on dynamically loaded chunks might work out.
+
+# Images / Style
+I think currently the site is a bit terse / minimalist. I like the style, but a few images / visualizations might help. Gen AI should be pretty useful here. Maybe some large schematic on the front page (top priority), and small per celltype schematics? 

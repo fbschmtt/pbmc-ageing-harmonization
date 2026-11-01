@@ -1,0 +1,109 @@
+{
+  "brain": {
+    "id": "brain",
+    "label": "Brain",
+    "children": [
+      {
+        "id": "brain-neurons",
+        "label": "Neurons",
+        "children": [
+          {
+            "id": "brain-excitatory",
+            "label": "Excitatory neurons",
+            "groupLabel": "Brain — neurons — excitatory",
+            "match": { "prefixes": ["EN_"] }
+          },
+          {
+            "id": "brain-inhibitory",
+            "label": "Inhibitory neurons",
+            "groupLabel": "Brain — neurons — inhibitory",
+            "match": { "prefixes": ["IN_"] }
+          }
+        ]
+      },
+      {
+        "id": "brain-glia",
+        "label": "Glia and macrophages",
+        "groupLabel": "Brain — glia",
+        "match": { "exact": ["Astro", "Micro", "Oligo", "OPC", "PVM"] }
+      },
+      {
+        "id": "brain-vascular",
+        "label": "Vascular and support",
+        "groupLabel": "Brain — vascular and support",
+        "match": { "exact": ["Endo", "SMC", "VLMC"] }
+      }
+    ]
+  },
+  "pbmc": {
+    "id": "pbmc",
+    "label": "PBMC",
+    "children": [
+      {
+        "id": "pbmc-lymphocytes",
+        "label": "Lymphocytes",
+        "children": [
+          {
+            "id": "pbmc-t",
+            "label": "T cells",
+            "groupLabel": "PBMC — T cells",
+            "match": {
+              "exact": [
+                "CD8aa",
+                "DN T cell",
+                "MAIT",
+                "Memory CD4 T cell",
+                "Memory CD8 T cell",
+                "Naive CD4 T cell",
+                "Naive CD8 T cell",
+                "Proliferating T cell",
+                "Treg",
+                "gdT"
+              ]
+            }
+          },
+          {
+            "id": "pbmc-b",
+            "label": "B and plasma cells",
+            "groupLabel": "PBMC — B and plasma cells",
+            "match": {
+              "exact": ["PC", "Plasma cell"],
+              "includes": ["B cell"]
+            }
+          },
+          {
+            "id": "pbmc-nk",
+            "label": "NK cells and ILCs",
+            "groupLabel": "PBMC — NK cells",
+            "match": { "exact": ["ILC"], "includes": ["NK"] }
+          }
+        ]
+      },
+      {
+        "id": "pbmc-myeloid",
+        "label": "Myeloid cells",
+        "children": [
+          {
+            "id": "pbmc-monocytes",
+            "label": "Monocytes",
+            "groupLabel": "PBMC — monocytes",
+            "match": { "includes": ["monocyte"] }
+          },
+          {
+            "id": "pbmc-dendritic",
+            "label": "Dendritic cells",
+            "groupLabel": "PBMC — dendritic cells",
+            "match": { "exact": ["pDC"], "prefixes": ["cDC"] }
+          }
+        ]
+      },
+      {
+        "id": "pbmc-platelets",
+        "label": "Platelets",
+        "groupLabel": "PBMC — platelets",
+        "scope": false,
+        "match": { "exact": ["Platelet"] }
+      }
+    ]
+  }
+}
