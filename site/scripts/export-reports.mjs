@@ -15,6 +15,17 @@ async function optional(path) {
 
 export async function studyReportNames(input) {
   const directory = resolve(input, '../../harmonization/harmonization_qc')
+  const runManifest = await optional(resolve(input, '../../run_manifest.json'))
+  let selected = null
+  if (runManifest) {
+    const manifest = JSON.parse(runManifest.toString('utf8'))
+    if (
+      !Array.isArray(manifest.selected_studies) ||
+      !manifest.selected_studies.every((id) => typeof id === 'string')
+    )
+      throw new Error('Invalid selected studies in run manifest')
+    selected = new Set(manifest.selected_studies)
+  }
   let entries
   try {
     entries = await readdir(directory, { withFileTypes: true })
@@ -23,7 +34,9 @@ export async function studyReportNames(input) {
     throw error
   }
   return entries
-    .filter((entry) => entry.isDirectory() && entry.name !== 'merged')
+    .filter(
+      (entry) => entry.isDirectory() && entry.name !== 'merged' && (!selected || selected.has(entry.name)),
+    )
     .map((entry) => `../../harmonization/harmonization_qc/${entry.name}/report.html`)
     .sort()
 }
@@ -81,7 +94,47 @@ export async function exportReports(input, stage, releaseId, cellTypes) {
       sha256: createHash('sha256').update(bytes).digest('hex'),
     })
   }
+  // The executed QC notebook keeps each matplotlib figure as a PNG output.
+  // Export only the two dataset-tab figures, avoiding the much larger notebook
+  // and report HTML payloads in the interactive page.
+  const qcRoot = resolve(input, '../../harmonization/harmonization_qc')
+  for (const study of await studyReportNames(input)) {
+    const id = study.split('/').at(-2)
+    const notebook = await optional(join(qcRoot, id, 'executed.ipynb'))
+    if (!notebook) continue
+    const cells = JSON.parse(notebook.toString('utf8')).cells || []
+    const figures = { umap: null, heatmap: null }
+    for (let index = 0; index < cells.length; index++) {
+      const cell = cells[index]
+      const sourceText = Array.isArray(cell.source) ? cell.source.join('') : cell.source || ''
+      const heading = cell.cell_type === 'markdown' ? sourceText : ''
+      const key = heading.includes('AIFI L2 UMAP')
+        ? 'umap'
+        : heading.includes('Study labels versus AIFI predictions')
+          ? 'heatmap'
+          : null
+      if (!key) continue
+      const next = cells[index + 1]
+      const output = next?.outputs?.find((item) => item.data?.['image/png'])
+      if (output) figures[key] = Buffer.from(output.data['image/png'], 'base64')
+    }
+    for (const [kind, bytes] of Object.entries(figures)) {
+      if (!bytes) continue
+      const path = `images/${releaseId}/studies/${id}-${kind}.png`
+      const target = join(stage, path)
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, bytes)
+      reports.push({
+        path,
+        kind: `study_${kind}`,
+        study: id,
+        bytes: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      })
+    }
+  }
   for (const report of reports) {
+    if (report.kind !== 'report') continue
     const html = (await readFile(join(stage, report.path))).toString('utf8')
     const missing = new Set()
     for (const match of html.matchAll(/<a\b[^>]*\bhref\s*=\s*(["'])(.*?)\1/gi)) {

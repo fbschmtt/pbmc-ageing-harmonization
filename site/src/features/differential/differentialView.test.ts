@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Cell, Gene, Model } from '../../data/differential'
-import { filterGenes, hasPlottableEstimate, initialCell } from './differentialView'
+import { filterGenes, hasPlottableEstimate, initialCell, visibleGenes } from './differentialView'
 
 const gene = (name: string, effect: number | null, padj: number | null): Gene => ({
   gene: name,
@@ -31,6 +31,11 @@ const cell = (label: string, records: Gene[]): Cell => ({
   models: [model(records)],
 })
 describe('differential view selection', () => {
+  it('shows significant records and exact requested genes for older unfiltered exports', () => {
+    const records = [gene('SIG', 1, 0.01), gene('EDGE', 1, 0.05), gene('OTHER', 1, 0.7)]
+    expect(visibleGenes(records, new Set()).map((record) => record.gene)).toEqual(['SIG'])
+    expect(visibleGenes(records, new Set(['OTHER'])).map((record) => record.gene)).toEqual(['SIG', 'OTHER'])
+  })
   it('uses the preferred cell before looking for the preferred gene', () => {
     const cells = [cell('A', [gene('X', 1, 0.1)]), cell('B', [gene('Y', 1, 0.01)])]
     expect(initialCell(cells, 'Y', 'A').label).toBe('A')

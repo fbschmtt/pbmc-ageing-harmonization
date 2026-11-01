@@ -10,6 +10,7 @@ work/
 
 # Externally distributed CellTypist models
 aifi_models/*.pkl
+aifi_models/AIFI_L2_imm_health_atlas_type_order_colors.csv
 
 # Local credentials and scientific data
 # Source data belongs under input_data/ and generated artifacts under output/.

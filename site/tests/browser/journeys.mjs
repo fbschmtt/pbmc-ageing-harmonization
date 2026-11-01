@@ -99,9 +99,60 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         )
         await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
         await visible(page.locator('.de-statistics'))
-        const models = requests.filter((path) => path.includes('/data/de-models/'))
-        assert.equal(models.length, 1)
-        assert.ok(models[0].endsWith('.gz.bin'))
+        const catalogue = JSON.parse(await readFile(join(dist, 'data/de-index.json'), 'utf8'))
+        const cell = catalogue.cellTypes.find((item) => item.label === 'CD14 monocyte')
+        const other = cell.models.find((model) => model.model === 'per_study')
+        const otherPaths = [other.recordsAsset, ...Object.values(other.recordBuckets || {})]
+        await page.getByLabel('Highlight genes').fill('GENE3')
+        await page.waitForTimeout(1400)
+        const wasRequested = (asset) =>
+          requests.some((path) => path.endsWith(`/${asset}`) || path.endsWith(`/${asset}.gz.bin`))
+        assert.equal(otherPaths.some(wasRequested), false, 'Unselected model was prefetched')
+        assert.ok(requests.some((path) => path.includes('/data/de-models/') && path.endsWith('.gz.bin')))
+        await chooseMenu(page, 'Model and contrast', 'study_a · Age (per decade)')
+        await visible(page.getByText('Effect: age · per decade.', { exact: false }))
+        assert.equal(wasRequested(other.recordsAsset), true, 'Selected model was not fetched')
+      } finally {
+        await context.close()
+      }
+    })
+
+    await t.test('filters legacy inline results and explains their model-loading limitation', async () => {
+      const context = await browser.newContext()
+      try {
+        const page = await context.newPage()
+        const legacy = JSON.parse(await readFile(join(dist, 'data/de-index.json'), 'utf8'))
+        for (const cell of legacy.cellTypes)
+          for (const model of cell.models) {
+            const paths = [model.recordsAsset, ...Object.values(model.recordBuckets || {})]
+            model.records = []
+            for (const path of paths) {
+              const chunk = JSON.parse(await readFile(join(dist, 'data', path), 'utf8'))
+              model.records.push(...chunk.cellTypes[0].models[0].records)
+            }
+            delete model.recordsAsset
+            delete model.recordBuckets
+          }
+        await page.route('**/data/de-index.json*', (route) =>
+          route.request().url().endsWith('.gz.bin')
+            ? route.fulfill({
+                body: gzipSync(JSON.stringify(legacy)),
+                contentType: 'application/octet-stream',
+              })
+            : route.fulfill({ json: legacy }),
+        )
+        await page.goto(served.url)
+        await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
+        await visible(
+          page.getByText('This older export contains all models in one download.', { exact: false }),
+        )
+        const plot = page.locator('svg[aria-label^="Volcano plot"]')
+        await visible(plot)
+        assert.equal(await plot.locator('circle').count(), 2)
+        assert.equal(await plot.locator('title').filter({ hasText: 'GENE3' }).count(), 0)
+        await page.getByLabel('Find a gene').fill('GENE3')
+        await chooseMenu(page, 'Matching genes (1)', 'GENE3')
+        assert.equal(await plot.locator('title').filter({ hasText: 'GENE3' }).count(), 1)
       } finally {
         await context.close()
       }
@@ -222,7 +273,6 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
           'https://doi.org/10.1234/fixture',
         )
         await visible(page.getByText('metadata comparison', { exact: false }))
-        await visible(page.getByText('20-30, 30-40, 40-50', { exact: false }))
         await page.getByRole('button', { name: 'Modelling', exact: true }).click()
         await visible(page.getByText('Study licences are not recorded in this release.', { exact: false }))
         await visible(

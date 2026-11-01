@@ -83,4 +83,19 @@ describe('release provenance', () => {
     expect(context.studies[1].publicationDoi).toBeNull()
     expect(context.studyReference.note).toContain('not a verified')
   })
+  it('includes harmonization studies independently from DE studies', async () => {
+    root = await mkdtemp(join(tmpdir(), 'atlas-mixed-context-'))
+    const input = join(root, 'analysis/per_type')
+    await mkdir(input, { recursive: true })
+    const context = await releaseContext(
+      input,
+      { cellTypes: [{ models: [{ study: 'synthetic', studies: {} }] }] },
+      join(root, 'missing.json'),
+      [{ kind: 'report', study: 'real-study' }],
+    )
+    expect(context.studies).toEqual([
+      expect.objectContaining({ id: 'real-study', inModels: false, harmonizationAvailable: true }),
+      expect.objectContaining({ id: 'synthetic', inModels: true, harmonizationAvailable: false }),
+    ])
+  })
 })

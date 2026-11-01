@@ -38,22 +38,35 @@ export function DatasetContext({ release }: { release: ReleaseManifest }) {
         are fingerprinted in the manifest, but existing reports and tables do not record enough lineage to
         prove they came from the same analysis.
       </p>
-      <h2>Studies represented in exported models</h2>
+      <h2>Studies in this release</h2>
       {context?.studies.length ? (
         <>
           <p>
-            Study identifiers come from the exported models. Citation and annotation details below are from
-            the exporter checkout's study configuration; they have not been verified against an analysis-time
-            configuration snapshot.
+            Study identifiers come from this release. Citation and annotation details are from the study
+            configuration.
           </p>
           <ul>
             {context.studies.map((study) => (
               <li key={study.id}>
-                <strong>{study.id}</strong> · <Doi value={study.publicationDoi} />
+                <h3>{study.id}</h3>
+                {study.inModels !== undefined && (
+                  <p>
+                    {study.harmonizationAvailable
+                      ? 'Harmonization diagnostics available.'
+                      : 'No harmonization diagnostics in this release.'}{' '}
+                    {study.inModels
+                      ? 'Represented in exported DE models.'
+                      : 'Not represented in exported DE models.'}
+                  </p>
+                )}
+                <p>
+                  <Doi value={study.publicationDoi} />
+                </p>
                 {study.annotation && <p>Cell types: {study.annotation}</p>}
                 {study.technology && <p>Technology: {study.technology}</p>}
                 {study.inclusion && <p>Model inclusion: {study.inclusion}</p>}
                 {study.siteComments && <p>{study.siteComments}</p>}
+                <StudyFigures release={release} study={study.id} />
                 {release.assets
                   .filter((asset) => asset.kind === 'report' && asset.study === study.id)
                   .map((asset) => (
@@ -63,13 +76,10 @@ export function DatasetContext({ release }: { release: ReleaseManifest }) {
                         target="_blank"
                         rel="noreferrer"
                       >
-                        Open harmonization diagnostics
+                        Open full harmonization report
                       </a>
                     </p>
                   ))}
-                <p>
-                  Data licence: {study.licence || 'Not recorded; review source terms before publication.'}
-                </p>
               </li>
             ))}
           </ul>
@@ -77,42 +87,33 @@ export function DatasetContext({ release }: { release: ReleaseManifest }) {
       ) : (
         <p>No study identifiers were recorded in the exported models.</p>
       )}
-      <h2>Age-bin support</h2>
-      {context?.ageSupport?.commonBins?.length ? (
-        <>
-          <p>
-            Common cross-type trajectory bins: {context.ageSupport.commonBins.join(', ')}.{' '}
-            {context.ageSupport.minimumSamplesPerBin != null &&
-              `Configured minimum: ${context.ageSupport.minimumSamplesPerBin} samples per bin.`}
-          </p>
-          {context.ageSupport.cellTypes.length > 0 && (
-            <details>
-              <summary>Cell-type support and exclusions (sample counts per bin)</summary>
-              <ul>
-                {context.ageSupport.cellTypes.map((cell) => (
-                  <li key={cell.cellType}>
-                    <strong>{cell.cellType}</strong>: {cell.status}
-                    {cell.reason && ` — ${cell.reason}`}
-                    {cell.ageBinCounts && (
-                      <span>
-                        {' '}
-                        ·{' '}
-                        {Object.entries(cell.ageBinCounts)
-                          .map(([bin, count]) => `${bin}: ${count}`)
-                          .join(', ')}
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-        </>
-      ) : (
-        <p>Age-bin support metadata is unavailable for this export.</p>
-      )}
     </>
   )
+}
+
+function StudyFigures({ release, study }: { release: ReleaseManifest; study: string }) {
+  const figures = release.assets.filter(
+    (asset) => asset.study === study && (asset.kind === 'study_umap' || asset.kind === 'study_heatmap'),
+  )
+  return figures.length ? (
+    <div className="study-figure-list">
+      {(['study_umap', 'study_heatmap'] as const).map((kind) => {
+        const figure = figures.find((asset) => asset.kind === kind)
+        return figure ? (
+          <figure key={kind}>
+            <img
+              src={`${import.meta.env.BASE_URL}data/${figure.path}`}
+              loading="lazy"
+              alt={`${study} ${kind === 'study_umap' ? 'UMAP colored by AIFI L2 labels' : 'study cell type versus AIFI L2 heatmap'}`}
+            />
+            <figcaption>
+              {kind === 'study_umap' ? 'Harmonized UMAP · AIFI L2 labels' : 'Study types × AIFI L2'}
+            </figcaption>
+          </figure>
+        ) : null
+      })}
+    </div>
+  ) : null
 }
 
 export function ModellingContext({ release }: { release: ReleaseManifest }) {

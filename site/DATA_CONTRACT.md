@@ -56,13 +56,27 @@ a local cleanup list and is not a browser data asset.
 | `gene-metadata.json` | Optional PANTHER annotations for retained trajectory genes, including source version, URL and source SHA-256. Rebuilt only when the pinned source and trajectory index are available. |
 | `reports/<release-id>/analysis/…/report.html` | Available per-type DE and combined trajectory HTML reports, copied unchanged and linked from the modelling page. These reports may contain sample-level identifiers and diagnostics. The export does not include their linked CSV or other companion downloads; those links can be unavailable on the site. |
 | `reports/<release-id>/harmonization/harmonization_qc/<study>/report.html` | Available study QC reports, discovered from the harmonization output and linked on the datasets page. These may contain sample-level information; review them before publication. |
+| `images/<release-id>/studies/<study>-umap.png` | The standalone AIFI L2 UMAP from the study QC notebook, with a transparent background. Older QC notebooks without this figure do not produce a UMAP asset; rerender the study report to include it. |
+| `images/<release-id>/studies/<study>-heatmap.png` | The study-label versus AIFI L2 comparison extracted from the study QC notebook, when available. |
 
-The manifest includes study identifiers observed in exported models. Available
+DE model chunks are fetched only for the currently selected cell type and
+model. Gene-set prefetching is limited to that selected model. Older exports
+with all model records embedded in `de-index.json` are filtered in the view,
+but necessarily download the entire index; regenerate the export to enable
+on-demand model loading.
+
+The manifest includes study identifiers observed in exported models and selected
+study harmonization reports. The dataset page indicates which studies have each
+kind of result. If a workflow run manifest is available, only its selected studies
+are used for harmonization reports, avoiding stale study outputs. Available
 DOIs, annotation and technology descriptions come from the current checkout of
 `config/studies.json`, whose fingerprint is recorded; this is not a verified
 analysis-time snapshot. Optional `site_comments` strings in individual study
 entries are displayed alongside that metadata. Data licences are recorded as unknown until reviewed.
 Age-bin support is drawn from the trajectory analysis metadata when available.
+Regenerating a study QC report updates its notebook and HTML; the site continues
+to show the previous export until `make site-export` is run again. See the
+[site setup and refresh instructions](../README.md#static-presentation-site).
 
 HTML reports are included by default when present. The workflow report-index
 renderer generates `reports/<release-id>/index.html` using only the reports

@@ -38,7 +38,7 @@ test('release validates and inventories a snapshot; failure preserves previous r
     )
     await writeFile(
       join(type, 'merged.csv'),
-      'gene,log2FoldChange,padj,pvalue,lfcSE,baseMean,contrast\nGENE1,0.1,0.01,0.001,0.02,5,per year\n',
+      'gene,log2FoldChange,padj,pvalue,lfcSE,baseMean,contrast\nGENE1,0.1,0.01,0.001,0.02,5,per year\nGENE2,0.2,0.5,0.4,0.03,7,per year\n',
     )
     await writeFile(join(type, 'report.html'), '<html><body>DE diagnostics</body></html>')
     const release = await createRelease(input, target, options)
@@ -58,7 +58,15 @@ test('release validates and inventories a snapshot; failure preserves previous r
     const model = JSON.parse(de).cellTypes[0].models[0]
     assert.deepEqual(model.records, [])
     const chunk = JSON.parse(await readFile(join(target, model.recordsAsset), 'utf8'))
-    assert.equal(chunk.cellTypes[0].models[0].records[0].gene, 'GENE1')
+    assert.deepEqual(
+      chunk.cellTypes[0].models[0].records.map((record) => record.gene),
+      ['GENE1'],
+    )
+    const extra = JSON.parse(await readFile(join(target, Object.values(model.recordBuckets)[0]), 'utf8'))
+    assert.deepEqual(
+      extra.cellTypes[0].models[0].records.map((record) => record.gene),
+      ['GENE2'],
+    )
     await verifyRelease(target)
     await writeFile(join(target, 'de-index.json'), de + ' ')
     await assert.rejects(verifyRelease(target), /checksum mismatch/)

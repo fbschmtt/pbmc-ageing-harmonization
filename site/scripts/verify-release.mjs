@@ -54,6 +54,16 @@ export async function verifyRelease(directory) {
         throw new Error(`Invalid report asset: ${asset.path}`)
       continue
     }
+    if (asset.kind === 'study_umap' || asset.kind === 'study_heatmap') {
+      if (
+        !asset.path.startsWith(`images/${manifest.releaseId}/studies/`) ||
+        !asset.path.endsWith('.png') ||
+        typeof asset.study !== 'string' ||
+        !bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))
+      )
+        throw new Error(`Invalid study figure: ${asset.path}`)
+      continue
+    }
     const value = JSON.parse(bytes.toString('utf8'))
     parsed.set(asset.path, value)
     if (value.releaseId !== manifest.releaseId || !validAsset(asset.kind, value))
@@ -81,6 +91,11 @@ export async function verifyRelease(directory) {
         model.records.length !== 0
       )
         throw new Error(`Invalid DE model reference: ${cell.id}/${model.id}`)
+      if (
+        model.recordBuckets &&
+        chunk.cellTypes[0].models[0].records.some((record) => record.padj === null || record.padj >= 0.05)
+      )
+        throw new Error(`Unfiltered default DE model: ${cell.id}/${model.id}`)
       for (const target of Object.values(model.recordBuckets || {})) {
         const extra = parsed.get(target)
         if (

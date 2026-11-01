@@ -9,6 +9,7 @@ import pandas as pd
 import seaborn as sns
 from IPython.display import HTML, Markdown, display
 
+from pbmc_pipeline.cell_type_colors import set_aifi_l2_scanpy_palette
 from pbmc_pipeline.report_theme import render_report_header
 from pbmc_pipeline.reporting import aifi_l2_concordance
 
@@ -124,6 +125,7 @@ for method in embedding_methods:
     }.get(method["name"], method["name"].replace("_", " ").title())
     display(Markdown(f"### {heading}"))
     key = method["embedding_key"]
+    set_aifi_l2_scanpy_palette(adata, reference_column)
     for color, title in [("study", "Study"), (reference_column, "Per-study AIFI L2")]:
         sc.pl.embedding(
             adata, basis=key, color=color, title=f"{method['name']}: {title}",

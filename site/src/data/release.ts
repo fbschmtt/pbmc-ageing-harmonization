@@ -32,6 +32,8 @@ export type ReleaseManifest = {
   context?: {
     studies: {
       id: string
+      inModels?: boolean
+      harmonizationAvailable?: boolean
       publicationDoi: string | null
       annotation: string | null
       technology: string | null
@@ -101,6 +103,8 @@ function validContext(value: unknown): boolean {
       (study: unknown) =>
         object(study) &&
         typeof study.id === 'string' &&
+        (study.inModels === undefined || typeof study.inModels === 'boolean') &&
+        (study.harmonizationAvailable === undefined || typeof study.harmonizationAvailable === 'boolean') &&
         (study.siteComments === undefined || nullableString(study.siteComments)) &&
         ['publicationDoi', 'annotation', 'technology', 'inclusion', 'licence'].every((key) =>
           nullableString(study[key]),

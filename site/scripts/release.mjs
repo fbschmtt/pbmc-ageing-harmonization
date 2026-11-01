@@ -199,7 +199,9 @@ export async function createRelease(inputPath, targetPath, options = {}) {
     if (options.includeReports !== false) {
       const snapshotReports = async () => {
         const names = [
+          '../../run_manifest.json',
           ...(await studyReportNames(input)),
+          ...(await studyReportNames(input)).map((path) => path.replace(/report\.html$/, 'executed.ipynb')),
           ...de.cellTypes.map((cell) => `${cell.id}/differential_expression/report.html`),
           '../combined/trajectory/report.html',
         ]
@@ -218,8 +220,8 @@ export async function createRelease(inputPath, targetPath, options = {}) {
     const { inventory, analysis } = await releaseInventory(input, de)
     const provenance = await compareAnalysisMetadata(input, inventory)
     const studiesPath = resolve(options.studiesConfigPath || join(root, '..', 'config/studies.json'))
-    const context = await releaseContext(input, de, studiesPath)
-    const referencesAfter = await releaseContext(input, de, studiesPath)
+    const context = await releaseContext(input, de, studiesPath, assets)
+    const referencesAfter = await releaseContext(input, de, studiesPath, assets)
     if (
       JSON.stringify(context) !== JSON.stringify(referencesAfter) ||
       JSON.stringify(before) !== JSON.stringify(await sourceInventory(input))

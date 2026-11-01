@@ -43,8 +43,8 @@
 - `make run-all-test` runs the fresh core test once, then runs and checks the
   integration benchmark, synthetic DE, age-clock and gene-profile checks,
   then renders reports for `VERIFY_CELL_TYPES` (three types by default) from
-  that merge with matching synthetic DE results. `make verify` adds local static checks before calling
-  `make run-all-test`. Do not reintroduce a core-workflow prerequisite on
+  that merge with matching synthetic DE results. `make verify` also runs local static and frontend
+  checks, then checks the site against those workflow outputs. Do not reintroduce a core-workflow prerequisite on
   `run-cell-type-analysis-test`.
 - When adding a required CLI argument or published output, find every invocation
   with `rg` (Make, Nextflow, tests, and docs) and run the smallest public Make
@@ -57,6 +57,8 @@
   the browser test builds an isolated synthetic release. `make site-build`
   validates the existing local export, while `make site-export` replaces it:
   do not overwrite an existing export just to run tests.
+  Use `make site-test-workflow` to exercise existing `output/test` analysis
+  and harmonization artifacts in the site without overwriting the local export.
 - `test-data`, `run-test`, `run-all-test`, and `verify` default to
   `TEST_STUDIES` and skip unavailable fixtures. Use `STUDIES=all` for all
   configured studies or an explicit list for a subset; this is a Make-level

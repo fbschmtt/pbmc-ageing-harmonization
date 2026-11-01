@@ -240,6 +240,19 @@ h2 {
   margin: var(--space-section) 0 12px;
   font-size: 24px;
 }
+.study-figure-list figure {
+  margin: .75rem 0 1rem;
+}
+.study-figure-list img {
+  display: block;
+  height: auto;
+  max-width: 100%;
+}
+.study-figure-list figcaption {
+  color: var(--report-muted, #5f6b7a);
+  font-size: .85rem;
+  margin-top: .25rem;
+}
 .information-page p {
   line-height: 1.65;
 }

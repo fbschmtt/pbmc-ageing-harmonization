@@ -25,6 +25,7 @@ import seaborn as sns
 from IPython.display import HTML, Markdown, display
 from scipy import sparse
 
+from pbmc_pipeline.cell_type_colors import set_aifi_l2_scanpy_palette
 from pbmc_pipeline.report_theme import render_report_header
 from pbmc_pipeline.reporting import distinct_sample_batch_assignments
 
@@ -221,10 +222,23 @@ plt.tight_layout(); plt.show()
 # %%
 umap_columns = [column for column in ["study_celltype", "aifi_l1_majority", "aifi_l2_majority"] if column in adata.obs]
 if "X_umap" in adata.obsm and umap_columns:
+    set_aifi_l2_scanpy_palette(adata)
     sc.pl.umap(adata, color=umap_columns, ncols=2, size=max(2, 120000 / adata.n_obs), show=False)
     plt.show()
 else:
     display(Markdown("_No stored UMAP coordinates were available._"))
+
+# %% [markdown]
+# ### AIFI L2 UMAP
+
+# %%
+if "X_umap" in adata.obsm and "aifi_l2_majority" in adata.obs:
+    set_aifi_l2_scanpy_palette(adata)
+    with plt.rc_context({"figure.facecolor": "none", "axes.facecolor": "none", "savefig.transparent": True}):
+        sc.pl.umap(adata, color="aifi_l2_majority", title="AIFI L2", size=max(2, 120000 / adata.n_obs), show=False)
+        plt.show()
+else:
+    display(Markdown("_No stored UMAP or AIFI L2 annotations were available._"))
 
 # %% [markdown]
 # ## Canonical PBMC marker expression

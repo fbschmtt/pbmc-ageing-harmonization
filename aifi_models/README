@@ -9,3 +9,12 @@ redirect through a Google-authenticated Allen service and require interactive
 authentication. The binaries are also excluded from redistribution until their
 license terms have been confirmed. The files used for this project were
 obtained on 2025-06-27.
+
+The optional Immune Health Atlas color table can also be placed in this
+directory as `AIFI_L2_imm_health_atlas_type_order_colors.csv`. It supplies
+the published AIFI L2 colors in QC and integration reports. When absent,
+the reports use deterministic label-based fallback colors; the table is not
+required for analysis. Both the model binaries and this table are ignored by
+Git. Rebuild the Python image after adding or changing the table; the Make
+targets include it in the image tag when present. For direct Python runs,
+`PBMC_AIFI_L2_COLORS` can point to a table at a different path.

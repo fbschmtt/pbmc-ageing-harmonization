@@ -12,7 +12,7 @@ import { parseGeneSet } from '../../data/geneSet'
 import type { PathwaySet } from '../../data/pathways'
 import { visualColors } from '../../theme/visualEncoding'
 import { defaultModelId, groupModels, modelLabel } from './modelSelection'
-import { filterGenes, hasPlottableEstimate, initialCell } from './differentialView'
+import { filterGenes, hasPlottableEstimate, initialCell, visibleGenes } from './differentialView'
 import { GeneAgePreview } from './GeneAgePreview'
 import './differential.css'
 
@@ -154,17 +154,20 @@ export function DifferentialPage({
   }, [cell, modelMetadata, highlightGenes])
   const model = modelMetadata && {
     ...modelMetadata,
-    records: recordsAsset
-      ? [
-          ...(loadedRecords[recordsAsset] || []),
-          ...[...requestedGenes].flatMap((gene) => {
-            const path = modelMetadata.recordBuckets?.[geneBucket(gene)]
-            return path
-              ? (loadedRecords[path] || []).filter((record) => record.gene.toUpperCase() === gene)
-              : []
-          }),
-        ]
-      : modelMetadata.records,
+    records: visibleGenes(
+      recordsAsset
+        ? [
+            ...(loadedRecords[recordsAsset] || []),
+            ...[...requestedGenes].flatMap((gene) => {
+              const path = modelMetadata.recordBuckets?.[geneBucket(gene)]
+              return path
+                ? (loadedRecords[path] || []).filter((record) => record.gene.toUpperCase() === gene)
+                : []
+            }),
+          ]
+        : modelMetadata.records,
+      requestedGenes,
+    ),
   }
   const requestedModel = release?.cellTypes.flatMap((item) => item.models).find((item) => item.id === modelId)
   const filtered = useMemo(() => filterGenes(model, search), [model, search])
@@ -213,6 +216,12 @@ export function DifferentialPage({
         <div className="de-warning" role="status">
           {cell.warning || 'Test-only results are not biological evidence.'}
         </div>
+      )}
+      {release.cellTypes.some((item) => item.models.some((entry) => !entry.recordsAsset)) && (
+        <p role="status">
+          This older export contains all models in one download. Re-export the site data to load models only
+          when selected.
+        </p>
       )}
       {recordsAsset && !loadedRecords[recordsAsset] && (
         <p role="status">

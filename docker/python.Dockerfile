@@ -3,7 +3,8 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     MPLCONFIGDIR=/tmp/matplotlib \
-    CELLTYPIST_FOLDER=/tmp/celltypist
+    CELLTYPIST_FOLDER=/tmp/celltypist \
+    PBMC_AIFI_L2_COLORS=/opt/pbmc-pipeline/aifi_models/AIFI_L2_imm_health_atlas_type_order_colors.csv
 
 WORKDIR /opt/pbmc-pipeline
 
@@ -22,5 +23,6 @@ COPY src ./src
 RUN python -m pip install --no-cache-dir --no-deps --no-build-isolation '.[qc]'
 
 COPY config ./config
+COPY aifi_models ./aifi_models
 
 CMD ["pbmc-harmonize", "--help"]

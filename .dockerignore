@@ -7,5 +7,7 @@ output
 legacy_notebooks
 **/__pycache__
 **/.ipynb_checkpoints
-aifi_models/*.pkl
+aifi_models/*
+!aifi_models/README
+!aifi_models/AIFI_L2_imm_health_atlas_type_order_colors.csv
 *.log

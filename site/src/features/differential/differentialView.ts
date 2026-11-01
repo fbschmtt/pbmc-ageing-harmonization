@@ -12,6 +12,12 @@ export function hasPlottableEstimate(record: Gene): record is Gene & { effect: n
   )
 }
 
+export function visibleGenes(records: Gene[], requested: ReadonlySet<string>): Gene[] {
+  return records.filter(
+    (record) => (record.padj !== null && record.padj < 0.05) || requested.has(record.gene.toUpperCase()),
+  )
+}
+
 export function initialCell(cells: Cell[], gene: string | null, type: string | null): Cell {
   const hasGene = (item: Cell) =>
     item.models

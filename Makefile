@@ -12,7 +12,7 @@ OUTDIR ?= output
 # IMAGE_TAG remains an optional common override for release builds. By default,
 # each image is tagged from only the files copied by its own Docker build context.
 IMAGE_TAG ?=
-PYTHON_IMAGE_TAG ?= $(if $(IMAGE_TAG),$(IMAGE_TAG),$(shell git ls-files -co --exclude-standard docker/python.Dockerfile config src pyproject.toml requirements.lock | sort | while IFS= read -r file; do test -f "$$file" && sha256sum "$$file"; done | sha256sum | cut -c1-12))
+PYTHON_IMAGE_TAG ?= $(if $(IMAGE_TAG),$(IMAGE_TAG),$(shell { git ls-files -co --exclude-standard .dockerignore docker/python.Dockerfile config src pyproject.toml requirements.lock aifi_models/README; test ! -f aifi_models/AIFI_L2_imm_health_atlas_type_order_colors.csv || printf '%s\n' aifi_models/AIFI_L2_imm_health_atlas_type_order_colors.csv; } | sort | while IFS= read -r file; do test -f "$$file" && sha256sum "$$file"; done | sha256sum | cut -c1-12))
 R_IMAGE_TAG ?= $(if $(IMAGE_TAG),$(IMAGE_TAG),$(shell git ls-files -co --exclude-standard docker/r-conversion.Dockerfile scripts/convert_rds.R | sort | while IFS= read -r file; do test -f "$$file" && sha256sum "$$file"; done | sha256sum | cut -c1-12))
 # Freeze the content hashes at parse time. Recursive expansion can otherwise
 # recompute a different tag between an image prerequisite and its recipe.
@@ -122,7 +122,8 @@ test-unit: $(VENV_DEPS) ## Run deterministic unit and output-contract tests
 	$(VENV_PYTHON) -m pytest -q
 
 verify: STUDIES = $(TEST_STUDIES)
-verify: lint test-unit workflow-lint docs-check run-all-test ## Run all checks and fresh Docker workflows for representative studies
+verify: lint test-unit workflow-lint docs-check site-test site-test-browser run-all-test ## Run static, frontend, and fresh Docker workflow checks
+	$(MAKE) site-test-workflow
 
 # Keep benchmark, DE, age-clock, and reports ordered even under `make -j`: each stage
 # consumes the fresh core output or synthetic-DE manifest from the prior stage.
@@ -440,7 +441,7 @@ render-cell-type-reports-test: check-cell-type-reports-prerequisites $(PYTHON_CO
 SITE_INPUT ?= $(OUTDIR)/analysis/per_type
 SITE_PORT ?= 8000
 
-.PHONY: site-install site-browser-install site-export site-build site-test site-test-browser serve-frontend
+.PHONY: site-install site-browser-install site-export site-build site-test site-test-browser site-test-workflow serve-frontend
 site-install: ## Install locked frontend dependencies locally
 	cd site && npm ci --cache .npm-cache --no-audit --no-fund
 
@@ -461,6 +462,9 @@ site-test: ## Test the frontend and export contract
 
 site-test-browser: ## Build a synthetic release and run browser journeys
 	cd site && PLAYWRIGHT_BROWSERS_PATH="$(CURDIR)/site/.playwright-browsers" npm run test:browser
+
+site-test-workflow: ## Export existing test workflow outputs and exercise the site in a browser
+	cd site && SITE_TEST_INPUT="$(CURDIR)/output/test/analysis/per_type" PLAYWRIGHT_BROWSERS_PATH="$(CURDIR)/site/.playwright-browsers" node tests/browser/workflow.mjs
 
 serve-frontend: ## Serve the frontend locally with live reload
 	cd site && npm run dev -- --host 127.0.0.1 --port $(SITE_PORT) --strictPort

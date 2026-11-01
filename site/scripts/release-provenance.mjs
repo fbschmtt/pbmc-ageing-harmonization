@@ -93,13 +93,18 @@ export async function compareAnalysisMetadata(input, inventory) {
   }
 }
 
-export async function releaseContext(input, de, studiesPath) {
+export async function releaseContext(input, de, studiesPath, assets = []) {
   const names = new Set()
   for (const cell of de.cellTypes)
     for (const model of cell.models) {
       if (model.study) names.add(model.study)
       for (const study of Object.keys(model.studies)) names.add(study)
     }
+  const modelNames = new Set(names)
+  const harmonizedNames = new Set(
+    assets.filter((asset) => asset.kind === 'report' && asset.study).map((asset) => asset.study),
+  )
+  for (const name of harmonizedNames) names.add(name)
   let references = {},
     sourceSha256 = null
   if (await exists(studiesPath)) {
@@ -112,6 +117,8 @@ export async function releaseContext(input, de, studiesPath) {
     const p = entry?.provenance || {}
     return {
       id,
+      inModels: modelNames.has(id),
+      harmonizationAvailable: harmonizedNames.has(id),
       publicationDoi: typeof entry?.publication_doi === 'string' ? entry.publication_doi : null,
       annotation: typeof p.celltypes === 'string' ? p.celltypes : null,
       technology: typeof p.technology === 'string' ? p.technology : null,
