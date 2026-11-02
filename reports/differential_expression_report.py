@@ -85,6 +85,42 @@ def report_log(message):
             pass
 
 
+def _report_column_diagnostics(data, column, *, max_levels=5):
+    """Return a bounded summary of one plotting input column."""
+    if column not in data:
+        return f"{column}=missing_column"
+    values = data[column]
+    try:
+        unique = int(values.nunique(dropna=True))
+    except (TypeError, ValueError):
+        unique = "unavailable"
+    details = [(
+        f"{column}[dtype={values.dtype},n={len(values)},"
+        f"null={int(values.isna().sum())},unique={unique},"
+        f"shallow_mib={values.memory_usage(index=False, deep=False) / 1024**2:.3f}"
+    )]
+    if pd.api.types.is_numeric_dtype(values):
+        numeric = pd.to_numeric(values, errors="coerce").to_numpy(dtype=float, na_value=np.nan)
+        finite = numeric[np.isfinite(numeric)]
+        details.append(f",finite={len(finite)},nonfinite={len(numeric) - len(finite)}")
+        if len(finite):
+            details.append(f",min={np.min(finite):.6g},max={np.max(finite):.6g}")
+    else:
+        try:
+            top_values = values.astype("string").value_counts(dropna=True).head(max_levels)
+            preview = [
+                f"{str(value)[:48]!r}:{int(count)}"
+                for value, count in top_values.items()
+            ]
+            details.append(f",top={preview!r}")
+            max_label_length = int(values.dropna().astype(str).str.len().max()) if values.notna().any() else 0
+            details.append(f",max_label_chars={max_label_length}")
+        except (TypeError, ValueError):
+            details.append(",value_preview=unavailable")
+    details.append("]")
+    return "".join(details)
+
+
 @contextmanager
 def report_phase(name, **details):
     """Mark the start, duration, and outcome of a substantial report phase."""
@@ -287,6 +323,7 @@ def _report_periodic_memory_monitor():
     )
 
     def heartbeat_monitor():
+        report_log(f"memory_heartbeat_monitor_started interval_seconds={heartbeat_interval}")
         while not memory_monitor_stop.wait(heartbeat_interval):
             try:
                 report_log(f"memory_heartbeat {_report_monitor_context()}")
@@ -294,6 +331,7 @@ def _report_periodic_memory_monitor():
                 report_log(f"memory_heartbeat status=error error={type(exc).__name__}")
 
     def object_monitor():
+        report_log(f"memory_object_monitor_started interval_seconds={interval}")
         while not memory_monitor_stop.wait(interval):
             started = time.monotonic()
             report_log(f"memory_snapshot_start {_report_monitor_context()}")
@@ -317,6 +355,10 @@ def _report_periodic_memory_monitor():
     )
     heartbeat_thread.start()
     object_thread.start()
+    report_log(
+        f"memory_monitor_threads_started heartbeat_alive={heartbeat_thread.is_alive()} "
+        f"object_snapshot_alive={object_thread.is_alive()}"
+    )
     return heartbeat_thread, object_thread
 
 # %%
@@ -394,13 +436,55 @@ def display_collapsible_table(data, summary, *, index=False, max_height=None):
     ))
 
 
-def display_collapsible_figure(figure, summary, *, open_by_default=False):
+def display_collapsible_figure(
+    figure, summary, *, open_by_default=False, diagnostics_label=None
+):
     """Render a figure in a details panel, optionally open on load."""
     image_buffer = BytesIO()
-    figure.savefig(image_buffer, format="png", bbox_inches="tight")
-    image_data = base64.b64encode(image_buffer.getvalue()).decode("ascii")
-    plt.close(figure)
+    diagnostic_prefix = (
+        f"figure_diagnostic label={diagnostics_label} " if diagnostics_label else ""
+    )
+    if diagnostics_label:
+        legend_entries = sum(
+            len(axis.get_legend().get_texts())
+            for axis in figure.axes if axis.get_legend() is not None
+        )
+        report_log(
+            f"{diagnostic_prefix}save_start figsize_inches={figure.get_size_inches().tolist()} "
+            f"dpi={figure.dpi} axes={len(figure.axes)} "
+            f"collections={sum(len(axis.collections) for axis in figure.axes)} "
+            f"legend_entries={legend_entries} rss_mib={_report_rss_mib():.1f}"
+        )
+    save_started = time.monotonic()
+    try:
+        figure.savefig(image_buffer, format="png", bbox_inches="tight")
+    except BaseException as exc:
+        if diagnostics_label:
+            report_log(
+                f"{diagnostic_prefix}save_end status=error "
+                f"elapsed_seconds={time.monotonic() - save_started:.1f} "
+                f"error={type(exc).__name__}"
+            )
+        raise
+    finally:
+        plt.close(figure)
+    png_bytes = image_buffer.getvalue()
+    if diagnostics_label:
+        report_log(
+            f"{diagnostic_prefix}save_end status=ok "
+            f"elapsed_seconds={time.monotonic() - save_started:.1f} "
+            f"png_bytes={len(png_bytes)} rss_mib={_report_rss_mib():.1f}"
+        )
+    encode_started = time.monotonic()
+    image_data = base64.b64encode(png_bytes).decode("ascii")
+    if diagnostics_label:
+        report_log(
+            f"{diagnostic_prefix}encode_end status=ok "
+            f"elapsed_seconds={time.monotonic() - encode_started:.1f} "
+            f"base64_chars={len(image_data)}"
+        )
     escaped_summary = escape(summary, quote=True)
+    display_started = time.monotonic()
     display(HTML(
         '<details class="report-details report-details-figure"'
         + (" open" if open_by_default else "")
@@ -409,6 +493,11 @@ def display_collapsible_figure(figure, summary, *, open_by_default=False):
         f'<img alt="{escaped_summary}" src="data:image/png;base64,{image_data}">'
         "</details>"
     ))
+    if diagnostics_label:
+        report_log(
+            f"{diagnostic_prefix}html_display_end status=ok "
+            f"elapsed_seconds={time.monotonic() - display_started:.1f}"
+        )
 
 
 WGCNA_MAX_DISPLAY_MODULES = 25
@@ -1204,38 +1293,101 @@ def plot_residual_cluster_markers(residuals, annotations, settings):
 
 def plot_residual_sample_umaps(table, *, minimum_umap_samples):
     """Show residual clusters and sample metadata over the residual UMAP."""
+    diagnostic_columns = [
+        "sample_key", "umap_1", "umap_2", "residual_cluster", "bmi", "cmv",
+        "smoking_status", "ethnicity", "technology", "batch_single_cell", "sex",
+        "age", "log10_total_counts", "study",
+    ]
+    report_log(
+        f"residual_umap_input_start type={type(table).__name__} "
+        f"shape={getattr(table, 'shape', 'unknown')} "
+        f"shallow_mib={table.memory_usage(index=True, deep=False).sum() / 1024**2:.3f} "
+        f"columns={','.join(map(str, table.columns))}"
+    )
+    for column in diagnostic_columns:
+        if column in table:
+            report_log(f"residual_umap_input_column {_report_column_diagnostics(table, column)}")
+    if "sample_key" in table:
+        report_log(
+            f"residual_umap_input_keys duplicate_sample_keys="
+            f"{int(table['sample_key'].duplicated().sum())}"
+        )
     coordinates = table.dropna(subset=["umap_1", "umap_2"])
+    report_log(
+        f"residual_umap_coordinate_filter rows_before={len(table)} "
+        f"rows_after={len(coordinates)} rows_dropped={len(table) - len(coordinates)} "
+        f"umap_1_null={int(table['umap_1'].isna().sum())} "
+        f"umap_2_null={int(table['umap_2'].isna().sum())} "
+        f"umap_1_nonfinite={int((~np.isfinite(pd.to_numeric(table['umap_1'], errors='coerce'))).sum())} "
+        f"umap_2_nonfinite={int((~np.isfinite(pd.to_numeric(table['umap_2'], errors='coerce'))).sum())}"
+    )
     if coordinates.empty:
         display(Markdown(
             f"_At least {minimum_umap_samples} samples are required for residual UMAPs; "
             "the cluster assignments are still available below._"
         ))
         return
+
     def plot_covariate_grid(
         covariates, title, *, categorical_covariates, figsize, open_by_default=False
     ):
+        grid_started = time.monotonic()
+        report_log(
+            f"residual_umap_grid_start title={title!r} n_samples={len(coordinates)} "
+            f"covariates={','.join(covariates)} "
+            f"coordinate_columns={','.join(column for column in ('umap_1', 'umap_2') if column in coordinates)}"
+        )
         n_columns = 2
         n_rows = max(1, int(np.ceil(len(covariates) / n_columns)))
         figure_size = (figsize[0], max(figsize[1], figsize[1] * n_rows / 2))
+        report_log(
+            f"residual_umap_grid_layout title={title!r} rows={n_rows} columns={n_columns} "
+            f"axes={n_rows * n_columns} figsize_inches={figure_size} "
+            f"estimated_pixels={int(figure_size[0] * plt.rcParams['figure.dpi'])}x"
+            f"{int(figure_size[1] * plt.rcParams['figure.dpi'])} "
+            f"covariate_count={len(covariates)}"
+        )
         figure, axes = plt.subplots(
             n_rows, n_columns, figsize=figure_size, squeeze=False,
             layout="constrained",
         )
         for axis, covariate in zip(axes.flat, covariates):
+            panel_started = time.monotonic()
+            report_log(
+                f"residual_umap_panel_start covariate={covariate} "
+                f"n_samples={len(coordinates)}"
+            )
             if covariate not in coordinates:
                 axis.text(0.5, 0.5, "Not recorded", ha="center", va="center")
                 axis.set_axis_off()
+                report_log(
+                    f"residual_umap_panel_end covariate={covariate} status=not_recorded"
+                )
                 continue
             values = coordinates.dropna(subset=[covariate]).copy()
             present = len(values)
+            report_log(
+                f"residual_umap_panel_data covariate={covariate} "
+                f"categorical={covariate in categorical_covariates} "
+                f"{_report_column_diagnostics(coordinates, covariate)} "
+                f"rows_after_dropna={present} rows_dropped={len(coordinates) - present}"
+            )
             if values.empty:
                 axis.text(0.5, 0.5, "No recorded values", ha="center", va="center")
                 axis.set_axis_off()
+                report_log(f"residual_umap_panel_end covariate={covariate} status=empty")
                 continue
             categorical = covariate in categorical_covariates
             if covariate == "batch_single_cell":
                 plot_values = values.assign(_batch_label=values[covariate].astype(str))
                 batch_order = sorted(plot_values["_batch_label"].unique())
+                report_log(
+                    f"residual_umap_scatter_start covariate={covariate} "
+                    f"n_points={len(plot_values)} n_levels={len(batch_order)} "
+                    f"levels_preview={[str(value)[:48] for value in batch_order[:5]]!r} "
+                    f"legend=false palette=husl"
+                )
+                scatter_started = time.monotonic()
                 batch_palette = dict(zip(
                     batch_order,
                     sns.color_palette("husl", n_colors=len(batch_order)),
@@ -1245,47 +1397,109 @@ def plot_residual_sample_umaps(table, *, minimum_umap_samples):
                     hue_order=batch_order, palette=batch_palette, s=50, alpha=0.85,
                     linewidth=0, ax=axis, legend=False,
                 )
+                report_log(
+                    f"residual_umap_scatter_end covariate={covariate} status=ok "
+                    f"elapsed_seconds={time.monotonic() - scatter_started:.1f} "
+                    f"axes_collections={len(axis.collections)}"
+                )
             elif categorical:
                 plot_values = values.assign(_category_label=values[covariate].astype(str))
                 category_order = sorted(plot_values["_category_label"].unique())
+                report_log(
+                    f"residual_umap_scatter_start covariate={covariate} "
+                    f"n_points={len(plot_values)} n_levels={len(category_order)} "
+                    f"levels_preview={[str(value)[:48] for value in category_order[:5]]!r} "
+                    f"legend=brief"
+                )
                 category_palette = sns.color_palette(
                     "husl" if len(category_order) > 20 else "tab20",
                     n_colors=len(category_order),
                 )
+                scatter_started = time.monotonic()
                 sns.scatterplot(
                     data=plot_values, x="umap_1", y="umap_2", hue="_category_label",
                     hue_order=category_order, palette=dict(zip(category_order, category_palette)),
                     s=50, alpha=0.85, linewidth=0, ax=axis, legend="brief",
                 )
+                report_log(
+                    f"residual_umap_scatter_end covariate={covariate} status=ok "
+                    f"elapsed_seconds={time.monotonic() - scatter_started:.1f} "
+                    f"axes_collections={len(axis.collections)} "
+                    f"legend_entries={len(axis.get_legend().get_texts()) if axis.get_legend() else 0}"
+                )
                 if axis.legend_ is not None:
                     handles, labels = axis.get_legend_handles_labels()
+                    report_log(
+                        f"residual_umap_legend_start covariate={covariate} "
+                        f"entries={len(labels)} location=best"
+                    )
+                    legend_started = time.monotonic()
                     axis.legend(
                         handles, labels, loc="best",
                         ncol=2 if len(labels) > 6 else 1,
                         fontsize=6, title_fontsize=7, framealpha=0.9,
                         borderpad=0.35, labelspacing=0.25, handletextpad=0.35,
                     )
+                    report_log(
+                        f"residual_umap_legend_end covariate={covariate} status=ok "
+                        f"elapsed_seconds={time.monotonic() - legend_started:.1f}"
+                    )
             else:
+                report_log(
+                    f"residual_umap_scatter_start covariate={covariate} "
+                    f"n_points={len(values)} "
+                    f"{_report_column_diagnostics(values, covariate)} legend=false"
+                )
+                scatter_started = time.monotonic()
                 sns.scatterplot(
                     data=values, x="umap_1", y="umap_2", hue=covariate,
                     palette="viridis", s=50, alpha=0.85, linewidth=0,
                     ax=axis, legend=False,
                 )
+                report_log(
+                    f"residual_umap_scatter_end covariate={covariate} status=ok "
+                    f"elapsed_seconds={time.monotonic() - scatter_started:.1f} "
+                    f"axes_collections={len(axis.collections)}"
+                )
                 if axis.collections:
+                    report_log(
+                        f"residual_umap_colorbar_start covariate={covariate} "
+                        f"collection_index={len(axis.collections) - 1}"
+                    )
+                    colorbar_started = time.monotonic()
                     colorbar = figure.colorbar(
                         axis.collections[-1], ax=axis, orientation="horizontal",
                         pad=0.08, fraction=0.05, aspect=32,
                     )
                     colorbar.set_label(covariate.replace("_", " "), fontsize=7)
                     colorbar.ax.tick_params(labelsize=6)
+                    report_log(
+                        f"residual_umap_colorbar_end covariate={covariate} status=ok "
+                        f"elapsed_seconds={time.monotonic() - colorbar_started:.1f}"
+                    )
             axis.set_title(f"{covariate.replace('_', ' ')} · {present}/{len(coordinates)} present")
             axis.set_xlabel("UMAP 1")
             axis.set_ylabel("UMAP 2")
+            report_log(
+                f"residual_umap_panel_end covariate={covariate} status=ok "
+                f"elapsed_seconds={time.monotonic() - panel_started:.1f} n_present={present}"
+            )
         for axis in axes.flat[len(covariates):]:
             axis.set_axis_off()
         figure.suptitle(title)
+        report_log(
+            f"residual_umap_grid_render_start title={title!r} "
+            f"axes={len(figure.axes)} "
+            f"collections={sum(len(axis.collections) for axis in figure.axes)} "
+            f"rss_mib={_report_rss_mib():.1f}"
+        )
         display_collapsible_figure(
             figure, title, open_by_default=open_by_default,
+            diagnostics_label="residual_umap_" + title.lower().replace(" ", "_"),
+        )
+        report_log(
+            f"residual_umap_grid_end title={title!r} "
+            f"elapsed_seconds={time.monotonic() - grid_started:.1f}"
         )
 
     optional_covariates = [
@@ -1294,9 +1508,20 @@ def plot_residual_sample_umaps(table, *, minimum_umap_samples):
             "batch_single_cell"
         ) if covariate in coordinates
     ]
+    report_log(
+        f"residual_umap_cluster_label_start rows={len(coordinates)} "
+        f"null={int(coordinates['residual_cluster'].isna().sum())} "
+        f"unique={coordinates['residual_cluster'].nunique(dropna=True)} "
+        f"optional_covariates={','.join(optional_covariates)}"
+    )
     coordinates["residual_cluster"] = coordinates["residual_cluster"].map(
         lambda cluster: "Noise" if pd.notna(cluster) and int(cluster) == -1
         else f"Cluster {int(cluster)}" if pd.notna(cluster) else np.nan
+    )
+    report_log(
+        f"residual_umap_cluster_label_end status=ok "
+        f"unique={coordinates['residual_cluster'].nunique(dropna=True)} "
+        f"values={coordinates['residual_cluster'].value_counts(dropna=True).head(8).to_dict()}"
     )
     if optional_covariates or "residual_cluster" in coordinates:
         if "batch_single_cell" in optional_covariates:
