@@ -1304,6 +1304,28 @@ def plot_residual_sample_umaps(table, *, minimum_umap_samples):
         f"shallow_mib={table.memory_usage(index=True, deep=False).sum() / 1024**2:.3f} "
         f"columns={','.join(map(str, table.columns))}"
     )
+    leiden_columns = sorted(
+        column for column in table.columns
+        if str(column).startswith("residual_cluster_leiden_r")
+    )
+    selected_resolutions = (
+        sorted(pd.to_numeric(
+            table["residual_leiden_selected_resolution"], errors="coerce"
+        ).dropna().unique().tolist())
+        if "residual_leiden_selected_resolution" in table else []
+    )
+    leiden_counts = {
+        column: {
+            "n_assigned": int(table[column].notna().sum()),
+            "n_clusters": int(table[column].nunique(dropna=True)),
+            "n_noise": int(pd.to_numeric(table[column], errors="coerce").eq(-1).sum()),
+        }
+        for column in leiden_columns
+    }
+    report_log(
+        f"residual_umap_leiden_diagnostics selected_resolution={selected_resolutions} "
+        f"tested_label_counts={leiden_counts}"
+    )
     for column in diagnostic_columns:
         if column in table:
             report_log(f"residual_umap_input_column {_report_column_diagnostics(table, column)}")
@@ -1405,21 +1427,29 @@ def plot_residual_sample_umaps(table, *, minimum_umap_samples):
             elif categorical:
                 plot_values = values.assign(_category_label=values[covariate].astype(str))
                 category_order = sorted(plot_values["_category_label"].unique())
+                show_legend = len(category_order) <= 40
+                palette_size = min(len(category_order), 40)
                 report_log(
                     f"residual_umap_scatter_start covariate={covariate} "
                     f"n_points={len(plot_values)} n_levels={len(category_order)} "
                     f"levels_preview={[str(value)[:48] for value in category_order[:5]]!r} "
-                    f"legend=brief"
+                    f"legend={'brief' if show_legend else 'omitted_high_cardinality'} "
+                    f"legend_limit=40 palette_size={palette_size}"
                 )
                 category_palette = sns.color_palette(
                     "husl" if len(category_order) > 20 else "tab20",
-                    n_colors=len(category_order),
+                    n_colors=palette_size,
                 )
+                palette_by_category = {
+                    category: category_palette[index % len(category_palette)]
+                    for index, category in enumerate(category_order)
+                }
                 scatter_started = time.monotonic()
                 sns.scatterplot(
                     data=plot_values, x="umap_1", y="umap_2", hue="_category_label",
-                    hue_order=category_order, palette=dict(zip(category_order, category_palette)),
-                    s=50, alpha=0.85, linewidth=0, ax=axis, legend="brief",
+                    hue_order=category_order, palette=palette_by_category,
+                    s=50, alpha=0.85, linewidth=0, ax=axis,
+                    legend="brief" if show_legend else False,
                 )
                 report_log(
                     f"residual_umap_scatter_end covariate={covariate} status=ok "
@@ -1427,6 +1457,12 @@ def plot_residual_sample_umaps(table, *, minimum_umap_samples):
                     f"axes_collections={len(axis.collections)} "
                     f"legend_entries={len(axis.get_legend().get_texts()) if axis.get_legend() else 0}"
                 )
+                if not show_legend:
+                    axis.text(
+                        0.02, 0.02,
+                        f"{len(category_order):,} categories; legend omitted",
+                        transform=axis.transAxes, fontsize=6, va="bottom",
+                    )
                 if axis.legend_ is not None:
                     handles, labels = axis.get_legend_handles_labels()
                     report_log(
