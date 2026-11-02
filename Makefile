@@ -455,6 +455,7 @@ render-cell-type-reports-test: check-cell-type-reports-prerequisites $(PYTHON_CO
 
 SITE_INPUT ?= $(OUTDIR)/analysis/per_type
 SITE_PORT ?= 8000
+SITE_BIND ?= 127.0.0.1
 SITE_ANALYSIS_DIR = $(patsubst %/,%,$(dir $(abspath $(SITE_INPUT))))
 SITE_INPUT_NAME = $(notdir $(patsubst %/,%,$(SITE_INPUT)))
 SITE_EXPORTER_REVISION = $(shell git rev-parse HEAD)
@@ -489,4 +490,4 @@ site-test-workflow: image-site-browser ## Exercise existing test workflow output
 	docker run --rm -v "$(CURDIR)/output/test:/analysis:ro" -v "$(CURDIR)/site/public/pathways:$(SITE_CONTAINER_ROOT)/public/pathways:ro" -v "$(CURDIR)/site/data-inputs:$(SITE_CONTAINER_ROOT)/data-inputs:ro" -e SITE_TEST_INPUT=/analysis/analysis/per_type $(SITE_BROWSER_IMAGE) node tests/browser/workflow.mjs
 
 serve-frontend: image-site ## Serve the frontend in the image with live reload
-	docker run --rm -p "127.0.0.1:$(SITE_PORT):$(SITE_PORT)" -v "$(CURDIR)/site:$(SITE_CONTAINER_ROOT)" -v "$(SITE_CONTAINER_ROOT)/node_modules" -w $(SITE_CONTAINER_ROOT) $(SITE_IMAGE) node node_modules/vite/bin/vite.js --host 0.0.0.0 --port $(SITE_PORT) --strictPort
+	docker run --rm -p "$(SITE_BIND):$(SITE_PORT):$(SITE_PORT)" -v "$(CURDIR)/site:$(SITE_CONTAINER_ROOT)" -v "$(SITE_CONTAINER_ROOT)/node_modules" -w $(SITE_CONTAINER_ROOT) $(SITE_IMAGE) node node_modules/vite/bin/vite.js --host 0.0.0.0 --port $(SITE_PORT) --strictPort

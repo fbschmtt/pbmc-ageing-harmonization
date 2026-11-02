@@ -1281,6 +1281,11 @@ make serve-frontend
 
 Open `http://localhost:8000/`; set `SITE_PORT` to use a different port. The
 development server has live reload and reads source changes from the workspace.
+It binds to localhost by default. To allow connections to the host's network
+interfaces, run `make serve-frontend SITE_BIND=0.0.0.0` and use the host's IP
+address and port. Network and firewall rules still apply. This exposes the
+development server and its exported reports to clients that can connect; use
+the static build and an appropriate web host for a production deployment.
 The container keeps its dependencies in the image or a Docker-managed volume;
 it does not install `node_modules` on the host filesystem. `make site-export` defaults to
 `output/analysis/per_type`, and `SITE_INPUT` selects another per-type output
