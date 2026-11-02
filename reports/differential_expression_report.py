@@ -1,5 +1,6 @@
 # %%
 import base64
+import gc
 import json
 import os
 import re
@@ -66,6 +67,8 @@ from pbmc_pipeline.trajectory_analysis import (
 
 report_progress_log_lock = threading.Lock()
 report_cell_state = {"number": 0, "started": None, "preview": "none"}
+report_phase_stack = []
+report_phase_lock = threading.Lock()
 
 
 def report_log(message):
@@ -86,6 +89,9 @@ def report_log(message):
 def report_phase(name, **details):
     """Mark the start, duration, and outcome of a substantial report phase."""
     started = time.monotonic()
+    phase = {"name": name, "started": started}
+    with report_phase_lock:
+        report_phase_stack.append(phase)
     suffix = " ".join(f"{key}={value}" for key, value in details.items())
     report_log(f"phase_start name={name}" + (f" {suffix}" if suffix else ""))
     try:
@@ -95,7 +101,13 @@ def report_phase(name, **details):
             f"phase_end name={name} status=error elapsed_seconds={time.monotonic() - started:.1f} "
             f"error={type(exc).__name__}"
         )
+        with report_phase_lock:
+            if phase in report_phase_stack:
+                report_phase_stack.remove(phase)
         raise
+    with report_phase_lock:
+        if phase in report_phase_stack:
+            report_phase_stack.remove(phase)
     report_log(f"phase_end name={name} status=ok elapsed_seconds={time.monotonic() - started:.1f}")
 
 
@@ -135,11 +147,11 @@ def _report_cell_end(result):
 
 
 def _report_object_size(value):
-    """Estimate bytes held directly by a named dataframe/array-like object."""
+    """Estimate shallow bytes held by a named dataframe/array-like object."""
     if isinstance(value, pd.DataFrame):
-        return int(value.memory_usage(index=True, deep=True).sum())
+        return int(value.memory_usage(index=True, deep=False).sum())
     if isinstance(value, pd.Series):
-        return int(value.memory_usage(index=True, deep=True))
+        return int(value.memory_usage(index=True, deep=False))
     if isinstance(value, np.ndarray):
         return int(value.nbytes)
     if hasattr(value, "data") and isinstance(getattr(value, "data", None), np.ndarray):
@@ -157,13 +169,26 @@ def _report_object_size(value):
         for attribute in ("datExpr", "adjacency", "TOM", "dissTOM", "geneTree", "MEs"):
             component = getattr(value, attribute, None)
             if isinstance(component, pd.DataFrame):
-                size += int(component.memory_usage(index=True, deep=True).sum())
+                size += int(component.memory_usage(index=True, deep=False).sum())
             elif isinstance(component, np.ndarray):
                 size += component.nbytes
             elif attribute == "datExpr" and isinstance(getattr(component, "X", None), np.ndarray):
                 size += component.X.nbytes
         return int(size)
     return sys.getsizeof(value)
+
+
+def _report_object_shape(value):
+    if isinstance(value, (pd.DataFrame, np.ndarray)):
+        return "x".join(str(dimension) for dimension in value.shape)
+    if isinstance(value, pd.Series):
+        return str(len(value))
+    if type(value).__name__ == "WGCNA":
+        expression = getattr(value, "datExpr", None)
+        shape = getattr(expression, "shape", None)
+        return "x".join(str(dimension) for dimension in shape) if shape else "unknown"
+    data = getattr(value, "data", None)
+    return "x".join(str(dimension) for dimension in data.shape) if isinstance(data, np.ndarray) else "unknown"
 
 
 def _report_rss_mib():
@@ -204,14 +229,15 @@ def _report_object_summary():
             ):
                 try:
                     candidates.append((
-                        _report_object_size(value), f"{scope}.{name}", type(value).__name__,
+                        _report_object_size(value), f"{scope}.{name}",
+                        type(value).__name__, _report_object_shape(value),
                     ))
                 except (AttributeError, RuntimeError, ValueError):
                     continue
     candidates.sort(reverse=True)
     return ",".join(
-        f"{name}:{kind}:{size / 1024**2:.1f}MiB"
-        for size, name, kind in candidates[:10]
+        f"{name}:{kind}:shape={shape}:shallow={size / 1024**2:.1f}MiB"
+        for size, name, kind, shape in candidates[:10]
     ) or "none"
 
 
@@ -231,31 +257,67 @@ def _report_active_python_stack():
     return "<-".join(stack[:6]) or "unavailable"
 
 
-def _report_periodic_memory_monitor():
-    """Log process RSS and the ten largest named arrays/tables every 20 minutes."""
-    interval = max(60, int(os.environ.get("DE_REPORT_MEMORY_INTERVAL_SECONDS", "1200")))
-    report_log(
-        f"memory_snapshot interval_seconds={interval} rss_mib={_report_rss_mib():.1f} "
-        f"active_cell={report_cell_state['number']} "
-        f"active_python_stack={_report_active_python_stack()} "
-        f"largest_named_objects={_report_object_summary()}"
+def _report_monitor_context():
+    cell = report_cell_state
+    cell_elapsed = (
+        time.monotonic() - cell["started"] if cell.get("started") is not None else None
+    )
+    with report_phase_lock:
+        phase = report_phase_stack[-1] if report_phase_stack else None
+    phase_name = phase["name"] if phase else "none"
+    phase_elapsed = time.monotonic() - phase["started"] if phase else None
+    return (
+        f"rss_mib={_report_rss_mib():.1f} active_cell={cell['number']} "
+        f"active_cell_elapsed_seconds={cell_elapsed if cell_elapsed is not None else 'none'} "
+        f"active_phase={phase_name} "
+        f"active_phase_elapsed_seconds={phase_elapsed if phase_elapsed is not None else 'none'} "
+        f"gc_counts={gc.get_count()} active_python_stack={_report_active_python_stack()}"
     )
 
-    def monitor():
-        while not memory_monitor_stop.wait(interval):
+
+def _report_periodic_memory_monitor():
+    """Log lightweight stack heartbeats and a shallow object inventory separately."""
+    interval = max(60, int(os.environ.get("DE_REPORT_MEMORY_INTERVAL_SECONDS", "300")))
+    heartbeat_interval = max(
+        30, int(os.environ.get("DE_REPORT_HEARTBEAT_INTERVAL_SECONDS", "300"))
+    )
+    report_log(
+        f"memory_monitor_start snapshot_interval_seconds={interval} "
+        f"heartbeat_interval_seconds={heartbeat_interval} {_report_monitor_context()}"
+    )
+
+    def heartbeat_monitor():
+        while not memory_monitor_stop.wait(heartbeat_interval):
             try:
+                report_log(f"memory_heartbeat {_report_monitor_context()}")
+            except Exception as exc:  # noqa: BLE001 - diagnostics must never interrupt analysis
+                report_log(f"memory_heartbeat status=error error={type(exc).__name__}")
+
+    def object_monitor():
+        while not memory_monitor_stop.wait(interval):
+            started = time.monotonic()
+            report_log(f"memory_snapshot_start {_report_monitor_context()}")
+            try:
+                objects = _report_object_summary()
                 report_log(
-                    f"memory_snapshot rss_mib={_report_rss_mib():.1f} "
-                    f"active_cell={report_cell_state['number']} "
-                    f"active_python_stack={_report_active_python_stack()} "
-                    f"largest_named_objects={_report_object_summary()}"
+                    f"memory_snapshot_end elapsed_seconds={time.monotonic() - started:.1f} "
+                    f"largest_named_objects={objects}"
                 )
             except Exception as exc:  # noqa: BLE001 - diagnostics must never interrupt analysis
-                report_log(f"memory_snapshot status=error error={type(exc).__name__}")
+                report_log(
+                    f"memory_snapshot_end status=error elapsed_seconds={time.monotonic() - started:.1f} "
+                    f"error={type(exc).__name__}"
+                )
 
-    thread = threading.Thread(target=monitor, name="de-report-memory", daemon=True)
-    thread.start()
-    return thread
+    heartbeat_thread = threading.Thread(
+        target=heartbeat_monitor, name="de-report-heartbeat", daemon=True
+    )
+    object_thread = threading.Thread(
+        target=object_monitor, name="de-report-object-snapshot", daemon=True
+    )
+    heartbeat_thread.start()
+    object_thread.start()
+    return heartbeat_thread, object_thread
 
 # %%
 de_dir = Path(os.environ["DE_REPORT_DIR"])
@@ -263,7 +325,7 @@ output_dir = Path(os.environ["DE_REPORT_OUTPUT_DIR"])
 output_dir.mkdir(parents=True, exist_ok=True)
 memory_monitor_stop = threading.Event()
 report_log(f"render_start cell_type={de_dir.parent.name}")
-memory_monitor_thread = _report_periodic_memory_monitor()
+memory_monitor_threads = _report_periodic_memory_monitor()
 ipython = get_ipython()
 if ipython is not None:
     ipython.events.register("pre_run_cell", _report_cell_start)
@@ -689,7 +751,12 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results, s
         display_collapsible_figure(figure, "Residual WGCNA soft-threshold diagnostics")
 
     display(Markdown("#### Sample connectivity"))
-    connectivity = wgcna_sample_connectivity(residuals, annotations)
+    with report_phase(
+        "residual_wgcna_sample_connectivity",
+        n_samples=residuals.shape[0],
+        n_genes=residuals.shape[1],
+    ):
+        connectivity = wgcna_sample_connectivity(residuals, annotations)
     connectivity.to_csv(wgcna_dir / "sample_connectivity.csv", index=False)
     if connectivity.empty:
         display(Markdown("_Sample connectivity is unavailable for fewer than three residual samples._"))
@@ -868,7 +935,8 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results, s
         display_collapsible_figure(figure, "Show module-eigengene correlation heatmap")
 
     display(Markdown("#### Covariate associations"))
-    associations = wgcna_covariate_associations(result, annotations)
+    with report_phase("residual_wgcna_covariate_associations"):
+        associations = wgcna_covariate_associations(result, annotations)
     associations.to_csv(wgcna_dir / "module_covariate_associations.csv", index=False)
     if associations.empty:
         display(Markdown("_No recorded covariates had sufficient variation for eigengene association tests._"))
@@ -914,7 +982,13 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results, s
         )
 
     display(Markdown("#### Hub genes and CMV evidence"))
-    membership = wgcna_module_membership(result, residuals)
+    with report_phase(
+        "residual_wgcna_module_membership",
+        n_samples=residuals.shape[0],
+        n_genes=residuals.shape[1],
+        n_modules=len(result.module_summary),
+    ):
+        membership = wgcna_module_membership(result, residuals)
     hub_genes = membership.assign(
         absolute_module_membership=membership["module_membership"].abs()
     ).sort_values(["module", "absolute_module_membership"], ascending=[True, False])
@@ -924,7 +998,12 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results, s
         hub_genes.loc[hub_genes["module_rank"] <= 20], "Show top 20 hub genes per module", max_height=560,
     )
     display(Markdown("#### Gene-set enrichment (preranked GSEA)"))
-    gsea_run = run_wgcna_module_gsea(result, residuals)
+    with report_phase(
+        "residual_wgcna_module_gsea",
+        n_genes=residuals.shape[1],
+        n_modules=len(result.module_summary),
+    ):
+        gsea_run = run_wgcna_module_gsea(result, residuals)
     gsea_results = gsea_run.results
     if gsea_results.empty and gsea_run.failures:
         display(Markdown(
@@ -1071,9 +1150,18 @@ def plot_residual_cluster_markers(residuals, annotations, settings):
         figure.tight_layout()
         plt.show()
 
-    markers, _, reference_cluster = summarize_residual_cluster_markers(
-        residuals, annotations, settings.residual_marker_max_clusters
-    )
+    with report_phase(
+        "residual_cluster_marker_summary",
+        n_samples=residuals.shape[0],
+        n_genes=residuals.shape[1],
+        maximum_clusters=settings.residual_marker_max_clusters,
+    ):
+        markers, _, reference_cluster = summarize_residual_cluster_markers(
+            residuals,
+            annotations,
+            settings.residual_marker_max_clusters,
+            progress=report_log,
+        )
     if markers.empty:
         display(Markdown(
             "_No between-cluster marker contrasts are available; at least two residual "
@@ -3445,10 +3533,21 @@ if de_dir:
             )
             display(Markdown(f"_Residual clustering unavailable: {residual_reason}._"))
         else:
-            residual_clusters.to_csv(output_dir / "residual_sample_clusters.csv", index=False)
-            residual_pc_scores.to_csv(
-                output_dir / "residual_sample_pc_scores.csv", index=False
-            )
+            with report_phase(
+                "residual_cluster_artifact_writes",
+                n_samples=len(residual_clusters),
+                n_genes=residual_matrix.shape[1],
+            ):
+                residual_clusters.to_csv(
+                    output_dir / "residual_sample_clusters.csv", index=False
+                )
+                residual_pc_scores.to_csv(
+                    output_dir / "residual_sample_pc_scores.csv", index=False
+                )
+                report_log(
+                    f"residual_sample_clustering_result n_samples={len(residual_clusters)} "
+                    f"n_genes={residual_matrix.shape[1]} n_pcs={residual_pcs}"
+                )
             display(Markdown(
                 f"The embedding includes **{len(residual_clusters)} samples** and "
                 f"**{residual_matrix.shape[1]:,} genes**, with {residual_pcs} "
@@ -3458,11 +3557,13 @@ if de_dir:
                 f"selected resolution targets at least "
                 f"{trajectory_settings.residual_leiden_min_clusters} clusters."
             ))
-            plot_residual_sample_umaps(
-                residual_clusters,
-                minimum_umap_samples=trajectory_settings.minimum_umap_trajectories,
-            )
-            plot_residual_pca_and_pc_umaps(residual_pc_scores, residual_clusters)
+            with report_phase("residual_sample_umap_plots", n_samples=len(residual_clusters)):
+                plot_residual_sample_umaps(
+                    residual_clusters,
+                    minimum_umap_samples=trajectory_settings.minimum_umap_trajectories,
+                )
+            with report_phase("residual_pca_plots", n_samples=len(residual_pc_scores)):
+                plot_residual_pca_and_pc_umaps(residual_pc_scores, residual_clusters)
             display(Markdown("### Alternative clusterings"))
             display(Markdown(
                 "The primary Leiden resolution is selected from the configured candidates "
@@ -3473,10 +3574,16 @@ if de_dir:
                 "HDBSCAN result on UMAP and PCs. Marker contrasts cover at most the "
                 f"{trajectory_settings.residual_marker_max_clusters} largest clusters."
             ))
-            plot_residual_alternative_clusterings(residual_clusters, trajectory_settings)
-            plot_residual_cluster_markers(
-                residual_matrix, residual_clusters, trajectory_settings
-            )
+            with report_phase("residual_alternative_clustering_plots"):
+                plot_residual_alternative_clusterings(residual_clusters, trajectory_settings)
+            with report_phase(
+                "residual_cluster_marker_plots",
+                n_samples=residual_matrix.shape[0],
+                n_genes=residual_matrix.shape[1],
+            ):
+                plot_residual_cluster_markers(
+                    residual_matrix, residual_clusters, trajectory_settings
+                )
             display(Markdown(
                 "Download the [residual cluster assignments](residual_sample_clusters.csv) "
                 "or [sample PCA scores](residual_sample_pc_scores.csv)."
@@ -3498,7 +3605,8 @@ if de_dir:
                     cmv_results=load_merged_cmv_results(de_dir),
                     smoking_results=load_merged_smoking_results(de_dir),
                 )
-            publish_residual_wgcna(residual_wgcna)
+            with report_phase("residual_wgcna_publish"):
+                publish_residual_wgcna(residual_wgcna)
             display(Markdown(
                 "PyWGCNA fits a signed correlation network to the age-bin-model Pearson "
                 "residuals, after retaining the configured most variable genes. The residual "
@@ -3523,14 +3631,15 @@ if de_dir:
                 "(residual_wgcna/module_covariate_associations.csv), and [hub genes]"
                 "(residual_wgcna/hub_genes.csv)."
             ))
-            plot_residual_wgcna(
-                residual_wgcna,
-                residual_matrix,
-                residual_clusters,
-                wgcna_settings,
-                load_merged_cmv_results(de_dir),
-                load_merged_smoking_results(de_dir),
-            )
+            with report_phase("residual_wgcna_report_diagnostics"):
+                plot_residual_wgcna(
+                    residual_wgcna,
+                    residual_matrix,
+                    residual_clusters,
+                    wgcna_settings,
+                    load_merged_cmv_results(de_dir),
+                    load_merged_smoking_results(de_dir),
+                )
 
 memory_monitor_stop.set()
 report_log("render_end status=ok")

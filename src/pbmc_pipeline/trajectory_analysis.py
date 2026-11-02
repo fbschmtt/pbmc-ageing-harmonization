@@ -384,6 +384,7 @@ def summarize_residual_cluster_markers(
     residuals: pd.DataFrame,
     annotations: pd.DataFrame,
     max_clusters: int = 16,
+    progress=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, int | None]:
     """Compare the largest clusters with the largest cluster and track feature origins."""
     clusters = annotations.set_index("sample_key")["residual_cluster"].reindex(residuals.index)
@@ -392,12 +393,26 @@ def summarize_residual_cluster_markers(
     if len(cluster_sizes) < 2:
         return pd.DataFrame(), pd.DataFrame(), None
     reference_cluster = int(cluster_sizes.index[0])
+    if progress is not None:
+        progress(
+            f"residual_cluster_marker_reference_start cluster={reference_cluster} "
+            f"cluster_samples={int(cluster_sizes.iloc[0])} n_genes={residuals.shape[1]}"
+        )
     reference_mean = residuals.loc[clusters == reference_cluster].mean(axis=0)
+    if progress is not None:
+        progress(f"residual_cluster_marker_reference_end cluster={reference_cluster}")
     marker_rows = []
     composition_rows = []
-    for cluster, size in cluster_sizes.items():
+    n_clusters = len(cluster_sizes)
+    for cluster_index, (cluster, size) in enumerate(cluster_sizes.items(), start=1):
         if int(cluster) == reference_cluster:
             continue
+        if progress is not None:
+            progress(
+                f"residual_cluster_marker_start cluster={int(cluster)} "
+                f"cluster_index={cluster_index}/{n_clusters} cluster_samples={int(size)} "
+                f"n_genes={residuals.shape[1]}"
+            )
         difference = residuals.loc[clusters == cluster].mean(axis=0) - reference_mean
         for direction, ordered in (
             ("higher", difference.sort_values(ascending=False)),
@@ -426,6 +441,11 @@ def summarize_residual_cluster_markers(
                     "n_features_in_top_500": int(count),
                     "fraction_of_top_500_features": float(count / len(top_features)),
                 })
+        if progress is not None:
+            progress(
+                f"residual_cluster_marker_end cluster={int(cluster)} "
+                f"cluster_index={cluster_index}/{n_clusters}"
+            )
     return pd.DataFrame(marker_rows), pd.DataFrame(composition_rows), reference_cluster
 
 

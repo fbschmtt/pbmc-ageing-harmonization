@@ -19,7 +19,10 @@ import psutil
 from .report_toc import populate_html_toc, set_notebook_title
 
 
-def _run_report_command(command, *, cwd: Path, env: dict[str, str], log_path: Path) -> None:
+def _run_report_command(
+    command, *, cwd: Path, env: dict[str, str], log_path: Path,
+    progress_path: Path | None = None,
+) -> None:
     """Stream and timestamp report commands so long renders remain observable."""
     started_at = time.monotonic()
     timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -62,8 +65,32 @@ def _run_report_command(command, *, cwd: Path, env: dict[str, str], log_path: Pa
                 if stop_monitor.wait(60):
                     return
 
+        def tail_progress() -> None:
+            if progress_path is None:
+                return
+            offset = 0
+            while True:
+                try:
+                    with progress_path.open(encoding="utf-8") as progress:
+                        progress.seek(offset)
+                        lines = progress.readlines()
+                        offset = progress.tell()
+                except FileNotFoundError:
+                    lines = []
+                if lines:
+                    text = "".join(lines)
+                    with log_lock:
+                        log.write(text)
+                    sys.stdout.write(text)
+                    sys.stdout.flush()
+                if stop_monitor.is_set():
+                    return
+                stop_monitor.wait(0.5)
+
         monitor = threading.Thread(target=log_process_memory, daemon=True)
         monitor.start()
+        progress_monitor = threading.Thread(target=tail_progress, daemon=True)
+        progress_monitor.start()
         tail = ""
         for line in process.stdout:
             with log_lock:
@@ -74,6 +101,7 @@ def _run_report_command(command, *, cwd: Path, env: dict[str, str], log_path: Pa
         returncode = process.wait()
         stop_monitor.set()
         monitor.join()
+        progress_monitor.join()
         elapsed = time.monotonic() - started_at
         timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         log.write(
@@ -110,8 +138,6 @@ def generate_differential_expression_report(
     shutil.rmtree(output_dir / "go_enrichment", ignore_errors=True)
     render_log = output_dir / "report_render.log"
     render_log.unlink(missing_ok=True)
-    progress_log = output_dir / "report_progress.log"
-    progress_log.unlink(missing_ok=True)
     output_notebook = output_dir / "executed.ipynb"
     output_html = output_dir / "report.html"
     environment = os.environ.copy()
@@ -119,7 +145,6 @@ def generate_differential_expression_report(
         "DE_REPORT_DIR": str(result_dir),
         "DE_REPORT_OUTPUT_DIR": str(output_dir),
         "DE_REPORT_CONFIG": str(config_path),
-        "DE_REPORT_PROGRESS_LOG": str(progress_log),
     })
     source_path = str(project_root / "src")
     environment["PYTHONPATH"] = os.pathsep.join(
@@ -137,6 +162,8 @@ def generate_differential_expression_report(
         environment["MPLCONFIGDIR"] = str(matplotlib_cache)
         environment["JUPYTER_DATA_DIR"] = str(jupyter_data)
         environment["NUMBA_CACHE_DIR"] = str(numba_cache)
+        progress_log = temporary_path / "report_progress.log"
+        environment["DE_REPORT_PROGRESS_LOG"] = str(progress_log)
         materialized_notebook = temporary_path / "differential_expression_report.ipynb"
         _run_report_command([
             sys.executable, "-m", "jupytext", "--to", "notebook",
@@ -146,7 +173,8 @@ def generate_differential_expression_report(
             sys.executable, "-m", "jupyter", "nbconvert", "--execute", "--to", "notebook",
             "--ExecutePreprocessor.timeout=-1", f"--output={output_notebook.name}",
             f"--output-dir={output_dir}", str(materialized_notebook),
-        ], cwd=project_root, env=environment, log_path=render_log)
+        ], cwd=project_root, env=environment, log_path=render_log,
+            progress_path=progress_log)
 
     metadata_path = result_dir / "run_metadata.json"
     metadata = json.loads(metadata_path.read_text()) if metadata_path.is_file() else {}
