@@ -44,7 +44,7 @@ export async function studyReportNames(input) {
 
 // HTML is stored under a release-specific path so cached reports cannot be
 // mistaken for another release. Companion downloads are intentionally omitted.
-export async function exportReports(input, stage, releaseId, cellTypes) {
+export async function exportReports(input, stage, releaseId, cellTypes, onProgress) {
   const reports = []
   const candidates = [
     ...(await studyReportNames(input)).map((name) => ({
@@ -77,7 +77,10 @@ export async function exportReports(input, stage, releaseId, cellTypes) {
           .find(Boolean) || null,
     },
   ]
+  let processed = 0
   for (const candidate of candidates) {
+    processed += 1
+    onProgress?.(`Checking report ${processed}/${candidates.length}: ${candidate.name}`)
     if (!(await exists(candidate.source))) continue
     const path = `reports/${releaseId}/${candidate.name}`
     const target = join(stage, path)
@@ -91,8 +94,13 @@ export async function exportReports(input, stage, releaseId, cellTypes) {
       study: candidate.study,
       warning: candidate.warning,
       bytes: (await stat(target)).size,
-      sha256: await hashFile(target),
+      sha256: await hashFile(target, (bytesRead) =>
+        onProgress?.(
+          `Still hashing copied report ${candidate.name} (${(bytesRead / 1024 / 1024).toFixed(1)} MiB read)`,
+        ),
+      ),
     })
+    onProgress?.(`Copied and hashed report: ${candidate.name}`)
   }
   // The executed QC notebook keeps each matplotlib figure as a PNG output.
   // Export only the two dataset-tab figures, avoiding the much larger notebook

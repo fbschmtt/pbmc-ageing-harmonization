@@ -385,9 +385,10 @@ The report includes provenance, metadata completeness, cohort
 composition, count-depth checks, UMAPs, canonical PBMC marker expression, and
 study-label/AIFI-label comparisons. All plots use the complete harmonized study.
 When stored UMAP coordinates and AIFI L2 annotations are available, the report
-also includes a standalone AIFI L2 plot with a transparent background. The
-multi-panel study-label and AIFI comparison remains in the report. The optional
-published color table and the deterministic fallback are described in the
+includes a standalone AIFI L2 plot with a transparent background. When study
+labels and AIFI L2 annotations are available, it also includes a comparison
+heatmap with a transparent background. The optional published color table and
+the deterministic fallback are described in the
 [AIFI model setup](aifi_models/README).
 
 To generate a report for an existing harmonized output without rerunning the
@@ -486,7 +487,7 @@ which validation to run.
 | Core workflow for one or a few studies | `make run-test STUDIES=<list>` | Omit `STUDIES` for the representative AIDA25/CIMA/Terekhova26 set; use `STUDIES=all` for every available fixture. |
 | Global integration/annotation diagnostics | `make run-integration-benchmark[-test]` | Run after an existing single-cell merge; `make run-all-test` also exercises its test form. |
 | Ordered Docker integration test | `make run-all-test` | Includes the synthetic DE, clock, and profile checks plus the default three single-cell types. |
-| Static atlas export, frontend, or data contract | `make site-test site-test-browser` | Browser tests build an isolated synthetic release. Use `make site-test-workflow` to test existing workflow outputs; `make site-build` validates the existing export. |
+| Static atlas export, frontend, or data contract | `make site-test site-test-browser` | These run in the tracked frontend Docker images and need no host Node installation. Browser tests build an isolated synthetic release. Use `make site-test-workflow` to test existing workflow outputs; `make site-build` validates the existing export. |
 | Markdown documentation or Make target names | `make docs-check` | Also run the target described by changed commands. |
 | Broad cross-cutting or release validation | `make verify` | Reserve this non-resumed, full workflow for cross-cutting or release checks. Prefer the focused targets above for routine changes. Pass `STUDIES=all` to use every available fixture. |
 | Production analysis | `make run` | It is resumable; use only after the relevant focused checks pass. |
@@ -1268,21 +1269,30 @@ open and reset on reload. Where the selected gene has no plottable DE estimate
 for the current model, the DE view explains that it is showing another result.
 The plots select an initial result to make the detail panel discoverable.
 
-Install frontend dependencies locally and export completed per-cell-type DE
-results, then start the development server:
+The frontend Make targets run in a tracked Docker image with the locked Node
+runtime and npm packages. Docker is required; Node/npm do not need to be
+installed on the production host. Export completed per-cell-type DE results,
+then start the development server:
 
 ```bash
-make site-install
 make site-export
 make serve-frontend
 ```
 
 Open `http://localhost:8000/`; set `SITE_PORT` to use a different port. The
-server has live reload. `make site-export` defaults to
+development server has live reload and reads source changes from the workspace.
+The container keeps its dependencies in the image or a Docker-managed volume;
+it does not install `node_modules` on the host filesystem. `make site-export` defaults to
 `output/analysis/per_type`, and `SITE_INPUT` selects another per-type output
 directory. For example, `make site-export SITE_INPUT=output/test/analysis/per_type`
 uses local test outputs. Synthetic and test-only results are labelled and are
 not biological findings. The server does not run the analysis or export data.
+
+For direct local Node development, `make site-install` remains available and
+uses `npm ci --no-bin-links` for filesystems that cannot create symlinks.
+The containerized targets build the image automatically; `make image-site`
+can build it ahead of time. `make image-site-browser` builds the separate
+Chromium test image.
 
 The dataset page's UMAP is extracted from each study's executed QC notebook.
 Older notebooks without the standalone AIFI L2 figure do not produce that
@@ -1302,29 +1312,28 @@ manifest; it does not refit the separate synthetic DE models. Use an explicit
 studies selected by that run and indicates whether each also has exported DE.
 
 Browser journey tests use a compact synthetic fixture and build in a temporary
-directory; they do not modify the exported site or run harmonization. On a fresh
-checkout, install the locked frontend dependencies and its matching browser once,
-then run the test target:
+directory; they do not modify the exported site or run harmonization. The
+browser target builds a separate Docker image with the matching Chromium and
+system libraries, then runs the tests without installing Node or a browser on
+the host:
 
 ```bash
-make site-install
-make site-browser-install
 make site-test-browser
 ```
 
-The browser is installed under `site/.playwright-browsers/`. For an existing
-compatible browser binary, set `SITE_BROWSER_EXECUTABLE` when invoking
-`make site-test-browser` instead of downloading the test browser. The browser
-tests require local loopback access for their temporary static server.
+For local Node development, `make site-browser-install` can still install the
+matching browser under `site/.playwright-browsers/`. The browser tests require
+local loopback access for their temporary static server.
 
 Shared spacing and interaction styles live in `site/src/styles.css`; plot and
 feature-specific styles live alongside their components. Page widths remain
 feature-specific so that reading pages and visualizations can use the space
 they need.
 
-`make site-test` tests the frontend and export contract; `make site-test-browser`
-tests browser journeys with an isolated synthetic release. Both run as part of
-`make verify`. `make site-test-workflow` tests the existing `output/test`
+`make site-test` tests the frontend and export contract in the runtime image;
+`make site-test-browser` tests browser journeys in the browser image with an
+isolated synthetic release. Both run as part of `make verify`.
+`make site-test-workflow` tests the existing `output/test`
 workflow artifacts and also runs after the workflow in `make verify`.
 `make site-build`
 validates the exported release and creates a static deployable build in `site/dist/`.

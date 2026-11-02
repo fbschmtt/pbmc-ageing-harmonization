@@ -3,7 +3,8 @@ import { execFileSync } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { gzipSync } from 'node:zlib'
+import { gzip, gzipSync } from 'node:zlib'
+import { promisify } from 'node:util'
 import { geneBucket } from '../src/data/geneBucket.mjs'
 import { exists, files, hash, hashFile, sourceInventory } from './release-sources.mjs'
 import { exportAtlas } from './export.mjs'
@@ -15,7 +16,15 @@ import { verifyRelease } from './verify-release.mjs'
 import { pantherFilename, pantherRelease, pantherSha256 } from './panther-release.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const gzipAsync = promisify(gzip)
+const formatElapsed = (milliseconds) => {
+  const seconds = Math.floor(milliseconds / 1000)
+  return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
+}
+const formatBytes = (bytes) => `${(bytes / 1024 / 1024).toFixed(1)} MiB`
 function revision() {
+  const configuredRevision = process.env.SITE_EXPORTER_REVISION?.trim()
+  if (configuredRevision) return configuredRevision
   try {
     return execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: root,
@@ -27,6 +36,22 @@ function revision() {
   }
 }
 export async function createRelease(inputPath, targetPath, options = {}) {
+  const startedAt = Date.now()
+  const progress = (message) =>
+    console.log(`[site-export +${formatElapsed(Date.now() - startedAt)}] ${message}`)
+  const timed = async (label, action) => {
+    const phaseStartedAt = Date.now()
+    progress(`Starting ${label}`)
+    try {
+      const result = await action()
+      progress(`Finished ${label} in ${formatElapsed(Date.now() - phaseStartedAt)}`)
+      return result
+    } catch (error) {
+      progress(`Failed ${label} after ${formatElapsed(Date.now() - phaseStartedAt)}`)
+      throw error
+    }
+  }
+  const slowHash = (name, bytesRead) => progress(`Still hashing ${name} (${formatBytes(bytesRead)} read)`)
   const input = resolve(inputPath),
     target = resolve(targetPath),
     parent = dirname(target)
@@ -35,8 +60,9 @@ export async function createRelease(inputPath, targetPath, options = {}) {
   const backup = join(parent, `.atlas-backup-${randomUUID()}`)
   let moved = false
   try {
-    const before = await sourceInventory(input)
-    const counts = await exportAtlas(input, join(stage, 'de-index.json'), {
+    progress(`Preparing release from ${input}`)
+    const before = await timed('checking and hashing analysis inputs', () => sourceInventory(input, slowHash))
+    const counts = await timed('exporting differential-expression and summary data', () => exportAtlas(input, join(stage, 'de-index.json'), {
       writeModel: async (cell, model, cellIndex, modelIndex) => {
         const asset = `de-models/${cellIndex}-${modelIndex}.json`
         await mkdir(join(stage, 'de-models'), { recursive: true })
@@ -83,7 +109,7 @@ export async function createRelease(inputPath, targetPath, options = {}) {
         model.recordsAsset = asset
         model.recordBuckets = recordBuckets
       },
-    })
+    }))
     const pathwayDirectory = resolve(options.pathwayDirectory || join(root, 'public/pathways'))
     const env = { ...process.env, SITE_DATA_DIR: stage, SITE_PATHWAY_DIR: pathwayDirectory }
     const pathwayInventory = async () => {
@@ -93,17 +119,21 @@ export async function createRelease(inputPath, targetPath, options = {}) {
           found.push({ path: relative(pathwayDirectory, path), sha256: await hashFile(path) })
       return found
     }
-    const pathwayFiles = await pathwayInventory()
-    execFileSync(process.execPath, [join(root, 'scripts/build-pathway-index.mjs')], { env, stdio: 'inherit' })
+    const pathwayFiles = await timed('checking pathway source files', pathwayInventory)
+    await timed('building the pathway index', async () =>
+      execFileSync(process.execPath, [join(root, 'scripts/build-pathway-index.mjs')], { env, stdio: 'inherit' }),
+    )
     const panther =
       options.pantherPath || join(root, 'data-inputs/reference-data/panther', pantherRelease, pantherFilename)
     if ((await exists(panther)) && (await exists(join(stage, 'pipeline-trajectory-index.json')))) {
       if ((await hashFile(panther)) !== pantherSha256)
         throw new Error('PANTHER source checksum does not match the pinned release')
-      execFileSync(process.execPath, [join(root, 'scripts/build-gene-metadata-index.mjs')], {
-        env: { ...env, SITE_PANTHER_PATH: resolve(panther) },
-        stdio: 'inherit',
-      })
+      await timed('building the gene metadata index', async () =>
+        execFileSync(process.execPath, [join(root, 'scripts/build-gene-metadata-index.mjs')], {
+          env: { ...env, SITE_PANTHER_PATH: resolve(panther) },
+          stdio: 'inherit',
+        }),
+      )
     }
     const trajectorySource = join(input, '..', 'combined', 'trajectory')
     const trajectoryCsv = await exists(join(trajectorySource, 'cross_cell_type_trajectory_clusters.csv'))
@@ -112,7 +142,8 @@ export async function createRelease(inputPath, targetPath, options = {}) {
       throw new Error('Trajectory inputs are incomplete: CSV and metadata must both be present')
     if (trajectoryCsv && counts.trajectory.input > 0 && counts.trajectory.exported === 0)
       throw new Error('Trajectory input produced no valid records; inspect age-bin support and input schema')
-    const after = await sourceInventory(input)
+    progress('Rechecking analysis inputs for changes during export')
+    const after = await sourceInventory(input, slowHash)
     if (JSON.stringify(pathwayFiles) !== JSON.stringify(await pathwayInventory()))
       throw new Error('Pathway sources changed during export; retry from a stable snapshot')
     if (JSON.stringify(before) !== JSON.stringify(after))
@@ -183,16 +214,39 @@ export async function createRelease(inputPath, targetPath, options = {}) {
       await writeFile(previewPath, JSON.stringify(preview))
     }
     await writeFile(dePath, JSON.stringify(catalogue))
-    const assets = await stampAssets(stage, id)
-    for (const asset of assets) {
+    const assets = await timed('validating and stamping generated assets', () =>
+      stampAssets(stage, id, (processed, total, valid) =>
+        progress(`Validated ${processed}/${total} generated files (${valid} published assets)`),
+      ),
+    )
+    let compressedCount = 0
+    for (const [index, asset] of assets.entries()) {
       const source = await readFile(join(stage, asset.path))
-      const compressed = gzipSync(source, { level: 9 })
+      if (source.length >= 16 * 1024 * 1024)
+        progress(`Compressing large asset ${index + 1}/${assets.length}: ${asset.path} (${formatBytes(source.length)})`)
+      const compression = gzipAsync(source, { level: 9 })
+      let heartbeat
+      if (source.length >= 16 * 1024 * 1024)
+        heartbeat = setTimeout(
+          () => progress(`Still compressing ${asset.path} (${formatBytes(source.length)})`),
+          30_000,
+        )
+      let compressed
+      try {
+        compressed = await compression
+      } finally {
+        if (heartbeat) clearTimeout(heartbeat)
+      }
       if (compressed.length + 128 >= source.length) continue
       asset.gzipPath = `${asset.path}.gz.bin`
       asset.gzipBytes = compressed.length
       asset.gzipSha256 = hash(compressed)
       await writeFile(join(stage, asset.gzipPath), compressed)
+      compressedCount += 1
+      if (compressedCount % 25 === 0)
+        progress(`Compressed ${compressedCount} assets so far`)
     }
+    progress(`Compression complete: ${compressedCount} assets received gzip copies`)
     const de = JSON.parse(await readFile(join(stage, 'de-index.json'), 'utf8'))
     let reportSources = []
     if (options.includeReports !== false) {
@@ -207,19 +261,29 @@ export async function createRelease(inputPath, targetPath, options = {}) {
         const snapshot = []
         for (const name of names) {
           const path = resolve(input, name)
-          if (await exists(path)) snapshot.push({ path: name, sha256: await hashFile(path) })
+          if (await exists(path))
+            snapshot.push({
+              path: name,
+              sha256: await hashFile(path, (bytesRead) =>
+                progress(`Still hashing report source ${name} (${formatBytes(bytesRead)} read)`),
+              ),
+            })
         }
         return snapshot
       }
-      reportSources = await snapshotReports()
-      assets.push(...(await exportReports(input, stage, id, de.cellTypes)))
+      reportSources = await timed('checking report source files', snapshotReports)
+      assets.push(
+        ...(await timed('copying and indexing reports', () =>
+          exportReports(input, stage, id, de.cellTypes, progress),
+        )),
+      )
       if (JSON.stringify(reportSources) !== JSON.stringify(await snapshotReports()))
         throw new Error('HTML reports changed during export; retry from a stable snapshot')
     }
-    const { inventory, analysis } = await releaseInventory(input, de)
-    const provenance = await compareAnalysisMetadata(input, inventory)
+    const { inventory, analysis } = await timed('building the analysis inventory', () => releaseInventory(input, de))
+    const provenance = await timed('checking analysis provenance', () => compareAnalysisMetadata(input, inventory))
     const studiesPath = resolve(options.studiesConfigPath || join(root, '..', 'config/studies.json'))
-    const context = await releaseContext(input, de, studiesPath, assets)
+    const context = await timed('collecting release context', () => releaseContext(input, de, studiesPath, assets))
     const referencesAfter = await releaseContext(input, de, studiesPath, assets)
     if (
       JSON.stringify(context) !== JSON.stringify(referencesAfter) ||
@@ -265,7 +329,8 @@ export async function createRelease(inputPath, targetPath, options = {}) {
     const manifestBytes = Buffer.from(JSON.stringify(manifest, null, 2) + '\n')
     await writeFile(join(stage, 'release.json'), manifestBytes)
     await writeFile(join(stage, 'release.json.gz.bin'), gzipSync(manifestBytes, { level: 9 }))
-    await verifyRelease(stage)
+    await timed('verifying the staged release', () => verifyRelease(stage))
+    progress('Publishing the validated release')
     if (await exists(target)) {
       await rename(target, backup)
       moved = true
@@ -280,6 +345,7 @@ export async function createRelease(inputPath, targetPath, options = {}) {
       throw e
     }
     if (moved) await rm(backup, { recursive: true, force: true })
+    progress(`Release ${id} published with ${assets.length} assets in ${formatElapsed(Date.now() - startedAt)}`)
     return manifest
   } finally {
     await rm(stage, { recursive: true, force: true })

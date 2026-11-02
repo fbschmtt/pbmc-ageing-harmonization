@@ -11,9 +11,13 @@ export async function exportAtlas(inputPath, outputPath, options = {}) {
   const numeric = (value) =>
     value == null || value.trim() === '' || !Number.isFinite(Number(value)) ? null : Number(value)
   const cellTypes = []
-  for (const entry of (await readdir(input, { withFileTypes: true }))
+  const entries = (await readdir(input, { withFileTypes: true }))
     .filter((e) => e.isDirectory())
-    .sort((a, b) => a.name.localeCompare(b.name))) {
+    .sort((a, b) => a.name.localeCompare(b.name))
+  let visited = 0
+  for (const entry of entries) {
+    visited += 1
+    console.log(`[site-export] Scanning cell type ${visited}/${entries.length}: ${entry.name}`)
     const dir = join(input, entry.name, 'differential_expression')
     let metadata
     try {
@@ -38,6 +42,7 @@ export async function exportAtlas(inputPath, outputPath, options = {}) {
         const file = resolve(dir, path)
         const rel = relative(dir, file)
         if (rel.startsWith('..') || isAbsolute(rel)) throw new Error(`Unsafe result path: ${path}`)
+        console.log(`[site-export] Parsing ${entry.name}: ${model.model}/${covariate} (${path})`)
         const { headers, rows } = parseCsv(await readFile(file, 'utf8'))
         for (const name of ['gene', 'log2FoldChange', 'padj'])
           if (!headers.includes(name)) throw new Error(`${file}: missing ${name}`)
@@ -52,6 +57,9 @@ export async function exportAtlas(inputPath, outputPath, options = {}) {
         }))
         if (records.some((r) => !r.gene || (r.padj !== null && (r.padj < 0 || r.padj > 1))))
           throw new Error(`${file}: invalid gene or adjusted p-value`)
+        console.log(
+          `[site-export] Parsed ${rows.length.toLocaleString()} rows for ${entry.name}: ${model.model}/${covariate}`,
+        )
         const first = rows[0] || []
         const exportedModel = {
           id: `${model.model}:${model.study || 'all'}:${covariate}`,

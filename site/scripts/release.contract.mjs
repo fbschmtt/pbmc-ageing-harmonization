@@ -10,6 +10,8 @@ import { verifyRelease } from './verify-release.mjs'
 const sha = (text) => createHash('sha256').update(text).digest('hex')
 test('release validates and inventories a snapshot; failure preserves previous release', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-release-'))
+  const previousExporterRevision = process.env.SITE_EXPORTER_REVISION
+  process.env.SITE_EXPORTER_REVISION = 'contract-test-exporter-revision'
   try {
     const input = join(root, 'analysis/per_type'),
       type = join(input, 'monocyte/differential_expression')
@@ -42,6 +44,7 @@ test('release validates and inventories a snapshot; failure preserves previous r
     )
     await writeFile(join(type, 'report.html'), '<html><body>DE diagnostics</body></html>')
     const release = await createRelease(input, target, options)
+    assert.equal(release.exporterRevision, 'contract-test-exporter-revision')
     assert.equal(release.inventory[0].models[1].status, 'skipped')
     const report = release.assets.find((item) => item.kind === 'report')
     assert.ok(report.path.startsWith(`reports/${release.releaseId}/`))
@@ -83,6 +86,8 @@ test('release validates and inventories a snapshot; failure preserves previous r
     await assert.rejects(createRelease(input, target, options), /Trajectory inputs are incomplete/)
     assert.equal(await readFile(join(target, 'release.json'), 'utf8'), oldManifest)
   } finally {
+    if (previousExporterRevision === undefined) delete process.env.SITE_EXPORTER_REVISION
+    else process.env.SITE_EXPORTER_REVISION = previousExporterRevision
     await rm(root, { recursive: true, force: true })
   }
 })

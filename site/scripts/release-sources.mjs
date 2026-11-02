@@ -12,9 +12,19 @@ export const exists = async (path) =>
     },
   )
 export const hash = (contents) => createHash('sha256').update(contents).digest('hex')
-export async function hashFile(path) {
+export async function hashFile(path, onProgress) {
   const digest = createHash('sha256')
-  for await (const chunk of createReadStream(path)) digest.update(chunk)
+  let bytesRead = 0
+  let lastProgress = Date.now()
+  for await (const chunk of createReadStream(path)) {
+    digest.update(chunk)
+    bytesRead += chunk.length
+    const now = Date.now()
+    if (onProgress && now - lastProgress >= 30_000) {
+      onProgress(bytesRead)
+      lastProgress = now
+    }
+  }
   return digest.digest('hex')
 }
 export async function files(dir) {
@@ -27,7 +37,7 @@ export async function files(dir) {
   }
   return result
 }
-export async function sourceInventory(input) {
+export async function sourceInventory(input, onSlowHash) {
   const result = []
   for (const entry of await readdir(input, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue
@@ -53,14 +63,23 @@ export async function sourceInventory(input) {
       const path = resolve(dir, name),
         rel = relative(dir, path)
       if (rel.startsWith('..') || rel.startsWith('/')) throw new Error(`Unsafe result path: ${name}`)
-      if (await exists(path)) result.push({ path: relative(input, path), sha256: await hashFile(path) })
+      if (await exists(path)) {
+        const name = relative(input, path)
+        result.push({
+          path: name,
+          sha256: await hashFile(path, (bytesRead) => onSlowHash?.(name, bytesRead)),
+        })
+      }
     }
   }
   const combined = resolve(input, '..', 'combined', 'trajectory')
   for (const name of ['cross_cell_type_trajectory_clusters.csv', 'analysis_metadata.json']) {
     const path = join(combined, name)
     if (await exists(path))
-      result.push({ path: `../combined/trajectory/${name}`, sha256: await hashFile(path) })
+      result.push({
+        path: `../combined/trajectory/${name}`,
+        sha256: await hashFile(path, (bytesRead) => onSlowHash?.(`../combined/trajectory/${name}`, bytesRead)),
+      })
   }
   const deManifest = resolve(
     input,
@@ -72,7 +91,9 @@ export async function sourceInventory(input) {
   if (await exists(deManifest))
     result.push({
       path: '../combined/differential_expression/differential_expression.json',
-      sha256: await hashFile(deManifest),
+      sha256: await hashFile(deManifest, (bytesRead) =>
+        onSlowHash?.('../combined/differential_expression/differential_expression.json', bytesRead),
+      ),
     })
   return result.sort((a, b) => a.path.localeCompare(b.path))
 }

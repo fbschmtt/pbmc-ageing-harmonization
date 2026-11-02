@@ -5,6 +5,15 @@ cache
 input_data
 output
 legacy_notebooks
+site/node_modules
+site/.npm-cache
+site/.playwright-browsers
+site/public/data
+site/dist
+site/data-inputs/*
+!site/data-inputs/cell-type-hierarchy.json
+site/public/pathways/*
+!site/public/pathways/.gitkeep
 **/__pycache__
 **/.ipynb_checkpoints
 aifi_models/*

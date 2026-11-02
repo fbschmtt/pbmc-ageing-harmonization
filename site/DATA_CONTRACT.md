@@ -57,7 +57,7 @@ a local cleanup list and is not a browser data asset.
 | `reports/<release-id>/analysis/…/report.html` | Available per-type DE and combined trajectory HTML reports, copied unchanged and linked from the modelling page. These reports may contain sample-level identifiers and diagnostics. The export does not include their linked CSV or other companion downloads; those links can be unavailable on the site. |
 | `reports/<release-id>/harmonization/harmonization_qc/<study>/report.html` | Available study QC reports, discovered from the harmonization output and linked on the datasets page. These may contain sample-level information; review them before publication. |
 | `images/<release-id>/studies/<study>-umap.png` | The standalone AIFI L2 UMAP from the study QC notebook, with a transparent background. Older QC notebooks without this figure do not produce a UMAP asset; rerender the study report to include it. |
-| `images/<release-id>/studies/<study>-heatmap.png` | The study-label versus AIFI L2 comparison extracted from the study QC notebook, when available. |
+| `images/<release-id>/studies/<study>-heatmap.png` | The study-label versus AIFI L2 comparison extracted from the study QC notebook, with a transparent background, when available. |
 
 DE model chunks are fetched only for the currently selected cell type and
 model. Gene-set prefetching is limited to that selected model. Older exports

@@ -14,6 +14,7 @@ export async function writeAgePreview(dir, slug, metadata, output) {
   const file = resolve(dir, path)
   const rel = relative(dir, file)
   if (rel.startsWith('..') || isAbsolute(rel)) throw new Error(`Unsafe trajectory result path: ${path}`)
+  console.log(`[site-export] Building age preview for ${slug} from ${path}`)
   const { headers, rows } = parseCsv(await readFile(file, 'utf8'))
   for (const name of ['gene', 'age_bin', 'log2FoldChange'])
     if (!headers.includes(name)) throw new Error(`${file}: missing ${name}`)
@@ -41,6 +42,7 @@ export async function writeAgePreview(dir, slug, metadata, output) {
       genes,
     }),
   )
+  console.log(`[site-export] Wrote age preview for ${slug} with ${Object.keys(genes).length.toLocaleString()} genes`)
   return `age-previews/${assetName}`
 }
 

@@ -14,12 +14,18 @@ OUTDIR ?= output
 IMAGE_TAG ?=
 PYTHON_IMAGE_TAG ?= $(if $(IMAGE_TAG),$(IMAGE_TAG),$(shell { git ls-files -co --exclude-standard .dockerignore docker/python.Dockerfile config src pyproject.toml requirements.lock aifi_models/README; test ! -f aifi_models/AIFI_L2_imm_health_atlas_type_order_colors.csv || printf '%s\n' aifi_models/AIFI_L2_imm_health_atlas_type_order_colors.csv; } | sort | while IFS= read -r file; do test -f "$$file" && sha256sum "$$file"; done | sha256sum | cut -c1-12))
 R_IMAGE_TAG ?= $(if $(IMAGE_TAG),$(IMAGE_TAG),$(shell git ls-files -co --exclude-standard docker/r-conversion.Dockerfile scripts/convert_rds.R | sort | while IFS= read -r file; do test -f "$$file" && sha256sum "$$file"; done | sha256sum | cut -c1-12))
+SITE_IMAGE_TAG ?= $(if $(IMAGE_TAG),$(IMAGE_TAG),$(shell { git ls-files -co --exclude-standard .dockerignore docker/site.Dockerfile config/studies.json scripts/render_report_index.py site; } | sort | while IFS= read -r file; do test -f "$$file" && sha256sum "$$file"; done | sha256sum | cut -c1-12))
+SITE_BROWSER_IMAGE_TAG ?= $(if $(IMAGE_TAG),$(IMAGE_TAG),$(shell { git ls-files -co --exclude-standard .dockerignore docker/site.Dockerfile docker/site-browser.Dockerfile config/studies.json scripts/render_report_index.py site; } | sort | while IFS= read -r file; do test -f "$$file" && sha256sum "$$file"; done | sha256sum | cut -c1-12))
 # Freeze the content hashes at parse time. Recursive expansion can otherwise
 # recompute a different tag between an image prerequisite and its recipe.
 PYTHON_IMAGE_TAG := $(PYTHON_IMAGE_TAG)
 R_IMAGE_TAG := $(R_IMAGE_TAG)
+SITE_IMAGE_TAG := $(SITE_IMAGE_TAG)
+SITE_BROWSER_IMAGE_TAG := $(SITE_BROWSER_IMAGE_TAG)
 PYTHON_IMAGE ?= pbmc-ageing-python:$(PYTHON_IMAGE_TAG)
 R_IMAGE ?= pbmc-ageing-r:$(R_IMAGE_TAG)
+SITE_IMAGE ?= pbmc-ageing-site:$(SITE_IMAGE_TAG)
+SITE_BROWSER_IMAGE ?= pbmc-ageing-site-browser:$(SITE_BROWSER_IMAGE_TAG)
 PIPELINE_REVISION ?= $(shell git describe --always --dirty)
 TEST_CELLS ?= 200
 TEST_SEED ?= 42
@@ -72,6 +78,7 @@ PYTHON_CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),image-python
 MERGE_ARGS = $(if $(filter true 1 yes,$(MERGE_SINGLE_CELL)),--merge_single_cell,)
 
 .PHONY: help install lint workflow-lint docs-check docs-update test-unit verify run-all-test \
+image-site image-site-browser \
 validate-study validate-test validate-full test-data download-inputs download-go-inputs images image-python \
 	download-inputs-strict check-download-inputs \
 	image-r run run-test run-all split-cell-types split-cell-types-test \
@@ -176,10 +183,16 @@ download-inputs-strict: image-python ## Explicit download preflight; fail unless
 check-download-inputs: image-python ## Run downloader contract checks in the Python container
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/check_download_inputs.py
 
-images: image-python image-r ## Build cached local workflow images
+images: image-python image-r image-site ## Build cached local workflow images
 
 image-python:
 	docker build -f docker/python.Dockerfile -t $(PYTHON_IMAGE) .
+
+image-site: ## Build the locked frontend runtime image (Node, npm, and frontend packages)
+	docker build -f docker/site.Dockerfile -t $(SITE_IMAGE) .
+
+image-site-browser: image-site ## Build the frontend image with the matching Chromium and system libraries
+	docker build -f docker/site-browser.Dockerfile --build-arg SITE_IMAGE=$(SITE_IMAGE) -t $(SITE_BROWSER_IMAGE) .
 
 image-r:
 	docker build -f docker/r-conversion.Dockerfile -t $(R_IMAGE) .
@@ -442,6 +455,12 @@ render-cell-type-reports-test: check-cell-type-reports-prerequisites $(PYTHON_CO
 
 SITE_INPUT ?= $(OUTDIR)/analysis/per_type
 SITE_PORT ?= 8000
+SITE_ANALYSIS_DIR = $(patsubst %/,%,$(dir $(abspath $(SITE_INPUT))))
+SITE_INPUT_NAME = $(notdir $(patsubst %/,%,$(SITE_INPUT)))
+SITE_EXPORTER_REVISION = $(shell git rev-parse HEAD)
+SITE_CONTAINER_ROOT = /opt/pbmc-ageing/site
+SITE_DOCKER_USER = --user "$(shell id -u):$(shell id -g)"
+SITE_DOCKER_RUN = docker run --rm $(SITE_DOCKER_USER) -e HOME=/tmp
 
 .PHONY: site-install site-browser-install site-export site-build site-test site-test-browser site-test-workflow serve-frontend
 site-install: ## Install locked frontend dependencies locally
@@ -450,23 +469,24 @@ site-install: ## Install locked frontend dependencies locally
 site-browser-install: ## Install the locked browser locally for frontend browser tests
 	cd site && PLAYWRIGHT_BROWSERS_PATH="$(CURDIR)/site/.playwright-browsers" node node_modules/@playwright/test/cli.js install chromium
 
-site-export: ## Export completed per-cell-type DE results for the static site
-	node site/scripts/release.mjs "$(SITE_INPUT)" site/public/data
+site-export: image-site ## Export completed per-cell-type DE results in the frontend image
+	$(SITE_DOCKER_RUN) -v "$(SITE_ANALYSIS_DIR):/analysis:ro" -v "$(CURDIR)/site/public:$(SITE_CONTAINER_ROOT)/public" -v "$(CURDIR)/site/data-inputs:$(SITE_CONTAINER_ROOT)/data-inputs:ro" -e SITE_EXPORTER_REVISION="$(SITE_EXPORTER_REVISION)" $(SITE_IMAGE) node scripts/release.mjs "/analysis/$(SITE_INPUT_NAME)" "$(SITE_CONTAINER_ROOT)/public/data"
 
-site-build: ## Validate exported assets and build the static frontend
-	node site/scripts/verify-release.mjs site/public/data
-	cd site && npm run build
+site-build: image-site ## Validate the existing export and build the static frontend in the image
+	$(SITE_DOCKER_RUN) -v "$(CURDIR)/site/public:$(SITE_CONTAINER_ROOT)/public:ro" $(SITE_IMAGE) node scripts/verify-release.mjs public/data
+	mkdir -p site/dist
+	$(SITE_DOCKER_RUN) -v "$(CURDIR)/site/public:$(SITE_CONTAINER_ROOT)/public:ro" -v "$(CURDIR)/site/dist:$(SITE_CONTAINER_ROOT)/dist" $(SITE_IMAGE) npm run build
 
-site-test: ## Test the frontend and export contract
-	node site/scripts/export.contract.mjs
-	node site/scripts/release.contract.mjs
-	cd site && npm test
+site-test: image-site ## Test the frontend and export contract in the frontend image
+	$(SITE_DOCKER_RUN) $(SITE_IMAGE) node scripts/export.contract.mjs
+	$(SITE_DOCKER_RUN) $(SITE_IMAGE) node scripts/release.contract.mjs
+	$(SITE_DOCKER_RUN) $(SITE_IMAGE) npm test
 
-site-test-browser: ## Build a synthetic release and run browser journeys
-	cd site && PLAYWRIGHT_BROWSERS_PATH="$(CURDIR)/site/.playwright-browsers" npm run test:browser
+site-test-browser: image-site-browser ## Build a synthetic release and run browser journeys in the browser image
+	docker run --rm $(SITE_BROWSER_IMAGE) npm run test:browser
 
-site-test-workflow: ## Export existing test workflow outputs and exercise the site in a browser
-	cd site && SITE_TEST_INPUT="$(CURDIR)/output/test/analysis/per_type" PLAYWRIGHT_BROWSERS_PATH="$(CURDIR)/site/.playwright-browsers" node tests/browser/workflow.mjs
+site-test-workflow: image-site-browser ## Exercise existing test workflow outputs in the browser image
+	docker run --rm -v "$(CURDIR)/output/test:/analysis:ro" -v "$(CURDIR)/site/public/pathways:$(SITE_CONTAINER_ROOT)/public/pathways:ro" -v "$(CURDIR)/site/data-inputs:$(SITE_CONTAINER_ROOT)/data-inputs:ro" -e SITE_TEST_INPUT=/analysis/analysis/per_type $(SITE_BROWSER_IMAGE) node tests/browser/workflow.mjs
 
-serve-frontend: ## Serve the frontend locally with live reload
-	cd site && npm run dev -- --host 127.0.0.1 --port $(SITE_PORT) --strictPort
+serve-frontend: image-site ## Serve the frontend in the image with live reload
+	docker run --rm -p "127.0.0.1:$(SITE_PORT):$(SITE_PORT)" -v "$(CURDIR)/site:$(SITE_CONTAINER_ROOT)" -v "$(SITE_CONTAINER_ROOT)/node_modules" -w $(SITE_CONTAINER_ROOT) $(SITE_IMAGE) node node_modules/vite/bin/vite.js --host 0.0.0.0 --port $(SITE_PORT) --strictPort

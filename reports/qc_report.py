@@ -272,7 +272,8 @@ if {"study_celltype", "aifi_l2_majority"} <= set(obs.columns):
     top_aifi = obs["aifi_l2_majority"].astype(str).value_counts().head(20).index
     selected = obs["study_celltype"].astype(str).isin(top_study) & obs["aifi_l2_majority"].astype(str).isin(top_aifi)
     agreement = pd.crosstab(obs.loc[selected, "study_celltype"], obs.loc[selected, "aifi_l2_majority"], normalize="index")
-    plt.figure(figsize=(max(8, 0.5 * agreement.shape[1]), max(6, 0.4 * agreement.shape[0])))
-    sns.heatmap(agreement, cmap="viridis", vmin=0, vmax=1)
-    plt.title("AIFI L2 composition within study-provided labels")
-    plt.xlabel("AIFI L2"); plt.ylabel("Study label"); plt.tight_layout(); plt.show()
+    with plt.rc_context({"figure.facecolor": "none", "axes.facecolor": "none", "savefig.transparent": True}):
+        plt.figure(figsize=(max(8, 0.5 * agreement.shape[1]), max(6, 0.4 * agreement.shape[0])))
+        sns.heatmap(agreement, cmap="viridis", vmin=0, vmax=1)
+        plt.title("AIFI L2 composition within study-provided labels")
+        plt.xlabel("AIFI L2"); plt.ylabel("Study label"); plt.tight_layout(); plt.show()

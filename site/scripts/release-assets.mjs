@@ -22,9 +22,13 @@ const kindOf = (name) =>
                   ? 'preview'
                   : null
 
-export async function stampAssets(stage, id) {
+export async function stampAssets(stage, id, onProgress) {
   const assets = []
-  for (const path of await files(stage)) {
+  const paths = await files(stage)
+  let inspected = 0
+  let lastReported = 0
+  for (const path of paths) {
+    inspected += 1
     const name = relative(stage, path).replaceAll('\\', '/')
     const kind = kindOf(name)
     if (!kind) continue // internal age-preview cleanup manifest
@@ -34,6 +38,11 @@ export async function stampAssets(stage, id) {
     const contents = JSON.stringify(value)
     await writeFile(path, contents)
     assets.push({ path: name, kind, bytes: Buffer.byteLength(contents), sha256: hash(contents) })
+    if (inspected % 25 === 0) {
+      onProgress?.(inspected, paths.length, assets.length)
+      lastReported = inspected
+    }
   }
+  if (lastReported !== paths.length) onProgress?.(paths.length, paths.length, assets.length)
   return assets
 }
