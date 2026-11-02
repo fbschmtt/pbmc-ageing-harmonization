@@ -5,7 +5,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { gzipSync } from 'node:zlib'
 import { geneBucket } from '../src/data/geneBucket.mjs'
-import { exists, files, hash, sourceInventory } from './release-sources.mjs'
+import { exists, files, hash, hashFile, sourceInventory } from './release-sources.mjs'
 import { exportAtlas } from './export.mjs'
 import { exportReports, studyReportNames } from './export-reports.mjs'
 import { releaseInventory } from './release-inventory.mjs'
@@ -36,14 +36,61 @@ export async function createRelease(inputPath, targetPath, options = {}) {
   let moved = false
   try {
     const before = await sourceInventory(input)
-    const counts = await exportAtlas(input, join(stage, 'de-index.json'))
+    const counts = await exportAtlas(input, join(stage, 'de-index.json'), {
+      writeModel: async (cell, model, cellIndex, modelIndex) => {
+        const asset = `de-models/${cellIndex}-${modelIndex}.json`
+        await mkdir(join(stage, 'de-models'), { recursive: true })
+        const allRecords = model.records
+        const otherBuckets = new Map()
+        for (const record of allRecords) {
+          if (record.padj !== null && record.padj < 0.05) continue
+          const bucket = geneBucket(record.gene)
+          if (!otherBuckets.has(bucket)) otherBuckets.set(bucket, [])
+          otherBuckets.get(bucket).push(record)
+        }
+        const recordBuckets = {}
+        for (const [bucket, records] of otherBuckets) {
+          const path = `de-models/${cellIndex}-${modelIndex}-${bucket}.json`
+          await writeFile(
+            join(stage, path),
+            JSON.stringify({
+              schemaVersion: 1,
+              source: 'pseudobulk differential expression',
+              cellTypes: [{ ...cell, models: [{ ...model, records }] }],
+            }),
+          )
+          recordBuckets[bucket] = path
+        }
+        await writeFile(
+          join(stage, asset),
+          JSON.stringify({
+            schemaVersion: 1,
+            source: 'pseudobulk differential expression',
+            cellTypes: [
+              {
+                ...cell,
+                models: [
+                  {
+                    ...model,
+                    records: allRecords.filter((record) => record.padj !== null && record.padj < 0.05),
+                  },
+                ],
+              },
+            ],
+          }),
+        )
+        model.records = []
+        model.recordsAsset = asset
+        model.recordBuckets = recordBuckets
+      },
+    })
     const pathwayDirectory = resolve(options.pathwayDirectory || join(root, 'public/pathways'))
     const env = { ...process.env, SITE_DATA_DIR: stage, SITE_PATHWAY_DIR: pathwayDirectory }
     const pathwayInventory = async () => {
       const found = []
       for (const path of await files(pathwayDirectory))
         if (path.endsWith('.gmt') || path.endsWith('pathway-labels.json'))
-          found.push({ path: relative(pathwayDirectory, path), sha256: hash(await readFile(path)) })
+          found.push({ path: relative(pathwayDirectory, path), sha256: await hashFile(path) })
       return found
     }
     const pathwayFiles = await pathwayInventory()
@@ -51,10 +98,10 @@ export async function createRelease(inputPath, targetPath, options = {}) {
     const panther =
       options.pantherPath || join(root, 'data-inputs/reference-data/panther', pantherRelease, pantherFilename)
     if ((await exists(panther)) && (await exists(join(stage, 'pipeline-trajectory-index.json')))) {
-      if (hash(await readFile(panther)) !== pantherSha256)
+      if ((await hashFile(panther)) !== pantherSha256)
         throw new Error('PANTHER source checksum does not match the pinned release')
       execFileSync(process.execPath, [join(root, 'scripts/build-gene-metadata-index.mjs')], {
-        env,
+        env: { ...env, SITE_PANTHER_PATH: resolve(panther) },
         stdio: 'inherit',
       })
     }
@@ -135,54 +182,6 @@ export async function createRelease(inputPath, targetPath, options = {}) {
       preview.genes = {}
       await writeFile(previewPath, JSON.stringify(preview))
     }
-    for (const [cellIndex, cell] of catalogue.cellTypes.entries()) {
-      for (const [modelIndex, model] of cell.models.entries()) {
-        const asset = `de-models/${cellIndex}-${modelIndex}.json`
-        await mkdir(join(stage, 'de-models'), { recursive: true })
-        const allRecords = model.records
-        const otherBuckets = new Map()
-        for (const record of allRecords) {
-          if (record.padj !== null && record.padj < 0.05) continue
-          const bucket = geneBucket(record.gene)
-          if (!otherBuckets.has(bucket)) otherBuckets.set(bucket, [])
-          otherBuckets.get(bucket).push(record)
-        }
-        const recordBuckets = {}
-        for (const [bucket, records] of otherBuckets) {
-          const path = `de-models/${cellIndex}-${modelIndex}-${bucket}.json`
-          await writeFile(
-            join(stage, path),
-            JSON.stringify({
-              schemaVersion: 1,
-              source: catalogue.source,
-              cellTypes: [{ ...cell, models: [{ ...model, records }] }],
-            }),
-          )
-          recordBuckets[bucket] = path
-        }
-        await writeFile(
-          join(stage, asset),
-          JSON.stringify({
-            schemaVersion: 1,
-            source: catalogue.source,
-            cellTypes: [
-              {
-                ...cell,
-                models: [
-                  {
-                    ...model,
-                    records: allRecords.filter((record) => record.padj !== null && record.padj < 0.05),
-                  },
-                ],
-              },
-            ],
-          }),
-        )
-        model.records = []
-        model.recordsAsset = asset
-        model.recordBuckets = recordBuckets
-      }
-    }
     await writeFile(dePath, JSON.stringify(catalogue))
     const assets = await stampAssets(stage, id)
     for (const asset of assets) {
@@ -208,7 +207,7 @@ export async function createRelease(inputPath, targetPath, options = {}) {
         const snapshot = []
         for (const name of names) {
           const path = resolve(input, name)
-          if (await exists(path)) snapshot.push({ path: name, sha256: hash(await readFile(path)) })
+          if (await exists(path)) snapshot.push({ path: name, sha256: await hashFile(path) })
         }
         return snapshot
       }

@@ -1,4 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { createInterface } from 'node:readline'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { pantherFilename, pantherRelease, pantherSha256, pantherSourceUrl } from './panther-release.mjs'
@@ -7,7 +9,10 @@ import { goTermLimits, selectInformativeTerms } from './gene-metadata-terms.mjs'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dataDir = resolve(process.env.SITE_DATA_DIR || resolve(root, 'public/data'))
 const atlasSource = resolve(dataDir, 'pipeline-trajectory-index.json')
-const pantherSource = resolve(root, `data-inputs/reference-data/panther/${pantherRelease}/${pantherFilename}`)
+const pantherSource = resolve(
+  process.env.SITE_PANTHER_PATH ||
+    resolve(root, `data-inputs/reference-data/panther/${pantherRelease}/${pantherFilename}`),
+)
 const destination = resolve(dataDir, 'gene-metadata.json')
 
 function addTerm(terms, id, label) {
@@ -32,9 +37,8 @@ function sortedTerms(terms) {
 const atlas = JSON.parse(await readFile(atlasSource, 'utf8'))
 const retainedGenes = new Set(atlas.genes)
 const metadata = new Map()
-const panther = await readFile(pantherSource, 'utf8')
-
-for (const line of panther.trim().split(/\r?\n/)) {
+const lines = createInterface({ input: createReadStream(pantherSource), crlfDelay: Infinity })
+for await (const line of lines) {
   const columns = line.split('\t')
   const gene = columns[2]
   if (!retainedGenes.has(gene)) continue

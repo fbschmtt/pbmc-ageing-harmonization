@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { access, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { access, copyFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve, isAbsolute } from 'node:path'
+import { exists, hashFile } from './release-sources.mjs'
 
 async function optional(path) {
   try {
@@ -77,12 +78,11 @@ export async function exportReports(input, stage, releaseId, cellTypes) {
     },
   ]
   for (const candidate of candidates) {
-    const bytes = await optional(candidate.source)
-    if (!bytes) continue
+    if (!(await exists(candidate.source))) continue
     const path = `reports/${releaseId}/${candidate.name}`
     const target = join(stage, path)
     await mkdir(dirname(target), { recursive: true })
-    await writeFile(target, bytes)
+    await copyFile(candidate.source, target)
     reports.push({
       path,
       kind: 'report',
@@ -90,8 +90,8 @@ export async function exportReports(input, stage, releaseId, cellTypes) {
       cellType: candidate.cellType,
       study: candidate.study,
       warning: candidate.warning,
-      bytes: bytes.length,
-      sha256: createHash('sha256').update(bytes).digest('hex'),
+      bytes: (await stat(target)).size,
+      sha256: await hashFile(target),
     })
   }
   // The executed QC notebook keeps each matplotlib figure as a PNG output.

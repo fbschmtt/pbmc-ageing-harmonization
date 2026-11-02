@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { createReadStream } from 'node:fs'
 import { access, readFile, readdir } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 
@@ -11,6 +12,11 @@ export const exists = async (path) =>
     },
   )
 export const hash = (contents) => createHash('sha256').update(contents).digest('hex')
+export async function hashFile(path) {
+  const digest = createHash('sha256')
+  for await (const chunk of createReadStream(path)) digest.update(chunk)
+  return digest.digest('hex')
+}
 export async function files(dir) {
   const entries = await readdir(dir, { withFileTypes: true })
   const result = []
@@ -47,14 +53,14 @@ export async function sourceInventory(input) {
       const path = resolve(dir, name),
         rel = relative(dir, path)
       if (rel.startsWith('..') || rel.startsWith('/')) throw new Error(`Unsafe result path: ${name}`)
-      if (await exists(path)) result.push({ path: relative(input, path), sha256: hash(await readFile(path)) })
+      if (await exists(path)) result.push({ path: relative(input, path), sha256: await hashFile(path) })
     }
   }
   const combined = resolve(input, '..', 'combined', 'trajectory')
   for (const name of ['cross_cell_type_trajectory_clusters.csv', 'analysis_metadata.json']) {
     const path = join(combined, name)
     if (await exists(path))
-      result.push({ path: `../combined/trajectory/${name}`, sha256: hash(await readFile(path)) })
+      result.push({ path: `../combined/trajectory/${name}`, sha256: await hashFile(path) })
   }
   const deManifest = resolve(
     input,
@@ -66,7 +72,7 @@ export async function sourceInventory(input) {
   if (await exists(deManifest))
     result.push({
       path: '../combined/differential_expression/differential_expression.json',
-      sha256: hash(await readFile(deManifest)),
+      sha256: await hashFile(deManifest),
     })
   return result.sort((a, b) => a.path.localeCompare(b.path))
 }

@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
 import { validAsset } from '../src/data/contracts.mjs'
+import { hashFile } from './release-sources.mjs'
 
 export async function verifyRelease(directory) {
   const root = resolve(directory)
@@ -30,8 +31,14 @@ export async function verifyRelease(directory) {
     const path = resolve(root, asset.path),
       rel = relative(root, path)
     if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('Unsafe asset path')
-    const bytes = await readFile(path)
-    if (bytes.length !== asset.bytes || createHash('sha256').update(bytes).digest('hex') !== asset.sha256)
+    const streamReport =
+      (asset.kind === 'report' || asset.kind === 'report_index') && asset.gzipPath === undefined
+    const bytes = streamReport ? null : await readFile(path)
+    if (
+      (streamReport ? (await stat(path)).size : bytes.length) !== asset.bytes ||
+      (streamReport ? await hashFile(path) : createHash('sha256').update(bytes).digest('hex')) !==
+        asset.sha256
+    )
       throw new Error(`Asset checksum mismatch: ${asset.path}`)
     if (asset.gzipPath !== undefined) {
       if (asset.gzipPath !== `${asset.path}.gz.bin`) throw new Error('Invalid compressed asset path')
@@ -65,9 +72,22 @@ export async function verifyRelease(directory) {
       continue
     }
     const value = JSON.parse(bytes.toString('utf8'))
-    parsed.set(asset.path, value)
     if (value.releaseId !== manifest.releaseId || !validAsset(asset.kind, value))
       throw new Error(`Invalid release asset: ${asset.path}`)
+    // Reference checks need only chunk identity and metadata, not their gene payloads.
+    if (asset.path.startsWith('de-models/')) {
+      for (const cell of value.cellTypes)
+        for (const model of cell.models)
+          model.records = model.records
+            .filter((record) => record.padj === null || record.padj >= 0.05)
+            .slice(0, 1)
+    } else if (asset.path.startsWith('age-previews/')) {
+      value.genes = {}
+    } else if (asset.path.startsWith('trajectory-extras/')) {
+      value.records = []
+      value.genes = []
+    }
+    parsed.set(asset.path, value)
   }
   if (!seen.has('de-index.json')) throw new Error('Missing DE asset')
   const de = parsed.get('de-index.json')

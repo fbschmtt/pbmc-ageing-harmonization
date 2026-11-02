@@ -5,7 +5,7 @@ import { parseCsv } from './parse-csv.mjs'
 import { exportViews } from './export-views.mjs'
 import { cleanAgePreviews, writeAgePreview } from './export-age-previews.mjs'
 
-export async function exportAtlas(inputPath, outputPath) {
+export async function exportAtlas(inputPath, outputPath, options = {}) {
   const input = resolve(inputPath)
   const output = resolve(outputPath)
   const numeric = (value) =>
@@ -23,6 +23,15 @@ export async function exportAtlas(inputPath, outputPath) {
       throw error
     }
     const models = []
+    const cell = {
+      id: entry.name,
+      label: metadata.cell_type,
+      tissue: 'pbmc',
+      analysisMode: metadata.analysis_mode,
+      warning: metadata.interpretation_warning,
+      trajectoryAsset: null,
+      models,
+    }
     for (const model of metadata.models || []) {
       if (model.status !== 'complete' || model.purpose === 'age_trajectory') continue
       for (const [covariate, path] of Object.entries(model.results_by_covariate || {})) {
@@ -44,7 +53,7 @@ export async function exportAtlas(inputPath, outputPath) {
         if (records.some((r) => !r.gene || (r.padj !== null && (r.padj < 0 || r.padj > 1))))
           throw new Error(`${file}: invalid gene or adjusted p-value`)
         const first = rows[0] || []
-        models.push({
+        const exportedModel = {
           id: `${model.model}:${model.study || 'all'}:${covariate}`,
           model: model.model,
           study: model.study || null,
@@ -54,20 +63,17 @@ export async function exportAtlas(inputPath, outputPath) {
           samples: model.n_samples,
           studies: model.study_sample_counts || {},
           records,
-        })
+        }
+        if (options.writeModel) {
+          if (!models.length) cell.trajectoryAsset = await writeAgePreview(dir, entry.name, metadata, output)
+          await options.writeModel(cell, exportedModel, cellTypes.length, models.length)
+        }
+        models.push(exportedModel)
       }
     }
     if (models.length) {
-      const trajectoryAsset = await writeAgePreview(dir, entry.name, metadata, output)
-      cellTypes.push({
-        id: entry.name,
-        label: metadata.cell_type,
-        tissue: 'pbmc',
-        analysisMode: metadata.analysis_mode,
-        warning: metadata.interpretation_warning,
-        trajectoryAsset,
-        models,
-      })
+      if (!options.writeModel) cell.trajectoryAsset = await writeAgePreview(dir, entry.name, metadata, output)
+      cellTypes.push(cell)
     }
   }
   if (!cellTypes.length) throw new Error(`No completed differential-expression results found in ${input}`)
