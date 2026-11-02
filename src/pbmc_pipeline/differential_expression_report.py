@@ -34,21 +34,33 @@ def _run_report_command(command, *, cwd: Path, env: dict[str, str], log_path: Pa
         log_lock = threading.Lock()
 
         def log_process_memory() -> None:
-            try:
-                root = psutil.Process(process.pid)
-                while True:
+            root = psutil.Process(process.pid)
+            while not stop_monitor.is_set():
+                process_rows = []
+                try:
                     processes = [root, *root.children(recursive=True)]
-                    rss_bytes = sum(proc.memory_info().rss for proc in processes)
-                    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-                    with log_lock:
-                        log.write(
-                            f"[{timestamp}] RESOURCE rss_sum_mib={rss_bytes / 1024**2:.1f} "
-                            f"process_count={len(processes)}\n"
-                        )
-                    if stop_monitor.wait(60):
-                        return
-            except (psutil.Error, OSError):
-                return
+                except (psutil.Error, OSError):
+                    processes = [root]
+                for proc in processes:
+                    try:
+                        memory = proc.memory_info()
+                        process_rows.append((memory.rss, proc.pid, proc.name()))
+                    except (psutil.Error, OSError):
+                        # Kernel children can exit between the process-tree and RSS reads.
+                        continue
+                rss_bytes = sum(row[0] for row in process_rows)
+                largest = ",".join(
+                    f"{name}:{pid}:{rss / 1024**2:.0f}MiB"
+                    for rss, pid, name in sorted(process_rows, reverse=True)[:4]
+                ) or "unavailable"
+                timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                with log_lock:
+                    log.write(
+                        f"[{timestamp}] RESOURCE process_tree_rss_mib={rss_bytes / 1024**2:.1f} "
+                        f"process_count={len(process_rows)} largest_processes={largest}\n"
+                    )
+                if stop_monitor.wait(60):
+                    return
 
         monitor = threading.Thread(target=log_process_memory, daemon=True)
         monitor.start()
@@ -98,6 +110,8 @@ def generate_differential_expression_report(
     shutil.rmtree(output_dir / "go_enrichment", ignore_errors=True)
     render_log = output_dir / "report_render.log"
     render_log.unlink(missing_ok=True)
+    progress_log = output_dir / "report_progress.log"
+    progress_log.unlink(missing_ok=True)
     output_notebook = output_dir / "executed.ipynb"
     output_html = output_dir / "report.html"
     environment = os.environ.copy()
@@ -105,6 +119,7 @@ def generate_differential_expression_report(
         "DE_REPORT_DIR": str(result_dir),
         "DE_REPORT_OUTPUT_DIR": str(output_dir),
         "DE_REPORT_CONFIG": str(config_path),
+        "DE_REPORT_PROGRESS_LOG": str(progress_log),
     })
     source_path = str(project_root / "src")
     environment["PYTHONPATH"] = os.pathsep.join(

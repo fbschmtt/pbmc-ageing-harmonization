@@ -50,6 +50,7 @@ VERIFY_AGE_CLOCK_ALPHAS ?= 0.1
 VERIFY_AGE_CLOCK_L1_RATIOS ?= 0.5
 VERIFY_CELL_TYPES ?= cd14-monocyte,naive-cd4-t-cell,cd56dim-nk-cell
 CELL_TYPE_FILTER_ARGS = $(if $(strip $(CELL_TYPES)),--cell_types "$(CELL_TYPES)",)
+DE_CELL_TYPE_ARGS = $(if $(strip $(CELL_TYPE)),--de_cell_type "$(CELL_TYPE)",)
 AGE_CLOCK_SEARCH_ARGS = $(if $(strip $(AGE_CLOCK_ALPHAS)),--alphas "$(AGE_CLOCK_ALPHAS)",) $(if $(strip $(AGE_CLOCK_L1_RATIOS)),--l1-ratios "$(AGE_CLOCK_L1_RATIOS)",)
 AGE_CLOCK_CALIBRATION_SAMPLES ?= 10
 AGE_CLOCK_CALIBRATION_SEED ?= 42
@@ -220,8 +221,9 @@ run-de-test: PSEUDOBULK_INPUT = output/test/harmonization/merged/pseudobulk_merg
 run-de-test: check-de-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Fit DE and render per-type reports from an existing test pseudobulk merge
 	status=0; $(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression,test -work-dir $(WORK_DIR) --outdir $(OUTDIR) --pseudobulk_input "$(PSEUDOBULK_INPUT)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) || status=$$?; python3 scripts/render_report_index.py --outdir "$(OUTDIR)"; index_status=$$?; test $$status -ne 0 || status=$$index_status; exit $$status
 
-render-de-reports: image-python ## Render per-type DE reports from existing model results
-	status=0; $(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression -work-dir $(WORK_DIR) --outdir $(OUTDIR) --per_type_de_dir "$(PER_TYPE_DIR)" --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume || status=$$?; python3 scripts/render_report_index.py --outdir "$(OUTDIR)"; index_status=$$?; test $$status -ne 0 || status=$$index_status; exit $$status
+render-de-reports: CELL_TYPE =
+render-de-reports: image-python ## Render per-type DE reports from existing model results; set CELL_TYPE to render one slug
+	status=0; $(NXF) run differential_expression.nf -profile $(NF_PROFILE),differential_expression -work-dir $(WORK_DIR) --outdir $(OUTDIR) --per_type_de_dir "$(PER_TYPE_DIR)" $(DE_CELL_TYPE_ARGS) --python_image $(PYTHON_IMAGE) --pipeline_revision $(PIPELINE_REVISION) -resume || status=$$?; python3 scripts/render_report_index.py --outdir "$(OUTDIR)"; index_status=$$?; test $$status -ne 0 || status=$$index_status; exit $$status
 
 render-de-reports-test: OUTDIR = output/test
 render-de-reports-test: PER_TYPE_DIR = $(OUTDIR)/analysis/per_type
@@ -443,10 +445,10 @@ SITE_PORT ?= 8000
 
 .PHONY: site-install site-browser-install site-export site-build site-test site-test-browser site-test-workflow serve-frontend
 site-install: ## Install locked frontend dependencies locally
-	cd site && npm ci --cache .npm-cache --no-audit --no-fund
+	cd site && npm ci --no-bin-links --cache .npm-cache --no-audit --no-fund
 
 site-browser-install: ## Install the locked browser locally for frontend browser tests
-	cd site && PLAYWRIGHT_BROWSERS_PATH="$(CURDIR)/site/.playwright-browsers" npx playwright install chromium
+	cd site && PLAYWRIGHT_BROWSERS_PATH="$(CURDIR)/site/.playwright-browsers" node node_modules/@playwright/test/cli.js install chromium
 
 site-export: ## Export completed per-cell-type DE results for the static site
 	node site/scripts/release.mjs "$(SITE_INPUT)" site/public/data

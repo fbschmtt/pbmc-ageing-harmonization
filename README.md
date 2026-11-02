@@ -474,7 +474,7 @@ which validation to run.
 | Nextflow workflow or configuration change | `make workflow-lint` | Add `make run-test STUDIES=<study>` when task wiring must execute. |
 | One single cell analysis report | `make run-cell-type-test CELL_TYPE=<slug>` (requires an existing split; create test splits with `make split-cell-types-test`) | Use `make render-cell-type-test CELL_TYPE=<slug>` to rerender one report from existing analysis artifacts, or `make render-cell-type-reports-test` to rerender all test reports. |
 | Rerender single cell analysis reports from existing analysis artifacts | `make render-cell-type-reports[-test]` | Use `make render-cell-type[-test] CELL_TYPE=<slug>` to refresh one report. |
-| Rerender per-type pseudobulk DE reports from existing model results | `make render-de-reports[-test]` | Runs one render task per cell type. Requires current per-type model outputs and `abundance_input.tsv`; rendering also executes abundance models, residual clustering, and WGCNA. It does not refit PyDESeq2. Rerun `make run-de[-test]` to regenerate missing abundance inputs. |
+| Rerender per-type pseudobulk DE reports from existing model results | `make render-de-reports[-test] [CELL_TYPE=<slug>]` | Renders all types when `CELL_TYPE` is omitted, or one type when set. Requires current per-type model outputs and `abundance_input.tsv`; rendering also executes abundance models, residual clustering, and WGCNA. It does not refit PyDESeq2. Rerun `make run-de[-test]` to regenerate missing abundance inputs. |
 | Rebuild the central report index | `make render-report-index` | It is also refreshed automatically after core, integration-benchmark, DE, cell-type, and age-clock workflow targets. |
 | Cell-type splitting or shared analysis | `make run-test`, then `make run-cell-type-analysis-test CELL_TYPES=<slug,slug>` | Omit `CELL_TYPES` to analyze every type. Use `make run-all-test` only when the ordered workflow is needed. |
 | Positive pseudobulk DE fitting | `make run-de-synthetic-test` and `make check-synthetic-de-results` | This fixture is independent of the core merge and renders per-type DE plus cross-cell-type reports. To also render single-cell reports, run `make run-test` followed by `make run-cell-type-analysis-test CELL_TYPES=<slug,slug>`; omit `CELL_TYPES` to analyze all types. |
@@ -1140,6 +1140,16 @@ make run-de
 alongside the separate combined cross-cell-type analysis report. If a report
 template changes, Nextflow resume reuses completed DE fits and reruns the
 affected downstream report tasks.
+
+To rerender one report from existing fits without rerunning DE models or the
+cross-cell-type report, use its cell-type slug:
+
+```bash
+make render-de-reports CELL_TYPE=memory-b-cell
+```
+
+The render writes updated notebook, HTML, and diagnostic logs under that
+cell type's per-type differential-expression output directory.
 
 By default this reads `output/harmonization/merged/pseudobulk_merged.h5ad`. Override the
 input or output roots with `PSEUDOBULK_INPUT=/path/to/pseudobulk_merged.h5ad`

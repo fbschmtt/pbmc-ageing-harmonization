@@ -3,7 +3,12 @@ import base64
 import json
 import os
 import re
+import sys
+import threading
+import time
 import warnings
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from html import escape
 from io import BytesIO
 from pathlib import Path
@@ -20,6 +25,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import statsmodels.api as sm
+from IPython import get_ipython
 from IPython.display import HTML, Markdown, display
 from matplotlib.colors import Normalize
 from scipy.stats import f_oneway, pointbiserialr, spearmanr
@@ -58,10 +64,211 @@ from pbmc_pipeline.trajectory_analysis import (
     trajectory_merge_diagnostics,
 )
 
+report_progress_log_lock = threading.Lock()
+report_cell_state = {"number": 0, "started": None, "preview": "none"}
+
+
+def report_log(message):
+    """Emit a short, timestamped progress line to the report diagnostics log."""
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    line = f"[{timestamp}] DE_REPORT {message}"
+    progress_log_path = os.environ.get("DE_REPORT_PROGRESS_LOG")
+    if progress_log_path:
+        try:
+            with report_progress_log_lock, open(progress_log_path, "a", encoding="utf-8") as log:
+                log.write(line + "\n")
+        except OSError:
+            # A diagnostics file failure should never interrupt report generation.
+            pass
+
+
+@contextmanager
+def report_phase(name, **details):
+    """Mark the start, duration, and outcome of a substantial report phase."""
+    started = time.monotonic()
+    suffix = " ".join(f"{key}={value}" for key, value in details.items())
+    report_log(f"phase_start name={name}" + (f" {suffix}" if suffix else ""))
+    try:
+        yield
+    except BaseException as exc:
+        report_log(
+            f"phase_end name={name} status=error elapsed_seconds={time.monotonic() - started:.1f} "
+            f"error={type(exc).__name__}"
+        )
+        raise
+    report_log(f"phase_end name={name} status=ok elapsed_seconds={time.monotonic() - started:.1f}")
+
+
+def _report_cell_start(info):
+    """Log which notebook code cell started, with a short static source preview."""
+    source = getattr(info, "raw_cell", "")
+    preview = next(
+        (line.strip() for line in source.splitlines()
+         if line.strip() and not line.lstrip().startswith("#")),
+        "empty",
+    )[:100]
+    report_cell_state.update({
+        "number": report_cell_state["number"] + 1,
+        "started": time.monotonic(),
+        "preview": preview.replace("\n", " "),
+    })
+    report_log(
+        f"cell_start cell_index={report_cell_state['number']} "
+        f"source={preview!r}"
+    )
+
+
+def _report_cell_end(result):
+    """Log notebook code cell completion and elapsed time."""
+    started = report_cell_state.get("started")
+    if started is None:
+        return
+    elapsed = time.monotonic() - started
+    error = getattr(result, "error_before_exec", None) or getattr(result, "error_in_exec", None)
+    status = "error" if error is not None else "ok"
+    report_log(
+        f"cell_end cell_index={report_cell_state['number']} status={status} "
+        f"elapsed_seconds={elapsed:.1f}"
+        + (f" error={type(error).__name__}" if error is not None else "")
+    )
+    report_cell_state["started"] = None
+
+
+def _report_object_size(value):
+    """Estimate bytes held directly by a named dataframe/array-like object."""
+    if isinstance(value, pd.DataFrame):
+        return int(value.memory_usage(index=True, deep=True).sum())
+    if isinstance(value, pd.Series):
+        return int(value.memory_usage(index=True, deep=True))
+    if isinstance(value, np.ndarray):
+        return int(value.nbytes)
+    if hasattr(value, "data") and isinstance(getattr(value, "data", None), np.ndarray):
+        # Includes scipy sparse matrices without importing another optional API.
+        size = value.data.nbytes
+        for attribute in ("indices", "indptr"):
+            component = getattr(value, attribute, None)
+            if isinstance(component, np.ndarray):
+                size += component.nbytes
+        return int(size)
+    if type(value).__name__ == "WGCNA":
+        # PyWGCNA retains its dense expression, adjacency, and TOM matrices on
+        # the network instance while findModules() is running.
+        size = 0
+        for attribute in ("datExpr", "adjacency", "TOM", "dissTOM", "geneTree", "MEs"):
+            component = getattr(value, attribute, None)
+            if isinstance(component, pd.DataFrame):
+                size += int(component.memory_usage(index=True, deep=True).sum())
+            elif isinstance(component, np.ndarray):
+                size += component.nbytes
+            elif attribute == "datExpr" and isinstance(getattr(component, "X", None), np.ndarray):
+                size += component.X.nbytes
+        return int(size)
+    return sys.getsizeof(value)
+
+
+def _report_rss_mib():
+    """Read the notebook kernel RSS from procfs when available."""
+    try:
+        with open("/proc/self/status", encoding="utf-8") as status_file:
+            for line in status_file:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return float("nan")
+
+
+def _report_object_summary():
+    """Summarize the largest named arrays/tables, including active function locals."""
+    candidates = []
+    seen = set()
+    namespaces = [("global", globals())]
+    frames = sys._current_frames()
+    frame = frames.get(threading.main_thread().ident)
+    while frame is not None:
+        namespaces.append((frame.f_code.co_name, frame.f_locals))
+        frame = frame.f_back
+    for scope, namespace in namespaces:
+        try:
+            objects = list(namespace.items())
+        except RuntimeError:
+            continue
+        for name, value in objects:
+            if name.startswith("_") or id(value) in seen:
+                continue
+            seen.add(id(value))
+            if isinstance(value, (pd.DataFrame, pd.Series, np.ndarray)) or (
+                type(value).__name__ == "WGCNA"
+            ) or (
+                hasattr(value, "data") and isinstance(getattr(value, "data", None), np.ndarray)
+            ):
+                try:
+                    candidates.append((
+                        _report_object_size(value), f"{scope}.{name}", type(value).__name__,
+                    ))
+                except (AttributeError, RuntimeError, ValueError):
+                    continue
+    candidates.sort(reverse=True)
+    return ",".join(
+        f"{name}:{kind}:{size / 1024**2:.1f}MiB"
+        for size, name, kind in candidates[:10]
+    ) or "none"
+
+
+def _report_active_python_stack():
+    """Return the active kernel call path for diagnosing a stalled cell."""
+    frames = sys._current_frames()
+    frame = frames.get(threading.main_thread().ident)
+    stack = []
+    while frame is not None and len(stack) < 12:
+        function = frame.f_code.co_name
+        if function not in {
+            "_report_active_python_stack", "_report_periodic_memory_monitor", "report_log",
+        }:
+            filename = Path(frame.f_code.co_filename).name
+            stack.append(f"{function}@{filename}:{frame.f_lineno}")
+        frame = frame.f_back
+    return "<-".join(stack[:6]) or "unavailable"
+
+
+def _report_periodic_memory_monitor():
+    """Log process RSS and the ten largest named arrays/tables every 20 minutes."""
+    interval = max(60, int(os.environ.get("DE_REPORT_MEMORY_INTERVAL_SECONDS", "1200")))
+    report_log(
+        f"memory_snapshot interval_seconds={interval} rss_mib={_report_rss_mib():.1f} "
+        f"active_cell={report_cell_state['number']} "
+        f"active_python_stack={_report_active_python_stack()} "
+        f"largest_named_objects={_report_object_summary()}"
+    )
+
+    def monitor():
+        while not memory_monitor_stop.wait(interval):
+            try:
+                report_log(
+                    f"memory_snapshot rss_mib={_report_rss_mib():.1f} "
+                    f"active_cell={report_cell_state['number']} "
+                    f"active_python_stack={_report_active_python_stack()} "
+                    f"largest_named_objects={_report_object_summary()}"
+                )
+            except Exception as exc:  # noqa: BLE001 - diagnostics must never interrupt analysis
+                report_log(f"memory_snapshot status=error error={type(exc).__name__}")
+
+    thread = threading.Thread(target=monitor, name="de-report-memory", daemon=True)
+    thread.start()
+    return thread
+
 # %%
 de_dir = Path(os.environ["DE_REPORT_DIR"])
 output_dir = Path(os.environ["DE_REPORT_OUTPUT_DIR"])
 output_dir.mkdir(parents=True, exist_ok=True)
+memory_monitor_stop = threading.Event()
+report_log(f"render_start cell_type={de_dir.parent.name}")
+memory_monitor_thread = _report_periodic_memory_monitor()
+ipython = get_ipython()
+if ipython is not None:
+    ipython.events.register("pre_run_cell", _report_cell_start)
+    ipython.events.register("post_run_cell", _report_cell_end)
+    report_log("cell_tracking_enabled=true")
 pipeline = read_json(Path(os.environ["DE_REPORT_CONFIG"]))
 de_metadata_path = de_dir / "run_metadata.json"
 de_run_metadata = read_json(de_metadata_path) if de_metadata_path.is_file() else {}
@@ -1624,12 +1831,13 @@ display(Markdown(
 
 # %%
 display(Markdown("**Model sample restriction:** adults aged ≥20 years only."))
-fraction_age_results, fraction_age_status = fit_fraction_age_bins(
-    adata.obs,
-    settings=trajectory_settings,
-    min_denominator_cells=min_fraction_denominator,
-    minimum_samples_per_bin=int(pipeline["differential_expression"]["study_comparison_minimum_samples_per_bin"]),
-)
+with report_phase("fraction_age_models", n_samples=len(adata.obs)):
+    fraction_age_results, fraction_age_status = fit_fraction_age_bins(
+        adata.obs,
+        settings=trajectory_settings,
+        min_denominator_cells=min_fraction_denominator,
+        minimum_samples_per_bin=int(pipeline["differential_expression"]["study_comparison_minimum_samples_per_bin"]),
+    )
 fraction_age_results.insert(0, "cell_type", cell_type_name)
 fraction_age_results.insert(1, "aifi_l1_parent", parent)
 fraction_age_results.to_csv(output_dir / "fraction_age_bins.tsv", sep="\t", index=False)
@@ -3084,13 +3292,23 @@ if de_dir:
                     profiles = profile_data.pivot(
                         index="gene", columns="age_bin", values="trajectory_scaled"
                     ).reindex(columns=retained_bins).dropna()
-                    cluster_labels, cluster_means = cluster_trajectory_profiles(
-                        profiles,
-                        trajectory_settings,
-                    )
-                    merge_diagnostics = trajectory_merge_diagnostics(
-                        profiles, trajectory_settings, maximum_merges=20
-                    )
+                    with report_phase(
+                        "significant_trajectory_clustering",
+                        n_genes=len(profiles),
+                        n_age_bins=profiles.shape[1],
+                    ):
+                        cluster_labels, cluster_means = cluster_trajectory_profiles(
+                            profiles,
+                            trajectory_settings,
+                        )
+                    with report_phase(
+                        "trajectory_merge_diagnostics",
+                        n_genes=len(profiles),
+                        n_age_bins=profiles.shape[1],
+                    ):
+                        merge_diagnostics = trajectory_merge_diagnostics(
+                            profiles, trajectory_settings, maximum_merges=20
+                        )
                     cluster_rows = profiles.join(cluster_labels).reset_index()
                     cluster_rows.insert(1, "cell_type", cell_type_name)
                     cluster_rows["omnibus_padj"] = cluster_rows["gene"].map(
@@ -3213,9 +3431,10 @@ if de_dir:
         ))
         display(Markdown("### Residual UMAP and PCA plots"))
         if de_dir and age_trajectory_fit:
-            (
-                residual_clusters, residual_pc_scores, residual_pcs, residual_matrix,
-            ) = load_residual_sample_clusters(de_dir, age_trajectory_fit, trajectory_settings)
+            with report_phase("residual_sample_clustering"):
+                (
+                    residual_clusters, residual_pc_scores, residual_pcs, residual_matrix,
+                ) = load_residual_sample_clusters(de_dir, age_trajectory_fit, trajectory_settings)
         else:
             residual_clusters, residual_pc_scores, residual_pcs, residual_matrix = (
                 None, None, 0, None
@@ -3266,13 +3485,19 @@ if de_dir:
             wgcna_settings = ResidualWGCNASettings.from_mapping(
                 pipeline["cell_type_analysis"]["residual_wgcna"]
             )
-            residual_wgcna = run_residual_wgcna(
-                residual_matrix,
-                residual_clusters,
-                settings=wgcna_settings,
-                cmv_results=load_merged_cmv_results(de_dir),
-                smoking_results=load_merged_smoking_results(de_dir),
-            )
+            with report_phase(
+                "residual_wgcna",
+                n_samples=residual_matrix.shape[0],
+                n_genes=residual_matrix.shape[1],
+                maximum_genes=wgcna_settings.maximum_genes,
+            ):
+                residual_wgcna = run_residual_wgcna(
+                    residual_matrix,
+                    residual_clusters,
+                    settings=wgcna_settings,
+                    cmv_results=load_merged_cmv_results(de_dir),
+                    smoking_results=load_merged_smoking_results(de_dir),
+                )
             publish_residual_wgcna(residual_wgcna)
             display(Markdown(
                 "PyWGCNA fits a signed correlation network to the age-bin-model Pearson "
@@ -3306,3 +3531,6 @@ if de_dir:
                 load_merged_cmv_results(de_dir),
                 load_merged_smoking_results(de_dir),
             )
+
+memory_monitor_stop.set()
+report_log("render_end status=ok")
