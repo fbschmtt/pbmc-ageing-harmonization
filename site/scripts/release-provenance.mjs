@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { exists, hash } from './release-sources.mjs'
+import { parseTrajectoryMetadata } from './trajectory-metadata.mjs'
 
 function stable(value) {
   if (Array.isArray(value)) return value.map(stable)
@@ -130,7 +131,7 @@ export async function releaseContext(input, de, studiesPath, assets = []) {
   const trajectory = resolve(input, '..', 'combined', 'trajectory', 'analysis_metadata.json')
   let ageSupport = null
   if (await exists(trajectory)) {
-    const meta = JSON.parse(await readFile(trajectory, 'utf8'))
+    const meta = parseTrajectoryMetadata(await readFile(trajectory, 'utf8'))
     ageSupport = {
       commonBins: meta.common_bins ?? null,
       referenceBinStartAge: meta.reference_bin_start_age ?? null,

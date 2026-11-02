@@ -6,8 +6,16 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { createRelease } from './release.mjs'
 import { verifyRelease } from './verify-release.mjs'
+import { parseTrajectoryMetadata } from './trajectory-metadata.mjs'
 
 const sha = (text) => createHash('sha256').update(text).digest('hex')
+test('legacy trajectory metadata handles non-finite literals without changing strings', () => {
+  assert.deepEqual(
+    parseTrajectoryMetadata('{"text":"NaN, \\"Infinity\\"", "values":[NaN, Infinity, -Infinity]}'),
+    { text: 'NaN, "Infinity"', values: [null, null, null] },
+  )
+  assert.throws(() => parseTrajectoryMetadata('{"value": NaNonsense}'), SyntaxError)
+})
 test('release validates and inventories a snapshot; failure preserves previous release', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-release-'))
   const previousExporterRevision = process.env.SITE_EXPORTER_REVISION
@@ -85,6 +93,14 @@ test('release validates and inventories a snapshot; failure preserves previous r
     await writeFile(join(trajectory, 'analysis_metadata.json'), '{}')
     await assert.rejects(createRelease(input, target, options), /Trajectory inputs are incomplete/)
     assert.equal(await readFile(join(target, 'release.json'), 'utf8'), oldManifest)
+    await writeFile(join(trajectory, 'cross_cell_type_trajectory_clusters.csv'), 'gene\n')
+    await writeFile(
+      join(trajectory, 'analysis_metadata.json'),
+      '{"common_bins":[],"cell_type_support":[{"cell_type":"Monocyte","age_bin_counts":{"20-30":NaN}}],"clustering":{"noise_fraction":NaN}}',
+    )
+    const legacy = await createRelease(input, target, options)
+    assert.equal(legacy.context.ageSupport.cellTypes[0].ageBinCounts['20-30'], null)
+    await verifyRelease(target)
   } finally {
     if (previousExporterRevision === undefined) delete process.env.SITE_EXPORTER_REVISION
     else process.env.SITE_EXPORTER_REVISION = previousExporterRevision

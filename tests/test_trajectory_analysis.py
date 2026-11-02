@@ -337,7 +337,13 @@ def test_cross_cell_type_analysis_uses_shared_bins_and_counts_de_recurrence() ->
     assert recurrence.loc["G_NOT_DE", "n_cell_types_DE_significant"] == 0
 
 
-def test_completed_fit_with_fewer_than_seven_bins_is_omitted_from_report_data(tmp_path) -> None:
+def test_completed_fit_with_fewer_than_seven_bins_is_omitted_from_report_data(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "pbmc_pipeline.trajectory_analysis._read_cell_type_residuals",
+        lambda *args: ({}, {}, {"cluster_methods": [{"noise_fraction": float("nan")}]}),
+    )
     de_dir = tmp_path / "differential_expression"
     cell_type_dir = de_dir / "rare-type"
     combined_dir = cell_type_dir / "combined"
@@ -364,6 +370,14 @@ def test_completed_fit_with_fewer_than_seven_bins_is_omitted_from_report_data(tm
     metadata = analyze_age_trajectories(
         de_dir, tmp_path / "trajectory_analysis", SETTINGS
     )
+
+    raw_metadata = (tmp_path / "trajectory_analysis" / "analysis_metadata.json").read_text()
+    def reject_constant(value):
+        raise ValueError(value)
+
+    parsed = json.loads(raw_metadata, parse_constant=reject_constant)
+    assert parsed["pearson_residual_clustering"]["cluster_methods"][0]["noise_fraction"] is None
+    assert metadata["pearson_residual_clustering"]["cluster_methods"][0]["noise_fraction"] is None
 
     assert metadata["cell_types_eligible_by_bin_support"] == []
     assert metadata["cell_types_in_cross_cell_type_analysis"] == []

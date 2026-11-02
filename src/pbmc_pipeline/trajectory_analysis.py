@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -16,6 +17,17 @@ from sklearn.metrics import silhouette_score
 from .config import AgeTrajectorySettings, ExpressionAtlasSettings
 from .expression_atlas import analyze_expression_atlas
 from .utils import slugify
+
+
+def _json_finite(value):
+    """Represent unavailable non-finite metadata as JSON null."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: _json_finite(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_finite(item) for item in value]
+    return value
 
 
 def cluster_trajectory_profiles(
@@ -1008,7 +1020,8 @@ def analyze_age_trajectories(
             "n_gene_cell_type_pairs": len(developmental_adult_effects),
         },
     }
+    analysis_metadata = _json_finite(analysis_metadata)
     (output_dir / "analysis_metadata.json").write_text(
-        json.dumps(analysis_metadata, indent=2) + "\n"
+        json.dumps(analysis_metadata, indent=2, allow_nan=False) + "\n"
     )
     return analysis_metadata
