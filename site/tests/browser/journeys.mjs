@@ -57,10 +57,20 @@ const assertMenu = async (page, label, value) => {
   assert.equal(await menuTrigger(page, label).getAttribute('aria-label'), `${label}: ${value}`)
 }
 
+const group = process.env.SITE_BROWSER_GROUP || 'all'
+const filter = (process.env.SITE_BROWSER_FILTER || '').toLowerCase()
+if (!['all', 'navigation', 'release'].includes(group)) throw new Error(`Unknown browser test group: ${group}`)
+
 // One real exported and built release is shared across independent browser contexts.
 test('built synthetic release supports atlas journeys and fails safely', { timeout: 120000 }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-browser-'))
   let server, browser
+  let matched = 0
+  const runJourney = async (testGroup, name, fn) => {
+    if ((group !== 'all' && group !== testGroup) || !name.toLowerCase().includes(filter)) return
+    matched++
+    await t.test(name, fn)
+  }
   try {
     const { publicDir, manifest } = await makeFixture(root)
     const dist = join(root, 'dist')
@@ -86,7 +96,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       executablePath: process.env.SITE_BROWSER_EXECUTABLE || undefined,
     })
 
-    await t.test('fetches only the selected DE model and uses compressed assets', async () => {
+    await runJourney('release', 'fetches only the selected DE model and uses compressed assets', async () => {
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
@@ -112,12 +122,15 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         await chooseMenu(page, 'Model and contrast', 'study_a · Age (per decade)')
         await visible(page.getByText('Effect: age · per decade.', { exact: false }))
         assert.equal(wasRequested(other.recordsAsset), true, 'Selected model was not fetched')
+        await visible(page.getByText('1 of 1 studies significant', { exact: true }))
+        assert.ok((await page.locator('svg[aria-label^="Volcano plot"] title').allTextContents())
+          .some((title) => title.includes('1 of 1 studies significant')))
       } finally {
         await context.close()
       }
     })
 
-    await t.test('filters legacy inline results and explains their model-loading limitation', async () => {
+    await runJourney('release', 'filters legacy inline results and explains their model-loading limitation', async () => {
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
@@ -158,7 +171,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       }
     })
 
-    await t.test('retrieves a non-significant gene on explicit search', async () => {
+    await runJourney('navigation', 'retrieves a non-significant gene on explicit search', async () => {
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
@@ -174,7 +187,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       }
     })
 
-    await t.test('retrieves non-significant retained trajectories for an explicit gene', async () => {
+    await runJourney('navigation', 'retrieves non-significant retained trajectories for an explicit gene', async () => {
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
@@ -187,12 +200,91 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
           .locator('.profile-scatter title')
           .filter({ hasText: 'Naive CD4 T cell' })
           .waitFor({ state: 'attached' })
+        assert.equal(await page.locator('.profile-scatter circle').filter({ has: page.locator('title', { hasText: 'Naive CD4 T cell' }) }).getAttribute('fill'), '#597FC6')
       } finally {
         await context.close()
       }
     })
 
-    await t.test('overview cards navigate from their headings and keyboard', async () => {
+    await runJourney('navigation', 'overview explains the workflow on desktop and mobile', async () => {
+      const context = await browser.newContext({ viewport: { width: 375, height: 800 } })
+      try {
+        const page = await context.newPage()
+        await page.goto(served.url)
+        const workflow = page.getByRole('region', { name: 'How the atlas comes together' })
+        await visible(workflow)
+        assert.equal(await workflow.locator('li').count(), 4)
+        await visible(workflow.getByText('Sum gene counts by sample and cell type; count cells for composition.'))
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
+        await workflow.getByRole('link', { name: 'Composition', exact: true }).click()
+        await visible(page.locator('.pipeline-composition'))
+        await page.getByRole('button', { name: 'Overview', exact: true }).click()
+        await page.setViewportSize({ width: 1280, height: 800 })
+        await visible(workflow)
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
+      } finally {
+        await context.close()
+      }
+    })
+
+    await runJourney('navigation', 'single-cell landscape shows embedding and ranked markers', async () => {
+      const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+      try {
+        const page = await context.newPage()
+        await page.goto(served.url)
+        await page.getByRole('button', { name: 'Single-cell', exact: true }).click()
+        await visible(page.getByRole('heading', { name: 'Single-cell landscape' }))
+        await visible(page.getByRole('img', { name: 'UMAP of CD14 monocyte, colored by local cluster' }))
+        await visible(page.getByText('TESTMARKER', { exact: true }))
+        await visible(page.getByText('OTHER', { exact: true }))
+        await visible(page.getByRole('img', { name: /Cluster 0 sample-level fractions across age/ }))
+        await visible(page.getByRole('cell', { name: '25.0%' }))
+        await visible(page.getByRole('cell', { name: '+1.50' }))
+        await visible(page.getByText('log₂ FC').first())
+        await visible(page.getByText(/Dashed lines are per-study trends/))
+        await visible(page.getByText(/Eligible samples with no cells in a cluster are included at zero/))
+        await visible(page.getByText(/3 sample\(s\) excluded/))
+        await page.evaluate(() => document.fonts.ready)
+        const layout = () => page.evaluate(() => {
+          const fraction = document.querySelector('.single-cell-fractions')
+          const frame = document.querySelector('.single-cell-plot-frame')
+          const table = document.querySelector('.single-cell-fit-table')
+          return {
+            fractionTop: fraction.getBoundingClientRect().top + window.scrollY,
+            frameHeight: frame.getBoundingClientRect().height,
+            tableHeight: table.getBoundingClientRect().height,
+          }
+        })
+        const before = await layout()
+        await chooseMenu(page, 'Cluster', 'Cluster 1')
+        await visible(page.getByText('SECOND', { exact: true }))
+        await visible(page.getByRole('img', { name: /Cluster 1 sample-level fractions across age/ }))
+        await visible(page.getByRole('cell', { name: '75.0%' }))
+        const after = await layout()
+        assert.ok(Math.abs(before.fractionTop - after.fractionTop) < 1, 'Fraction panel moved')
+        assert.ok(Math.abs(before.frameHeight - after.frameHeight) < 1, 'Plot frame changed height')
+        assert.ok(Math.abs(before.tableHeight - after.tableHeight) < 1, 'Fit table changed height')
+        assert.equal(await page.getByText('TESTMARKER', { exact: true }).count(), 0)
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
+      } finally { await context.close() }
+    })
+
+    await runJourney('navigation', 'age model guide explains the three models on mobile', async () => {
+      const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+      try {
+        const page = await context.newPage()
+        await page.goto(served.url)
+        await page.getByRole('button', { name: 'Modelling', exact: true }).click()
+        const guide = page.getByRole('region', { name: 'Three ways to look at age' })
+        await visible(guide)
+        for (const name of ['Linear in adults', 'Linear in juveniles', 'Age-bin model'])
+          await visible(guide.getByRole('heading', { name, exact: true }))
+        await visible(guide.getByText(/different fits/))
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
+      } finally { await context.close() }
+    })
+
+    await runJourney('navigation', 'overview cards navigate from their headings and keyboard', async () => {
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
@@ -211,7 +303,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       }
     })
 
-    await t.test('model selection, gene handoff, composition and diagnostic report', async () => {
+    await runJourney('navigation', 'model selection, gene handoff, composition and diagnostic report', async () => {
       const context = await browser.newContext()
       try {
         const page = await context.newPage(),
@@ -244,6 +336,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
           .locator('svg[aria-label^="Adjusted fraction changes"] title')
           .allTextContents()
         assert.ok(tooltip.some((value) => value.includes('20.00 pp')))
+        await visible(page.locator('svg[aria-label^="Adjusted fraction changes"] text').filter({ hasText: /^0 pp$/ }))
         await page.getByRole('button', { name: 'Modelling', exact: true }).click()
         const reportLink = page.getByRole('link', { name: 'Open the report index' })
         await visible(reportLink)
@@ -260,7 +353,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       }
     })
 
-    await t.test('shows release provenance, study context and sharing limitations', async () => {
+    await runJourney('navigation', 'shows release provenance, study context and sharing limitations', async () => {
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
@@ -286,7 +379,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       }
     })
 
-    await t.test('supports keyboard selection and dismissal of menus', async () => {
+    await runJourney('navigation', 'supports keyboard selection and dismissal of menus', async () => {
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
@@ -311,7 +404,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       }
     })
 
-    await t.test('shares the selected cell type between DE and composition', async () => {
+    await runJourney('navigation', 'shares the selected cell type between DE and composition', async () => {
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
@@ -321,6 +414,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         await page.getByLabel('Find a gene').fill('GENE2')
         await chooseMenu(page, 'Matching genes (1)', 'GENE2')
         await chooseMenu(page, 'Cell type', 'Naive CD4 T cell')
+        assert.equal(await menuTrigger(page, 'Cell type').locator('.choice-color').evaluate((dot) => dot.style.backgroundColor), 'rgb(89, 127, 198)')
         await page.getByRole('button', { name: 'Composition', exact: true }).click()
         await visible(page.locator('.pipeline-composition'))
         await assertMenu(page, 'Cell type', 'Naive CD4 T cell')
@@ -347,7 +441,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       }
     })
 
-    await t.test('shares a cell type chosen in the trajectory profile', async () => {
+    await runJourney('navigation', 'shares a cell type chosen in the trajectory profile', async () => {
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
@@ -364,7 +458,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       }
     })
 
-    await t.test(
+    await runJourney('navigation',
       'keeps model and denominator choices independent from cell type and navigation',
       async () => {
         const context = await browser.newContext()
@@ -404,7 +498,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       },
     )
 
-    await t.test('shows loading until the DE asset arrives', async () => {
+    await runJourney('release', 'shows loading until the DE asset arrives', async () => {
       const context = await browser.newContext()
       let resume
       const gate = new Promise((resolve) => {
@@ -427,7 +521,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       }
     })
 
-    await t.test(
+    await runJourney('release',
       'invalid optional annotations are reported without blocking the trajectory view',
       async () => {
         const context = await browser.newContext()
@@ -467,7 +561,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
     )
 
     for (const scenario of ['malformed', 'different release']) {
-      await t.test(`${scenario} DE asset shows an error instead of hanging`, async () => {
+      await runJourney('release', `${scenario} DE asset shows an error instead of hanging`, async () => {
         const context = await browser.newContext()
         try {
           const page = await context.newPage()
@@ -502,6 +596,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         }
       })
     }
+    if (!matched) throw new Error(`No browser journeys matched group ${group} and filter ${filter || '(none)'}`)
   } finally {
     if (browser) await browser.close()
     if (server)

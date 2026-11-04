@@ -26,6 +26,7 @@ export function BaselinePlot({
         role="img"
         aria-label="Model-adjusted reference fractions by study, with an equal-weight study mean"
       >
+        <line x1={x(0)} x2={x(0)} y1={top - 10} y2={bottom} stroke="#8fa39a" strokeDasharray="4 5" />
         <line x1={x(mean)} x2={x(mean)} y1={top - 10} y2={bottom} stroke="#496b60" strokeDasharray="4 4">
           <title>Equal-weight mean: {(mean * 100).toFixed(2)}%</title>
         </line>
@@ -49,7 +50,7 @@ export function BaselinePlot({
           )
         })}
         {[0, 0.25, 0.5, 0.75, 1].map((tick) => (
-          <text key={tick} x={x(tick)} y={bottom + 18} textAnchor="middle" className="fraction-chart-text">
+          <text key={tick} x={x(tick)} y={bottom + 18} textAnchor="middle" className="fraction-chart-text" fontWeight={tick === 0 ? '700' : undefined}>
             {(tick * 100).toFixed(0)}%
           </text>
         ))}

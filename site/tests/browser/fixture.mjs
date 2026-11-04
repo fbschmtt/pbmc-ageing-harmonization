@@ -11,6 +11,22 @@ const write = async (path, content) => {
 // Deliberately different values make a wrong model, gene or denominator observable.
 export async function makeFixture(root) {
   const input = join(root, 'analysis/per_type')
+  const analysis = join(input, 'cd14-monocyte/analysis')
+  await write(join(analysis, 'report.json'), JSON.stringify({ status: 'complete', cell_type: 'CD14 monocyte', n_cells: 42, n_clusters: 2, embedding: { integration: { method: 'harmony' } } }))
+  await write(join(analysis, 'markers.tsv'), 'names\tscores\tlogfoldchanges\tpvals_adj\tgroup\nTESTMARKER\t3.2\t2.4\t0.01\t0\nOTHER\t-2\t-1.5\t0.1\t0\nSECOND\t3\t1\t0.01\t1\n')
+  await write(join(analysis, 'executed.ipynb'), JSON.stringify({ cells: [
+    { cell_type: 'markdown', source: ['### Harmony-Integrated UMAP'] },
+    { cell_type: 'code', outputs: [{ data: { 'image/png': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a1sAAAAASUVORK5CYII=' } }] },
+    { cell_type: 'code', source: ['# cluster-fraction zeros included\ncluster_fractions = sample_cluster_fractions('], outputs: [
+      { data: { 'text/markdown': ['_3 sample(s) excluded from cluster fractions because the split cell-type denominator has fewer than 10 cells._'] } },
+      { data: { 'text/html': ['<details><summary>Show cluster-composition curves</summary><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a1sAAAAASUVORK5CYII="></details>'] } },
+      { data: { 'application/vnd.pbmc.cluster-fractions+json': { clusters: [
+        { cluster: '0', image: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a1sAAAAASUVORK5CYII=', fits: [{ study: null, samples: 3, meanFraction: 0.25, slopePpPerDecade: 1.5 }, { study: 'study_a', samples: 1, meanFraction: 0.5, slopePpPerDecade: null }] },
+        { cluster: '1', image: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a1sAAAAASUVORK5CYII=', fits: [{ study: null, samples: 3, meanFraction: 0.75, slopePpPerDecade: -1.5 }] },
+      ] } } },
+    ] },
+    { cell_type: 'code', source: ['# study-specific linear trends'], outputs: [] },
+  ] }))
   const dir = join(input, 'cd14-monocyte/differential_expression')
   const trajectory = join(root, 'analysis/combined/trajectory')
   const pathwayDirectory = join(root, 'pathways')

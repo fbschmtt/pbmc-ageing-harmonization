@@ -1,5 +1,6 @@
 export type { FractionCoefficient } from '../../data/contracts.mjs'
 import type { FractionCoefficient } from '../../data/contracts.mjs'
+import { formatAxisValue, symmetricAxis } from '../../theme/axisScale'
 
 export type FractionDiagnostic = {
   study: string
@@ -46,12 +47,12 @@ export function FractionForest({
       )
     },
   )
-  const extent =
-    Math.max(
+  const axis = symmetricAxis([
       0.01,
-      ...coefficients.flatMap((item) => [Math.abs(item.low), Math.abs(item.high), Math.abs(item.estimate)]),
+      ...coefficients.flatMap((item) => [item.low, item.high, item.estimate]),
       ...diagnostics.flatMap((item) => [item.residualSd ?? 0, item.binomialSamplingSd ?? 0]),
-    ) * 1.1
+    ], 0.1)
+  const extent = axis.extent
   const width = 820,
     left = 190,
     right = 790,
@@ -147,15 +148,16 @@ export function FractionForest({
               </g>
             )
           })}
-          {[-1, -0.5, 0, 0.5, 1].map((tick) => (
+          {axis.ticks.map((tick) => (
             <text
               key={tick}
-              x={x(tick * extent)}
+              x={x(tick)}
               y={height - 32}
               textAnchor="middle"
               className="fraction-chart-text"
+              fontWeight={tick === 0 ? '700' : undefined}
             >
-              {(tick * extent * 100).toFixed(1)}
+              {formatAxisValue(tick * 100, extent * 100)}
             </text>
           ))}
           <text x={(left + right) / 2} y={height - 8} textAnchor="middle" className="fraction-chart-text">

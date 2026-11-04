@@ -11,8 +11,9 @@ supplementary file.
 Pipeline-wide analysis assets use their own subdirectory. In particular,
 `input_data/go/` holds the GO Biological Process GMT library and GO hierarchy
 used by DE-report enrichment. They are acquired through the same opt-in
-downloader as study inputs; use `make download-go-inputs` to retrieve only
-these files. They are not tracked in Git.
+downloader as study inputs; use `make download-gene-set-inputs` to retrieve them and
+the static atlas example pathways without downloading study data. They are not
+tracked in Git.
 
 Downsampled smoke-test fixtures are kept separately under `test_data/` and are
 created or refreshed with `make test-data`. Do not use test-scale subsets as

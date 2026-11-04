@@ -8,6 +8,7 @@ export type Page =
   | 'trajectories'
   | 'geneTypeMatrix'
   | 'composition'
+  | 'singleCell'
   | 'pathways'
   | 'download'
 
@@ -19,6 +20,7 @@ export const navigation: { id: Page; label: string }[] = [
   { id: 'cellTypes', label: 'Cell types' },
   { id: 'trajectories', label: 'Cross-type trajectory map' },
   { id: 'geneTypeMatrix', label: 'Gene × cell type' },
+  { id: 'singleCell', label: 'Single-cell' },
   { id: 'pathways', label: 'Pathways' },
   { id: 'datasets', label: 'Datasets' },
   { id: 'modelling', label: 'Modelling' },

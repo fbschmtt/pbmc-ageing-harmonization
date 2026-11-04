@@ -1,3 +1,4 @@
+import { cellTypeColor } from '../../theme/cellTypeColors'
 import { assetFailureKind, type AssetFailureKind } from '../../data/release'
 import { loadFractions, type FractionIndex } from '../../data/fractions'
 import { useEffect, useState } from 'react'
@@ -83,7 +84,7 @@ export function PipelineComposition({
         value={selectedCellType}
         groups={groupCellTypes(types).map((group) => ({
           label: group.label,
-          options: group.cellTypes.map((type) => ({ value: type, label: type })),
+          options: group.cellTypes.map((type) => ({ value: type, label: type, color: cellTypeColor(type) })),
         }))}
         onChange={(value) => {
           setCellType(value)

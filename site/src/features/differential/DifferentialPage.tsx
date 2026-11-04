@@ -1,3 +1,4 @@
+import { cellTypeColor } from '../../theme/cellTypeColors'
 import { assetFailureKind, type AssetFailureKind } from '../../data/release'
 import { loadDifferential, loadModelRecords } from '../../data/differential'
 import { geneBucket } from '../../data/geneBucket.mjs'
@@ -17,6 +18,12 @@ import { GeneAgePreview } from './GeneAgePreview'
 import './differential.css'
 
 const fmt = (value: number | null | undefined) => (value == null ? '—' : value.toPrecision(3))
+const supportColors = ['#d3e2d9', '#94beb0', '#4c9081', '#205a51']
+const missingSupportColor = '#b9bdbc'
+const supportColor = (support: Gene['studySupport']) =>
+  support ? supportColors[Math.min(support.significant, 3)] : missingSupportColor
+const supportLabel = (support: Gene['studySupport']) =>
+  support ? `${support.significant} of ${support.tested} studies significant` : 'Study support unavailable'
 
 export function DifferentialPage({
   highlightGenes,
@@ -242,7 +249,7 @@ export function DifferentialPage({
                   options: group.cellTypes.flatMap((label) =>
                     release.cellTypes
                       .filter((item) => item.label === label)
-                      .map((item) => ({ value: item.id, label: item.label })),
+                      .map((item) => ({ value: item.id, label: item.label, color: cellTypeColor(item.label) })),
                   ),
                 }),
               )}
@@ -314,6 +321,7 @@ export function DifferentialPage({
                 Showing adjusted p &lt; 0.05 and explicitly requested genes. Enter a complete gene symbol to
                 retrieve other results.
               </p>
+              <p>Point color counts studies with adjusted p &lt; 0.05 for the same contrast, regardless of direction. Studies without an adjusted p-value are excluded from the count.</p>
               {geneSet.size > 0 && (
                 <p>
                   Outlined: {highlightedCount.toLocaleString()} genes in{' '}
@@ -327,12 +335,10 @@ export function DifferentialPage({
         }
         legend={
           <>
-            <span>
-              <i className="volcano-legend-significant" /> Adjusted p &lt; 0.05
-            </span>
-            <span>
-              <i className="volcano-legend-other" /> Other genes
-            </span>
+            {[0, 1, 2, 3].map((count) => <span key={count}>
+              <i style={{ backgroundColor: supportColors[count] }} /> {count === 3 ? '3+' : count} studies
+            </span>)}
+            <span><i style={{ backgroundColor: missingSupportColor }} /> Unavailable</span>
             <span>
               <i className="volcano-legend-pathway" /> Gene set
             </span>
@@ -352,13 +358,13 @@ export function DifferentialPage({
               adjustedP={(record) => record.padj}
               highlighted={(record) => geneSet.has(record.gene.toUpperCase())}
               title={(record) =>
-                `${record.gene}: effect ${fmt(record.effect)}, adjusted p ${fmt(record.padj)}`
+                `${record.gene}: effect ${fmt(record.effect)}, adjusted p ${fmt(record.padj)}; ${supportLabel(record.studySupport)}`
               }
               xLabel="Effect estimate (log₂ fold change)"
               threshold={0.05}
               ariaLabel="Volcano plot of effect versus negative log ten adjusted p-value. Search for a gene to select it with a keyboard."
               appearance={(record, isSelected) => ({
-                fill: isSelected ? '#163d36' : record.padj < 0.05 ? '#cc765b' : '#98b6aa',
+                fill: supportColor(record.studySupport),
                 stroke: isSelected
                   ? visualColors.selected
                   : geneSet.has(record.gene.toUpperCase())
@@ -400,6 +406,8 @@ export function DifferentialPage({
                     <dd>{fmt(selected.effect)}</dd>
                     <dt>Adjusted p-value</dt>
                     <dd>{fmt(selected.padj)}</dd>
+                    <dt>Significant studies</dt>
+                    <dd>{supportLabel(selected.studySupport)}</dd>
                     <dt>Standard error</dt>
                     <dd>{fmt(selected.se)}</dd>
                     <dt>Mean normalized count</dt>

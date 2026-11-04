@@ -1,5 +1,6 @@
 export type { FractionAgeEstimate } from '../../data/contracts.mjs'
 import type { FractionAgeEstimate } from '../../data/contracts.mjs'
+import { formatAxisValue, rangeAxis } from '../../theme/axisScale'
 
 export function FractionAgePlot({
   estimates,
@@ -18,8 +19,7 @@ export function FractionAgePlot({
   const minimum = Math.min(0, ...points.map((item) => item.low))
   const maximum = Math.max(0, ...points.map((item) => item.high))
   const padding = Math.max((maximum - minimum) * 0.1, 0.01)
-  const low = minimum - padding,
-    high = maximum + padding
+  const { low, high, ticks } = rangeAxis(minimum, maximum, padding)
   const left = 70,
     right = 790,
     top = 25,
@@ -40,13 +40,12 @@ export function FractionAgePlot({
           role="img"
           aria-label="Adjusted fraction changes by age bin with 95 percent confidence intervals"
         >
-          {[0, 0.25, 0.5, 0.75, 1].map((step) => {
-            const value = low + step * (high - low)
+          {ticks.map((value) => {
             return (
-              <g key={step}>
-                <line x1={left} x2={right} y1={y(value)} y2={y(value)} stroke="#e1e7df" />
-                <text x={left - 10} y={y(value) + 4} textAnchor="end" className="fraction-chart-text">
-                  {(value * 100).toFixed(1)} pp
+              <g key={value}>
+                <line x1={left} x2={right} y1={y(value)} y2={y(value)} stroke={value === 0 ? '#8fa39a' : '#e1e7df'} strokeDasharray={value === 0 ? '4 5' : undefined} />
+                <text x={left - 10} y={y(value) + 4} textAnchor="end" className="fraction-chart-text" fontWeight={value === 0 ? '700' : undefined}>
+                  {formatAxisValue(value * 100, Math.max(Math.abs(low), Math.abs(high)) * 100)} pp
                 </text>
               </g>
             )

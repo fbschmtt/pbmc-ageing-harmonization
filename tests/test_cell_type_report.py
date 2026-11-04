@@ -1,4 +1,13 @@
+import ast
+import base64
+from io import BytesIO
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import pytest
+import seaborn as sns
 
 from pbmc_pipeline.cell_type_report import generate_cell_type_report
 
@@ -50,3 +59,34 @@ def test_cell_type_report_runner_executes_notebook_then_exports_html(tmp_path, m
         '<a href="#subsection">Subsection</a><ul>'
         '<li><a href="#sub-subsection">Sub-subsection</a></li></ul>'
     ) in rendered_html
+
+
+def test_cluster_fraction_plot_draws_pooled_and_only_estimable_study_trends(monkeypatch):
+    template = Path("reports/cell_type_report.py").read_text()
+    tree = ast.parse(template)
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                 and node.name in {"has_age_span", "draw_cluster_fraction_axis",
+                                   "cluster_fraction_fit_summary", "plot_cluster_fractions"}]
+    calls = []
+    monkeypatch.setattr(sns, "regplot", lambda **kwargs: calls.append(kwargs))
+    figures = []
+    namespace = {"plt": plt, "sns": sns, "np": np, "base64": base64, "BytesIO": BytesIO,
+                 "natural_sort_key": str,
+                 "display_collapsible_figure": lambda figure, *_: figures.append(figure)}
+    exec(compile(ast.Module(body=functions, type_ignores=[]), "report", "exec"), namespace)  # noqa: S102
+    data = pd.DataFrame({
+        "cluster": ["0"] * 5, "study": ["a", "a", "b", "b", "c"],
+        "age": [20, 40, 30, 50, 60], "fraction_within_cell_type": [0, 1, 0.5, 0, 0.2],
+    })
+    try:
+        result = namespace["plot_cluster_fractions"](data, palette={"a": "red", "b": "blue", "c": "green"})
+        assert [call["color"] for call in calls] == ["red", "blue", "#1f1f1f"] * 2
+        assert [len(call["data"]) for call in calls] == [2, 2, 5] * 2
+        fits = result[0]["fits"]
+        assert fits[0]["study"] is None
+        assert fits[0]["meanFraction"] == pytest.approx(0.34)
+        assert fits[1]["slopePpPerDecade"] == pytest.approx(50)
+        assert fits[3]["slopePpPerDecade"] is None
+    finally:
+        for figure in figures:
+            plt.close(figure)

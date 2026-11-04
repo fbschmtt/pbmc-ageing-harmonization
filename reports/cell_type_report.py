@@ -113,7 +113,7 @@ def plot_umap(
     adata, *, color, title=None, label_clusters=False, marker_area_scale=1.0,
     basis="umap",
 ):
-    """Render comparable low-resolution, equal-aspect UMAP panels."""
+    """Render comparable, equal-aspect UMAP panels at a readable resolution."""
     # Scanpy's size controls marker area, so 4x area gives about 2x diameter.
     point_size = max(2, 100_000 / adata.n_obs) * marker_area_scale
     plot_kwargs = {"color": color, "size": point_size, "show": False}
@@ -122,7 +122,7 @@ def plot_umap(
     sc.pl.embedding(adata, basis=basis, **plot_kwargs)
     figure = plt.gcf()
     figure.set_size_inches(9.5, 6.75)
-    figure.set_dpi(110)
+    figure.set_dpi(220)
     for axis in figure.axes:
         if axis.has_data():
             axis.set_aspect("equal", adjustable="box")
@@ -232,11 +232,45 @@ def facet_grid_shape(n_panels, *, max_columns=4):
     return (n_panels + n_columns - 1) // n_columns, n_columns
 
 
+def draw_cluster_fraction_axis(axis, subset, studies, palette):
+    sns.scatterplot(
+        data=subset, x="age", y="fraction_within_cell_type", hue="study", palette=palette,
+        s=20, alpha=0.5, edgecolor="none", ax=axis, legend=False,
+    )
+    # study-specific linear trends
+    for study in studies:
+        study_data = subset.loc[subset["study"] == study]
+        if has_age_span(study_data):
+            sns.regplot(
+                data=study_data, x="age", y="fraction_within_cell_type", scatter=False,
+                ci=None, color=palette[study],
+                line_kws={"linewidth": 1.8, "linestyle": "--"}, ax=axis,
+            )
+    if has_age_span(subset):
+        sns.regplot(
+            data=subset, x="age", y="fraction_within_cell_type", scatter=False, ci=None,
+            color="#1f1f1f", line_kws={"linewidth": 2.6}, ax=axis,
+        )
+    axis.set_ylabel("Fraction within cell type")
+
+
+def cluster_fraction_fit_summary(data, study):
+    """Summarize plotted samples and an unadjusted fraction-per-decade slope."""
+    x = data["age"].to_numpy(dtype=float)
+    y = data["fraction_within_cell_type"].to_numpy(dtype=float)
+    finite = np.isfinite(x) & np.isfinite(y)
+    x, y = x[finite], y[finite]
+    if not len(y):
+        return None
+    slope = float(np.polyfit(x, y, 1)[0] * 1000) if len(x) >= 2 and np.unique(x).size >= 2 else None
+    return {"study": study, "samples": int(len(y)), "meanFraction": float(np.mean(y)), "slopePpPerDecade": slope}
+
+
 def plot_cluster_fractions(data, *, palette):
-    """Keep study identity in points while showing one uncluttered pooled trend."""
+    """Show descriptive pooled and study-specific linear trends."""
     if data.empty:
         display(Markdown("_No samples meet the denominator cutoff for cluster fractions._"))
-        return
+        return []
     plot_data = data.assign(study=data["study"].astype(str))
     clusters = sorted(plot_data["cluster"].astype(str).unique(), key=natural_sort_key)
     n_columns = min(3, len(clusters))
@@ -248,27 +282,42 @@ def plot_cluster_fractions(data, *, palette):
     studies = sorted(plot_data["study"].unique())
     for axis, cluster in zip(axes.flat, clusters):
         subset = plot_data.loc[plot_data["cluster"].astype(str) == cluster]
-        sns.scatterplot(
-            data=subset, x="age", y="fraction_within_cell_type", hue="study", palette=palette,
-            s=20, alpha=0.65, edgecolor="none", ax=axis, legend=False,
-        )
-        if has_age_span(subset):
-            sns.regplot(
-                data=subset, x="age", y="fraction_within_cell_type", scatter=False, ci=None,
-                color="#1f1f1f", line_kws={"linewidth": 2.6}, ax=axis,
-            )
+        draw_cluster_fraction_axis(axis, subset, studies, palette)
         axis.set_title(f"Cluster {cluster}")
-        axis.set_ylabel("Fraction within cell type")
     for axis in axes.flat[len(clusters):]:
         axis.remove()
     handles = [
-        plt.Line2D([], [], marker="o", linestyle="", color=palette[study], label=study, markersize=5)
+        plt.Line2D([], [], marker="o", linestyle="--", color=palette[study], label=study, markersize=5)
         for study in studies
     ]
-    figure.legend(handles=handles, title="Study", loc="upper center", ncol=min(4, len(studies)))
-    figure.suptitle("Cluster fractions: pooled linear trends (study-unadjusted)", y=0.98)
+    handles.append(plt.Line2D([], [], color="#1f1f1f", linewidth=2.6, label="Pooled"))
+    figure.legend(handles=handles, title="Study / trend", loc="upper center", ncol=min(4, len(handles)))
+    figure.suptitle("Cluster fractions: linear trends (study-unadjusted)", y=0.98)
     figure.tight_layout(rect=(0, 0, 1, 0.91))
     display_collapsible_figure(figure, "Show cluster-composition curves")
+    details = []
+    for cluster in clusters:
+        subset = plot_data.loc[plot_data["cluster"].astype(str) == cluster]
+        present_studies = sorted(subset["study"].unique())
+        detail_figure, axis = plt.subplots(figsize=(7, 4.5))
+        draw_cluster_fraction_axis(axis, subset, present_studies, palette)
+        axis.set_title(f"Cluster {cluster}")
+        detail_handles = [
+            plt.Line2D([], [], marker="o", linestyle="--", color=palette[study], label=study, markersize=5)
+            for study in present_studies
+        ]
+        detail_handles.append(plt.Line2D([], [], color="#1f1f1f", linewidth=2.6, label="Pooled"))
+        axis.legend(handles=detail_handles, title="Study / trend", fontsize=8)
+        detail_figure.tight_layout()
+        image_buffer = BytesIO()
+        detail_figure.savefig(image_buffer, format="png", dpi=150, bbox_inches="tight")
+        plt.close(detail_figure)
+        fits = [cluster_fraction_fit_summary(subset, None)]
+        fits.extend(cluster_fraction_fit_summary(subset.loc[subset["study"] == study], study)
+                    for study in present_studies)
+        details.append({"cluster": cluster, "image": base64.b64encode(image_buffer.getvalue()).decode("ascii"),
+                        "fits": [fit for fit in fits if fit is not None]})
+    return details
 
 
 def directional_cluster_genes(markers, *, cluster, n_genes=8):
@@ -603,6 +652,7 @@ if report["status"] == "complete":
 
 # %%
 if report["status"] == "complete":
+    # cluster-fraction zeros included
     min_fraction_denominator = pipeline["cell_type_analysis"][
         "min_cluster_fraction_denominator_cells"
     ]
@@ -620,7 +670,8 @@ if report["status"] == "complete":
     ))
     studies = sorted(cluster_fractions["study"].unique())
     palette = dict(zip(studies, sns.color_palette("tab10", n_colors=len(studies))))
-    plot_cluster_fractions(cluster_fractions, palette=palette)
+    cluster_fraction_details = plot_cluster_fractions(cluster_fractions, palette=palette)
+    display({"application/vnd.pbmc.cluster-fractions+json": {"clusters": cluster_fraction_details}}, raw=True)
     display(Markdown(
         "_Each point is a sample-level cluster fraction. Differences among coloured study series "
         "are descriptive and should be read alongside the coverage and protocol context above._"

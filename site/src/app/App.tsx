@@ -15,6 +15,7 @@ import { useSiteData } from './useSiteData'
 import { releaseLabel } from './releaseLabel'
 import { TrajectoryMenu } from './TrajectoryMenu'
 import { atlasSessionReducer, initialAtlasSession } from './session'
+import { SingleCellPage } from '../features/singleCell/SingleCellPage'
 
 export function App() {
   const [session, dispatch] = useReducer(atlasSessionReducer, initialAtlasSession)
@@ -225,6 +226,8 @@ export function App() {
           }
         />
       )}
+      {page === 'singleCell' && <SingleCellPage preferredCellType={session.selectedCellType}
+        onSelectCellType={(cellType) => dispatch({ type: 'selectCellType', cellType })} />}
       {(page === 'datasets' || page === 'modelling' || page === 'download') && (
         <InformationalPage page={page} />
       )}

@@ -59,12 +59,36 @@ compact lookup, first place the original file at
 
 | Required path | Role and source | Integrity handling |
 |---|---|---|
-| `input_data/go/go_biological_process_2023.gmt` | [Enrichr GO Biological Process 2023](https://maayanlab.cloud/Enrichr/#libraries) gene-set library | Downloaded by `make download-go-inputs` or a study selection; the downloader and each report record the observed SHA-256, without requiring a fixed release checksum. |
+| `input_data/go/go_biological_process_2023.gmt` | [Enrichr GO Biological Process 2023](https://maayanlab.cloud/Enrichr/#libraries) gene-set library | Downloaded by `make download-gene-set-inputs` or a study selection; the downloader and each report record the observed SHA-256, without requiring a fixed release checksum. |
 | `input_data/go/go-basic.obo.gz` | [Gene Ontology basic OBO](https://geneontology.org/docs/download-ontology), compressed locally after download | The report records its observed SHA-256 and `data-version`; it does not require a fixed ontology release. |
 
 These are pipeline-wide immutable inputs, not study-specific files. They are
-included in every `STUDIES=` selection. Use `make download-go-inputs` when
-only the resources needed to render DE reports are missing.
+included in every `STUDIES=` selection. `make download-gene-set-inputs` acquires them
+along with the static atlas example pathways described below, without study data.
+
+## Static atlas example pathways
+
+The optional pathway presets are separate from the GO enrichment inputs above.
+Run `make download-gene-set-inputs` on the machine that will run `make site-export`.
+As well as the GO enrichment inputs, it downloads four pinned
+[MSigDB human 2026.1 collections](https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Hs/),
+checks their SHA-256 hashes, and extracts nine example gene sets into
+`site/public/pathways/<gene-set>.v2026.1.Hs.gmt`. It also creates or extends
+`site/public/pathways/pathway-labels.json` with readable labels. Existing files
+and label choices are preserved; set `DOWNLOAD_FORCE=true` to replace the nine
+named GMT files. The downloaded files and generated export are ignored by Git.
+
+The examples are telomere maintenance, nutrient response, DNA repair,
+inflammatory response, cellular senescence, mitophagy, autophagy, DNA damage
+response, and oxidative stress response. The former `MITOCHONDRIAL_PART`
+example is not in the checked 2026.1 collections; to retain that exact set,
+provide its GMT file manually. Do not substitute another gene set under its name.
+Any additional GMT files in the directory are included in the export; duplicate
+set IDs cause export to fail. The release manifest records source file hashes.
+Review [MSigDB access, attribution and licensing terms](https://www.gsea-msigdb.org/gsea/msigdb/)
+and those of underlying gene sets before publishing. `make site-export` replaces
+the local export, so select the intended analysis inputs first; follow it with
+`make site-build` to rebuild the site.
 
 ## CellTypist models
 

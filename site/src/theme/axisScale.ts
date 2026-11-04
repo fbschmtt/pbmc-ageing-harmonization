@@ -8,6 +8,12 @@ export type PositiveAxis = {
   ticks: number[]
 }
 
+export function rangeAxis(minimum: number, maximum: number, padding: number) {
+  const low = minimum - padding
+  const high = maximum + padding
+  return { low, high, ticks: ticksBetween(low, high, 4) }
+}
+
 function tickStep(start: number, stop: number, targetIntervals: number) {
   const rawStep = Math.abs(stop - start) / Math.max(1, targetIntervals)
   const magnitude = 10 ** Math.floor(Math.log10(rawStep))

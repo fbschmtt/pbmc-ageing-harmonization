@@ -39,8 +39,18 @@ export async function files(dir) {
 }
 export async function sourceInventory(input, onSlowHash) {
   const result = []
+  const singleCellManifest = join(input, 'cell_type_manifest.json')
+  if (await exists(singleCellManifest))
+    result.push({ path: 'cell_type_manifest.json', sha256: await hashFile(singleCellManifest) })
   for (const entry of await readdir(input, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue
+    for (const file of ['report.json', 'executed.ipynb', 'markers.tsv']) {
+      const path = join(input, entry.name, 'analysis', file)
+      if (await exists(path)) {
+        const name = relative(input, path)
+        result.push({ path: name, sha256: await hashFile(path, (bytesRead) => onSlowHash?.(name, bytesRead)) })
+      }
+    }
     const dir = join(input, entry.name, 'differential_expression')
     if (!(await exists(dir))) continue
     const metadataPath = join(dir, 'run_metadata.json')

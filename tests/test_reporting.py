@@ -149,3 +149,17 @@ def test_fraction_helpers_exclude_samples_below_the_minimum_denominator():
 
     assert cell_type["sample"].tolist() == ["included"]
     assert clusters["sample"].unique().tolist() == ["included"]
+
+
+def test_cluster_fractions_include_zero_for_eligible_samples_without_a_cluster():
+    adata = type("Adata", (), {})()
+    adata.obs = pd.DataFrame({
+        "study": ["one"] * 4,
+        "sample": ["a", "a", "b", "b"],
+        "age": [30.0, 30.0, 50.0, 50.0],
+        "cluster": ["0", "0", "1", "1"],
+    })
+    result = sample_cluster_fractions(adata, min_denominator_cells=2)
+    assert result.set_index(["sample", "cluster"])["fraction_within_cell_type"].to_dict() == {
+        ("a", "0"): 1.0, ("a", "1"): 0.0, ("b", "0"): 0.0, ("b", "1"): 1.0,
+    }

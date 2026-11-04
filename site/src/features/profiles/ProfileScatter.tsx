@@ -1,3 +1,4 @@
+import { cellTypeColor } from '../../theme/cellTypeColors'
 import { VolcanoPlot } from '../../components/VolcanoPlot'
 import type { TrajectoryRecord } from '../../data/atlas'
 import { visualColors } from '../../theme/visualEncoding'
@@ -7,6 +8,7 @@ type ProfileScatterProps = {
   selected: TrajectoryRecord | null
   onSelect: (record: TrajectoryRecord) => void
   label: (record: TrajectoryRecord) => string
+  colorByCellType?: boolean
   highlightedGenes?: ReadonlySet<string>
 }
 export function ProfileScatter({
@@ -15,6 +17,7 @@ export function ProfileScatter({
   onSelect,
   label,
   highlightedGenes,
+  colorByCellType = false,
 }: ProfileScatterProps) {
   const highlighted = (record: TrajectoryRecord) => highlightedGenes?.has(record.gene.toUpperCase()) ?? false
   return (
@@ -33,7 +36,7 @@ export function ProfileScatter({
         `${label(record)} · ${record.tissue}\nSigned maximum age change: ${record.valueAtMaxAbsChange.toFixed(2)}\nAdjusted p-value: ${record.adjustedPValue.toExponential(2)}`
       }
       appearance={(record, isSelected) => ({
-        fill: record.tissue === 'brain' ? visualColors.brain : visualColors.blood,
+        fill: colorByCellType ? (cellTypeColor(record.cellType) ?? '#87918d') : record.tissue === 'brain' ? visualColors.brain : visualColors.blood,
         stroke: isSelected
           ? visualColors.selected
           : highlighted(record)

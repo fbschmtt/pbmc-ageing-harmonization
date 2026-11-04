@@ -1,0 +1,40 @@
+.single-cell-page { max-width: 1500px; margin: auto; padding: 34px max(4vw, 34px) 70px; }
+.single-cell-page h1 { font-size: 34px; }
+.single-cell-lead, .single-cell-panel > p { color: #62706b; line-height: 1.6; }
+.single-cell-lead { max-width: 700px; font-size: 17px; }
+.single-cell-controls { display: flex; gap: 36px; align-items: end; flex-wrap: wrap; margin: 28px 0 18px; }
+.single-cell-controls .choice-field { width: min(320px, 100%); margin: 0; }
+.single-cell-stats { display: flex; gap: 30px; padding: 0 0 4px; flex-wrap: wrap; }
+.single-cell-stats div { display: grid; gap: 2px; }
+.single-cell-stats strong { color: #1e4a43; font: 500 22px Fraunces, Georgia, serif; text-transform: capitalize; }
+.single-cell-stats span { color: #71847b; font-size: 12px; }
+.single-cell-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.single-cell-panel { min-width: 0; padding: 28px; border: 1px solid #d9e2d8; border-radius: 8px; background: #fffefa; }
+.single-cell-panel .eyebrow { margin-bottom: 8px; }
+.single-cell-panel h2 { margin: 0; font-size: 25px; }
+.single-cell-panel > p { font-size: 14px; }
+.single-cell-figure img { display: block; width: auto; height: auto; max-width: 100%; max-height: 480px; object-fit: contain; margin: 20px auto; }
+.single-cell-clusters { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 24px; }
+.single-cell-cluster { min-width: 0; min-height: 310px; background: #f0f4ed; border-radius: 6px; padding: 16px; }
+.single-cell-cluster h3 { margin: 0 0 10px; color: #1e4a43; font-size: 14px; }
+.single-cell-cluster p { font-size: 12px; color: #62706b; }
+.single-cell-marker-units { display: flex; justify-content: space-between; color: #71847b; font-size: 11px; margin-bottom: 5px; }
+.single-cell-cluster ol { list-style: none; padding: 0; margin: 0; }
+.single-cell-cluster li { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-top: 1px solid #dce7db; color: #31534b; font-size: 13px; }
+.single-cell-cluster li strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.single-cell-cluster li span { color: #72867b; font-size: 11px; white-space: nowrap; }
+.single-cell-panel .single-cell-caption { margin: 22px 0 0; padding-top: 15px; border-top: 1px solid #e2eae0; color: #6a7e73; font-size: 12px; }
+.single-cell-fractions { grid-column: 1 / -1; }
+.single-cell-fractions img { display: block; width: auto; max-width: 100%; height: auto; margin: 20px auto; }
+.single-cell-fractions .single-cell-plot-frame { width: min(100%, 800px); aspect-ratio: 14 / 9; margin: 20px auto; }
+.single-cell-fractions .single-cell-plot-frame img { width: 100%; height: 100%; margin: 0; object-fit: contain; }
+.single-cell-empty { padding: 20px; background: #f0f4ed; border-radius: 6px; }
+.single-cell-fit-scroll { overflow-x: auto; }
+.single-cell-fit-table { width: 100%; border-collapse: collapse; color: #31534b; font-size: 13px; text-align: right; }
+.single-cell-fit-table caption { text-align: left; font-weight: 700; margin-bottom: 10px; }
+.single-cell-fit-table th, .single-cell-fit-table td { padding: 9px 12px; border-bottom: 1px solid #dce7db; white-space: nowrap; }
+.single-cell-fit-table th:first-child { text-align: left; }
+.single-cell-fit-table thead th { color: #62786c; font-size: 12px; }
+.single-cell-fit-placeholder { visibility: hidden; }
+@media (max-width: 800px) { .single-cell-grid { grid-template-columns: 1fr; } }
+@media (max-width: 520px) { .single-cell-page { padding-inline: 20px; } .single-cell-panel { padding: 20px; } }

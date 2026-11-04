@@ -1,4 +1,5 @@
 import type { Page } from '../../app/navigation'
+import { AtlasWorkflow } from './AtlasWorkflow'
 
 export function OverviewPage({ onNavigate }: { onNavigate: (page: Page) => void }) {
   return (
@@ -24,6 +25,7 @@ export function OverviewPage({ onNavigate }: { onNavigate: (page: Page) => void 
           </button>
         </div>
       </section>
+      <AtlasWorkflow />
       <section className="entry-grid">
         <article>
           <a href="#differential">

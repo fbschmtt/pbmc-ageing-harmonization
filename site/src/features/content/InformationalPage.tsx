@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { loadReleaseManifest, type ReleaseManifest } from '../../data/release'
 import { DatasetContext, ModellingContext, SourcePermissions } from './ReleaseContext'
 import type { Page } from '../../app/navigation'
+import { AgeModelGuide } from './AgeModelGuide'
 
 const copy: Record<Extract<Page, 'datasets' | 'modelling'>, { title: string; body: string }> = {
   datasets: {
@@ -58,6 +59,7 @@ export function InformationalPage({ page }: { page: Extract<Page, 'datasets' | '
             Age-bin models compare supported age groups with ages 20–30. The trajectory views show only genes
             selected for clustering, not all tested genes. Associations do not establish causation.
           </p>
+          <AgeModelGuide />
           <h2>Cell composition</h2>
           <p>
             Fraction models are fitted separately for each study. They describe relative representation within

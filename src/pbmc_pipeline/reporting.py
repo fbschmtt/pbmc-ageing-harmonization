@@ -160,6 +160,11 @@ def sample_cluster_fractions(adata, *, min_denominator_cells: int = 1) -> pd.Dat
         .rename("n_cells_type")
         .reset_index()
     )
-    result = counts.merge(totals, on=sample_keys, validate="many_to_one")
+    totals = totals.loc[totals["n_cells_type"] >= min_denominator_cells]
+    clusters = counts[["cluster"]].drop_duplicates()
+    result = totals.merge(clusters, how="cross").merge(
+        counts, on=[*sample_keys, "cluster"], how="left", validate="one_to_one"
+    )
+    result["n_cells_cluster"] = result["n_cells_cluster"].fillna(0).astype(int)
     result["fraction_within_cell_type"] = result["n_cells_cluster"] / result["n_cells_type"]
-    return result.loc[result["n_cells_type"] >= min_denominator_cells]
+    return result

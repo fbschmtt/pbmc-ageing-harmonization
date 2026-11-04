@@ -1,3 +1,4 @@
+import { cellTypeColor } from '../../theme/cellTypeColors'
 import { useMemo } from 'react'
 import { ChoiceMenu } from '../../components/ChoiceMenu'
 import { GeneTypePairCard, type GeneTypePairActions } from '../../components/GeneTypePairCard'
@@ -83,12 +84,14 @@ export function ProfilesPage({
         }
         legend={
           <>
-            <span>
-              <i className="volcano-legend-blood" /> Peripheral blood
-            </span>
-            <span>
-              <i className="volcano-legend-brain" /> Brain
-            </span>
+            {tab === 'gene' ? (
+              <span>Point color: AIFI L2 cell type (gray for other types)</span>
+            ) : (
+              <>
+                <span><i className="volcano-legend-blood" /> Peripheral blood</span>
+                <span><i className="volcano-legend-brain" /> Brain</span>
+              </>
+            )}
             {tab === 'cellType' && (
               <span>
                 <i className="volcano-legend-pathway" /> Gene set
@@ -137,7 +140,7 @@ export function ProfilesPage({
                 value={cellType}
                 groups={cellTypeGroups.map((group) => ({
                   label: group.label,
-                  options: group.cellTypes.map((item) => ({ value: item, label: item })),
+                  options: group.cellTypes.map((item) => ({ value: item, label: item, color: cellTypeColor(item) })),
                 }))}
                 onChange={(value) => {
                   onSelectCellType(value)
@@ -160,6 +163,7 @@ export function ProfilesPage({
               onStateChange({ ...state, gene: record.gene, cellType: record.cellType, selectedId: record.id })
             }}
             label={(record) => (tab === 'gene' ? record.cellType : record.gene)}
+            colorByCellType={tab === 'gene'}
             highlightedGenes={tab === 'cellType' ? parsedHighlightGenes : undefined}
           />
         }

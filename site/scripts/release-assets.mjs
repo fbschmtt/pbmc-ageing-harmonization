@@ -4,7 +4,11 @@ import { validAsset } from '../src/data/contracts.mjs'
 import { files, hash } from './release-sources.mjs'
 
 const kindOf = (name) =>
-  name === 'de-index.json'
+  name === 'single-cell-index.json'
+    ? 'singleCellIndex'
+    : name.startsWith('single-cell/') && name.endsWith('.json')
+      ? 'singleCell'
+      : name === 'de-index.json'
     ? 'de'
     : name.startsWith('de-models/') && name.endsWith('.json')
       ? 'de'

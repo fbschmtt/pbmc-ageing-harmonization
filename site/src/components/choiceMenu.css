@@ -103,3 +103,13 @@
 .choice-check {
   color: #47796f;
 }
+
+.choice-color {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 8px;
+  border: 1px solid #0003;
+  border-radius: 50%;
+  vertical-align: middle;
+}

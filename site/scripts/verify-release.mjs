@@ -8,6 +8,13 @@ import { hashFile } from './release-sources.mjs'
 
 export async function verifyRelease(directory) {
   const root = resolve(directory)
+  const startedAt = Date.now()
+  const progress = (message) => {
+    const seconds = Math.floor((Date.now() - startedAt) / 1000)
+    const elapsed = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
+    console.log(`[site-verify +${elapsed}] ${message}`)
+  }
+  progress(`Reading release manifest from ${root}`)
   const manifestBytes = await readFile(resolve(root, 'release.json'))
   const manifest = JSON.parse(manifestBytes.toString('utf8'))
   try {
@@ -24,7 +31,18 @@ export async function verifyRelease(directory) {
     throw new Error('Invalid release manifest')
   const seen = new Set()
   const parsed = new Map()
-  for (const asset of manifest.assets) {
+  let lastProgress = Date.now()
+  progress(`Checking ${manifest.assets.length} assets`)
+  for (const [index, asset] of manifest.assets.entries()) {
+    if (
+      index === 0 ||
+      index % 100 === 0 ||
+      Date.now() - lastProgress >= 15_000 ||
+      asset.bytes >= 50 * 1024 * 1024
+    ) {
+      progress(`Checking asset ${index + 1}/${manifest.assets.length}: ${asset.path}`)
+      lastProgress = Date.now()
+    }
     if (typeof asset.path !== 'string' || seen.has(asset.path))
       throw new Error('Invalid or duplicate asset path')
     seen.add(asset.path)
@@ -36,7 +54,11 @@ export async function verifyRelease(directory) {
     const bytes = streamReport ? null : await readFile(path)
     if (
       (streamReport ? (await stat(path)).size : bytes.length) !== asset.bytes ||
-      (streamReport ? await hashFile(path) : createHash('sha256').update(bytes).digest('hex')) !==
+      (streamReport
+        ? await hashFile(path, (bytesRead) =>
+            progress(`Still hashing ${asset.path} (${(bytesRead / 1024 / 1024).toFixed(1)} MiB read)`),
+          )
+        : createHash('sha256').update(bytes).digest('hex')) !==
         asset.sha256
     )
       throw new Error(`Asset checksum mismatch: ${asset.path}`)
@@ -88,6 +110,17 @@ export async function verifyRelease(directory) {
       value.genes = []
     }
     parsed.set(asset.path, value)
+  }
+  progress('Checking asset references and cell types')
+  const singleCellIndex = parsed.get('single-cell-index.json')
+  if (singleCellIndex) {
+    const ids = new Set()
+    for (const cell of singleCellIndex.cellTypes) {
+      const details = parsed.get(cell.path)
+      if (ids.has(cell.id) || cell.path !== `single-cell/${cell.id}.json` || !details || details.cellType !== cell.label)
+        throw new Error(`Invalid single-cell reference: ${cell.id}`)
+      ids.add(cell.id)
+    }
   }
   if (!seen.has('de-index.json')) throw new Error('Missing DE asset')
   const de = parsed.get('de-index.json')

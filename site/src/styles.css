@@ -63,6 +63,8 @@ nav {
   display: flex;
   gap: 4px;
   flex: 1;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 nav button,
 nav select {
@@ -559,6 +561,7 @@ footer {
   nav {
     order: 3;
     flex-basis: 100%;
+    flex-wrap: nowrap;
     overflow: auto;
   }
   .metrics {

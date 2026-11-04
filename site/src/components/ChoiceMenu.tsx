@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import './choiceMenu.css'
 
-export type ChoiceGroup = { label?: string; options: { value: string; label: string }[] }
+export type ChoiceGroup = { label?: string; options: { value: string; label: string; color?: string }[] }
 
 export function ChoiceMenu({
   label,
@@ -66,7 +66,7 @@ export function ChoiceMenu({
           aria-label={`${label}: ${displayValue || selected?.label || 'Select an option'}`}
           aria-haspopup="menu"
         >
-          <span className="choice-value">{displayValue || selected?.label || 'Select an option'}</span>
+          <span className="choice-value">{selected?.color && <i className="choice-color" style={{ backgroundColor: selected.color }} aria-hidden="true" />}{displayValue || selected?.label || 'Select an option'}</span>
           <span className="choice-chevron" aria-hidden="true">
             ⌄
           </span>
@@ -89,7 +89,7 @@ export function ChoiceMenu({
                     }
                   }}
                 >
-                  <span>{option.label}</span>
+                  <span>{option.color && <i className="choice-color" style={{ backgroundColor: option.color }} aria-hidden="true" />}{option.label}</span>
                   {option.value === value && (
                     <span className="choice-check" aria-hidden="true">
                       ✓

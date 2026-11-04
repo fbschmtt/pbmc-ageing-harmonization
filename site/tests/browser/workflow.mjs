@@ -48,6 +48,8 @@ test(
           ['study_umap', 'study_heatmap'].includes(item.kind) && run.selected_studies.includes(item.study),
       )
       assert.ok(figures.length > 0, 'No study diagnostic figures exported from workflow notebooks')
+      const localIndex = JSON.parse(await readFile(join(publicDir, 'data/single-cell-index.json'), 'utf8'))
+      assert.ok(localIndex.cellTypes.some((item) => item.label === 'CD14 monocyte'), 'Missing single-cell summary')
       process.env.ATLAS_TEST_PUBLIC_DIR = publicDir
       await build({
         configFile: join(site, 'tests/browser/vite.config.mjs'),
@@ -103,6 +105,9 @@ test(
       await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
       await page.locator('.de-warning').waitFor({ state: 'visible', timeout: 10000 })
       await page.locator('.de-statistics').waitFor({ state: 'visible', timeout: 10000 })
+      await page.getByRole('button', { name: 'Single-cell', exact: true }).click()
+      await page.getByRole('img', { name: /^UMAP of / }).waitFor({ state: 'visible', timeout: 10000 })
+      assert.ok(await page.locator('.single-cell-stats strong').count() >= 2)
     } finally {
       if (browser) await browser.close()
       if (server?.listening)

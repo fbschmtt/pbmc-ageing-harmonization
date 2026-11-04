@@ -111,67 +111,37 @@ conversion.
 
 ## Data flow
 
-```text
-input_data/ expression objects + metadata
-                │
-                ├── Seurat RDS ──> converted H5AD
-                │
-                ▼
- prepare canonical metadata plus a retained source-obs audit sidecar
-                │
-                ├──> output/harmonization/prepared/<study>.cells.csv.gz
-                └──> output/harmonization/prepared/<study>.source_obs.csv.gz
-                ▼
-      harmonize one configured study
-                │
-                ├──> output/harmonization/harmonized/<study>.h5ad
-                ├──> output/harmonization/provenance/<study>.json
-                └──> output/harmonization/harmonization_qc/<study>/{executed.ipynb,report.html}
-                │
-                ▼
-  pseudobulk each study by sample/AIFI-L2
-                │
-                └──> output/harmonization/pseudobulk/<study>.pseudobulk.h5ad
-                ▼
-       output/harmonization/merged/pseudobulk_merged.h5ad
-                │
-                ├── optional: output/harmonization/merged/single_cell_merged.h5ad
-                └──> output/harmonization/harmonization_qc/merged/{executed.ipynb,report.html}
-
-optional global integration benchmark
-  single_cell_merged.h5ad ──> output/harmonization/integration_benchmark/
-                                └──> embeddings + graphs + labels H5AD + JSON + report.html
-
-optional downstream cell-type workflow
-  single_cell_merged.h5ad ──> backed split by per-study AIFI-L2
-                                (materialize and write one type at a time)
-                                ├──> output/analysis/per_type/<type>/split.h5ad
-                                └──> analyse each type
-                                      └──> analysis.h5ad + tables
-                                            └──> render notebook/HTML
-                                                  └──> output/analysis/per_type/<type>/analysis/
-                                                        ├── report.html
-                                                        └── executed.ipynb + tables
-                              output/analysis/per_type/cell_type_manifest.json
-                              output/index.html (links to published harmonization and analysis reports)
-
-optional pseudobulk differential-expression workflow
-  pseudobulk_merged.h5ad ──> list per-study AIFI-L2 labels
-                              └──> one parallel task per label, each loading and
-                                   subsetting the same small pseudobulk H5AD in memory
-                                     ├──> per-study fits with site adjustment
-                                     └──> merged ~ study_site + age + sex + log10_total_counts fit
-                                           ├──> output/analysis/per_type/<type>/differential_expression/report.html
-                                           ├──> output/analysis/combined/differential_expression/
-                                           └──> output/analysis/combined/trajectory/report.html
-
-Focused gene profiles are stored under output/analysis/per_gene/<type>/<gene>/
+```mermaid
+flowchart TD
+    inputs["Study expression data and metadata"] -->|"Convert RDS when needed"| prep["Prepare canonical metadata<br/>and source metadata audit sidecar"]
+    prep --> harmonize["Harmonize each study<br/>raw counts and AIFI labels"]
+    harmonize --> studyqc["Study QC reports"]
+    harmonize --> pb["Sample × AIFI-L2 pseudobulks<br/>per study"]
+    pb --> mergedpb["Merged pseudobulk"]
+    mergedpb --> mergeqc["Merged QC report"]
+    mergedpb --> de["Per-study and merged DE models"]
+    de --> dereports["Per-type DE and combined trajectory reports"]
+    de --> profiles["Focused gene profiles"]
+    mergedpb --> profiles
+    mergedpb --> clocks["Optional age clocks"]
+    harmonize -->|"optional merge"| cells["Merged raw-count single cells"]
+    cells --> benchmark["Optional integration benchmark<br/>embeddings, graphs and labels"]
+    cells --> split["Split by per-study AIFI-L2 label"]
+    split --> analysis["Per-type single-cell analysis and reports"]
+    dereports --> site["Optional static atlas export"]
+    studyqc --> site
 ```
+
+The core workflow publishes harmonized data and QC under
+`output/harmonization/`. Downstream analyses are published under
+`output/analysis/`, including `per_type/`, `combined/`, and `per_gene/`.
+The single-cell merge, integration benchmark, age clocks, and downstream
+analyses can also be run separately; see the target table below.
 
 All immutable local inputs belong under `input_data/`. Generated conversions,
 reports, and harmonized outputs are kept outside it and ignored by Git.
-This includes the pipeline-wide GO enrichment files in `input_data/go/`, as
-well as study-specific data.
+Pipeline-wide GO enrichment inputs in `input_data/go/` and study-specific
+inputs remain under `input_data/`.
 
 Published outputs are organized under `output/harmonization/` for preparation,
 harmonized data, pseudobulk, merged inputs, QC reports, and integration
@@ -317,7 +287,7 @@ fixtures are generated under the ignored `test_data/` directory.
 ## Download inputs
 
 > **Strictly opt-in and potentially large.** Only `make download-inputs`,
-> `make download-go-inputs`, and `make download-inputs-strict` retrieve data; `make install`, test targets,
+> `make download-gene-set-inputs`, and `make download-inputs-strict` retrieve data; `make install`, test targets,
 > and production workflow targets never do. Before it starts, the downloader
 > warns about pending artifacts and their recorded size where available. A
 > selected study can require multi-gigabyte source files.
@@ -331,12 +301,13 @@ reported for best-effort acquisition:
 ```bash
 make download-inputs STUDIES=aifi
 make download-inputs STUDIES=nehar_belaid26
-make download-go-inputs
+make download-gene-set-inputs
 ```
 
 Study selections include the small pipeline-wide GO enrichment inputs in
-`input_data/go/`; use `make download-go-inputs` to retrieve only those files.
-Their source files can change upstream, so the
+`input_data/go/`. Use `make download-gene-set-inputs` to retrieve those files and
+the static atlas example pathways, without downloading study data. Study
+selections do not download the atlas pathways. GO source files can change upstream, so the
 registry intentionally has no fixed checksum or release requirement; the
 download manifest and each report's enrichment provenance record the exact
 SHA-256 values used, along with the GO ontology `data-version`.
@@ -586,8 +557,11 @@ back to `analysis.h5ad`.
 
 Sample-level abundance and fraction views are generated with the pseudobulk
 DE reports, where cell counts are summed from the merged pseudobulk object.
-The cell-type report retains local-cluster composition views and excludes
+The cell-type report retains local-cluster composition views, includes zero
+fractions for eligible samples with no cells in a cluster, and excludes
 samples below `cell_type_analysis.min_cluster_fraction_denominator_cells`.
+Cluster-fraction plots show a pooled study-unadjusted linear trend and separate
+per-study linear trends when each has at least two distinct ages.
 The configured `cell_type_analysis.l2_parent_l1` map supplies the parent label
 in `report.json` and the cell-type manifest, and defines the parent denominator
 for DE abundance. The split and analysis H5ADs do not carry a derived parent
@@ -1241,12 +1215,20 @@ exported from the pipeline; it does not run the analysis or require an API.
 The main views are:
 
 - **Differential expression:** choose a cell type and model contrast to explore
-  gene-level estimates in a volcano plot. The menu groups combined,
+  gene-level estimates in a volcano plot. Point colors show how many matching
+  per-study results have adjusted p < 0.05, regardless of direction; the gene
+  details also show how many studies had an adjusted p-value. Missing study
+  results are not treated as nonsignificant, and per-study adjustments may differ.
+  The menu groups combined,
   developmental and individual-study fits. Select a point or search for a gene
   to see model details and, when available, its separate combined age-bin fit.
 - **Composition:** explore the per-study fraction-model forest plot, adjusted
   age-bin changes, and reference fractions. The age plot offers parent-compartment
   and retained-PBMC denominators; the forest plot uses the L1 parent.
+- **Single-cell:** inspect the local cluster UMAP, positive and negative cluster
+  markers, and available sample-level cluster-fraction plots for cell types with completed single-cell reports. This exploratory
+  view uses the published report figure and marker table; it does not export
+  per-cell coordinates. Re-export after rendering the reports to include it.
 - **Age-bin trajectories:** explore retained results by gene or cell type,
   compare profile shapes in the cross-type trajectory map, or view a gene × cell
   type matrix for the selected gene set. The profile plots show the signed
@@ -1259,7 +1241,7 @@ The main views are:
   full harmonization report.
 
 Selecting a gene in a plot carries it to the other views where a matching result
-is available. Selecting a cell type in differential expression, composition or the cell-type
+is available. Selecting a cell type in differential expression, composition, single-cell or the cell-type
 trajectory view carries it to the other views when that type has data there. Model and composition
 denominator choices remain selected when changing cell type or switching views;
 if the chosen model is unavailable for a type, the view says so until another
@@ -1281,11 +1263,14 @@ make serve-frontend
 
 Open `http://localhost:8000/`; set `SITE_PORT` to use a different port. The
 development server has live reload and reads source changes from the workspace.
+Press Ctrl+C once to stop the server and its container.
 It binds to localhost by default. To allow connections to the host's network
 interfaces, run `make serve-frontend SITE_BIND=0.0.0.0` and use the host's IP
 address and port. Network and firewall rules still apply. This exposes the
 development server and its exported reports to clients that can connect; use
 the static build and an appropriate web host for a production deployment.
+For example, use `make serve-frontend SITE_PORT=8888 SITE_BIND=0.0.0.0` when
+port 8000 is already in use.
 The container keeps its dependencies in the image or a Docker-managed volume;
 it does not install `node_modules` on the host filesystem. `make site-export` defaults to
 `output/analysis/per_type`, and `SITE_INPUT` selects another per-type output
@@ -1337,7 +1322,16 @@ they need.
 
 `make site-test` tests the frontend and export contract in the runtime image;
 `make site-test-browser` tests browser journeys in the browser image with an
-isolated synthetic release. Both run as part of `make verify`.
+isolated synthetic release. Both run as part of `make verify`. For a focused
+check, use `make site-test-unit SITE_TEST_FILE=src/theme/axisScale.test.ts`,
+`make site-test-browser-navigation` for navigation and visualization journeys,
+or `make site-test-browser-release` for release and failure-mode journeys.
+Use `make site-test-browser-focus SITE_BROWSER_FILTER=composition` to run
+journeys whose names contain a case-insensitive substring; a filter with no
+matches fails. Each browser target builds its own isolated synthetic release.
+The runtime and browser images share the dependency stages; changes to frontend
+source reuse the installed Chromium layer until its dependencies change or the
+Docker cache is cleared.
 `make site-test-workflow` tests the existing `output/test`
 workflow artifacts and also runs after the workflow in `make verify`.
 `make site-build`
@@ -1351,7 +1345,10 @@ Frontend dependencies and
 cache, generated exports, and the static build are ignored by Git. A fresh
 checkout can show pipeline results after export. Optional gene annotations and
 curated pathway sets are regenerated from available local sources during export
-and remain ignored by Git. The header reports the recorded analysis mode and
+and remain ignored by Git. Run `make download-gene-set-inputs` before exporting to
+install the pinned example pathway sets; see [static atlas example pathways](INPUT_FILES.md#static-atlas-example-pathways)
+for provenance, the manual mitochondrial example, and publication guidance.
+The header reports the recorded analysis mode and
 site export date; the dataset and modelling pages display available source context and
 provenance limitations. Review the provenance, permissions and licences of all included assets before
 publishing. The structured JSON assets contain gene-level summaries, model context,

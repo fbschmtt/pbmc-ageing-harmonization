@@ -1,4 +1,4 @@
-/** @typedef {{ gene: string; effect: number | null; padj: number | null; pvalue: number | null; se: number | null; baseMean: number | null }} Gene */
+/** @typedef {{ gene: string; effect: number | null; padj: number | null; pvalue: number | null; se: number | null; baseMean: number | null; studySupport?: { significant: number; tested: number } | null }} Gene */
 /** @typedef {{ id: string; model: string; study: string | null; covariate: string; contrast: string | null; design: string; samples: number; studies: Record<string, number>; records: Gene[]; recordsAsset?: string; recordBuckets?: Record<string, string> }} Model */
 /** @typedef {{ id: string; label: string; tissue: string; analysisMode: string; warning: string | null; trajectoryAsset: string | null; models: Model[] }} Cell */
 /** @typedef {{ schemaVersion: number; source: string; cellTypes: Cell[] }} DifferentialRelease */
@@ -14,7 +14,12 @@
 /** @typedef {{ id: string; label: string }} GeneAnnotationTerm */
 /** @typedef {{ families: GeneAnnotationTerm[]; proteinClasses: GeneAnnotationTerm[]; goTerms: { biologicalProcesses: GeneAnnotationTerm[]; molecularFunctions: GeneAnnotationTerm[]; cellularComponents: GeneAnnotationTerm[] } }} GeneMetadata */
 /** @typedef {{ release: string; source: string; sourceUrl: string; sourceSha256: string; genes: Record<string, GeneMetadata> }} GeneMetadataIndex */
-/** @typedef {{ de: DifferentialRelease; trajectory: Atlas; composition: FractionIndex; preview: Preview; pathways: { pathwaySets: PathwaySet[] }; metadata: GeneMetadataIndex }} Assets */
+/** @typedef {{ id: string; label: string; path: string }} SingleCellType */
+/** @typedef {{ schemaVersion: number; cellTypes: SingleCellType[] }} SingleCellIndex */
+/** @typedef {{ gene: string; effect: number; padj: number | null }} ClusterMarker */
+/** @typedef {{ cluster: string; image: string; fits: { study: string | null; samples: number; meanFraction: number; slopePpPerDecade: number | null }[] }} ClusterFractionDetail */
+/** @typedef {{ schemaVersion: number; cellType: string; nCells: number; nClusters: number; integration: string; image: string; fractionImage?: string | null; fractionNote?: string | null; fractionHasStudyTrends?: boolean; fractionIncludesZeros?: boolean; fractionDetails?: ClusterFractionDetail[] | null; groups: { cluster: string; higher?: ClusterMarker[]; lower?: ClusterMarker[]; markers?: { gene: string; score: number; padj: number | null }[] }[] }} SingleCell */
+/** @typedef {{ de: DifferentialRelease; trajectory: Atlas; composition: FractionIndex; preview: Preview; pathways: { pathwaySets: PathwaySet[] }; metadata: GeneMetadataIndex; singleCell: SingleCell; singleCellIndex: SingleCellIndex }} Assets */
 
 // Shared runtime contract for published JSON and browser loaders.
 const obj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x)
@@ -33,7 +38,9 @@ const gene = (x) =>
   (x.padj === null || probability(x.padj)) &&
   (x.pvalue === null || probability(x.pvalue)) &&
   nullableNumber(x.se) &&
-  nullableNumber(x.baseMean)
+  nullableNumber(x.baseMean) &&
+  (x.studySupport == null || (obj(x.studySupport) && count(x.studySupport.significant) &&
+    count(x.studySupport.tested) && x.studySupport.tested > 0 && x.studySupport.significant <= x.studySupport.tested))
 const model = (x) =>
   obj(x) &&
   str(x.id) &&
@@ -112,6 +119,22 @@ const geneMetadata = (x) =>
   obj(x.goTerms) &&
   ['biologicalProcesses', 'molecularFunctions', 'cellularComponents'].every((k) => arr(x.goTerms[k], term))
 const validators = {
+  singleCellIndex: (x) => base(x) && arr(x.cellTypes, (c) => obj(c) && str(c.id) && str(c.label) && str(c.path)),
+  singleCell: (x) => base(x) && str(x.cellType) && count(x.nCells) && count(x.nClusters) &&
+    str(x.integration) && str(x.image) && x.image.startsWith('iVBORw0KGgo') &&
+    (x.fractionImage === undefined || x.fractionImage === null || (str(x.fractionImage) && x.fractionImage.startsWith('iVBORw0KGgo'))) &&
+    (x.fractionNote === undefined || x.fractionNote === null || typeof x.fractionNote === 'string') &&
+    (x.fractionHasStudyTrends === undefined || typeof x.fractionHasStudyTrends === 'boolean') &&
+    (x.fractionIncludesZeros === undefined || typeof x.fractionIncludesZeros === 'boolean') &&
+    (x.fractionDetails == null || arr(x.fractionDetails, (d) => obj(d) && str(d.cluster) &&
+      str(d.image) && d.image.startsWith('iVBORw0KGgo') && arr(d.fits, (fit) => obj(fit) &&
+        nullableString(fit.study) && count(fit.samples) && probability(fit.meanFraction) &&
+        nullableNumber(fit.slopePpPerDecade)))) &&
+    arr(x.groups, (g) => obj(g) && str(g.cluster) && (
+      (arr(g.higher, (m) => obj(m) && str(m.gene) && num(m.effect) && m.effect > 0 && (m.padj === null || probability(m.padj))) &&
+       arr(g.lower, (m) => obj(m) && str(m.gene) && num(m.effect) && m.effect < 0 && (m.padj === null || probability(m.padj)))) ||
+      arr(g.markers, (m) => obj(m) && str(m.gene) && num(m.score) && m.score > 0 && (m.padj === null || probability(m.padj)))
+    )),
   de: (x) => base(x) && str(x.source) && arr(x.cellTypes, cell) && x.cellTypes.length > 0,
   trajectory: (x) =>
     base(x) &&

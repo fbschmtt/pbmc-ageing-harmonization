@@ -14,6 +14,8 @@ import { compareAnalysisMetadata, releaseContext } from './release-provenance.mj
 import { stampAssets } from './release-assets.mjs'
 import { verifyRelease } from './verify-release.mjs'
 import { pantherFilename, pantherRelease, pantherSha256 } from './panther-release.mjs'
+import { exportSingleCell } from './export-single-cell.mjs'
+import { addStudySupport } from './export-study-support.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const gzipAsync = promisify(gzip)
@@ -214,6 +216,8 @@ export async function createRelease(inputPath, targetPath, options = {}) {
       await writeFile(previewPath, JSON.stringify(preview))
     }
     await writeFile(dePath, JSON.stringify(catalogue))
+    await timed('preparing study support counts', () => addStudySupport(stage))
+    await timed('preparing single-cell summaries', () => exportSingleCell(input, stage))
     const assets = await timed('validating and stamping generated assets', () =>
       stampAssets(stage, id, (processed, total, valid) =>
         progress(`Validated ${processed}/${total} generated files (${valid} published assets)`),

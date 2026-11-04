@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { formatAxisValue, positiveAxis, symmetricAxis } from './axisScale'
+import { formatAxisValue, positiveAxis, rangeAxis, symmetricAxis } from './axisScale'
 
 describe('axis scaling', () => {
+  it('places readable ticks including zero on asymmetric fraction ranges', () => {
+    const axis = rangeAxis(-0.023, 0.074, 0.01)
+    expect(axis.ticks).toEqual([-0.02, 0, 0.02, 0.04, 0.06, 0.08])
+    expect(formatAxisValue(axis.ticks[0] * 100, axis.high * 100)).toBe('-2')
+  })
   it('pads the domain without rounding it up to an outer tick', () => {
     const axis = symmetricAxis([-2.6, 1.4])
     expect(axis.extent).toBeCloseTo(2.73)

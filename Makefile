@@ -14,8 +14,8 @@ OUTDIR ?= output
 IMAGE_TAG ?=
 PYTHON_IMAGE_TAG ?= $(if $(IMAGE_TAG),$(IMAGE_TAG),$(shell { git ls-files -co --exclude-standard .dockerignore docker/python.Dockerfile config src pyproject.toml requirements.lock aifi_models/README; test ! -f aifi_models/AIFI_L2_imm_health_atlas_type_order_colors.csv || printf '%s\n' aifi_models/AIFI_L2_imm_health_atlas_type_order_colors.csv; } | sort | while IFS= read -r file; do test -f "$$file" && sha256sum "$$file"; done | sha256sum | cut -c1-12))
 R_IMAGE_TAG ?= $(if $(IMAGE_TAG),$(IMAGE_TAG),$(shell git ls-files -co --exclude-standard docker/r-conversion.Dockerfile scripts/convert_rds.R | sort | while IFS= read -r file; do test -f "$$file" && sha256sum "$$file"; done | sha256sum | cut -c1-12))
-SITE_IMAGE_TAG ?= $(if $(IMAGE_TAG),$(IMAGE_TAG),$(shell { git ls-files -co --exclude-standard .dockerignore docker/site.Dockerfile config/studies.json scripts/render_report_index.py site; } | sort | while IFS= read -r file; do test -f "$$file" && sha256sum "$$file"; done | sha256sum | cut -c1-12))
-SITE_BROWSER_IMAGE_TAG ?= $(if $(IMAGE_TAG),$(IMAGE_TAG),$(shell { git ls-files -co --exclude-standard .dockerignore docker/site.Dockerfile docker/site-browser.Dockerfile config/studies.json scripts/render_report_index.py site; } | sort | while IFS= read -r file; do test -f "$$file" && sha256sum "$$file"; done | sha256sum | cut -c1-12))
+SITE_IMAGE_TAG ?= $(if $(IMAGE_TAG),$(IMAGE_TAG),$(shell { git ls-files -co --exclude-standard .dockerignore docker/site.Dockerfile config/studies.json scripts/render_report_index.py site; git ls-files -oi --exclude-standard site; } | awk '!/^site\/(node_modules|\.npm-cache|\.playwright-browsers|dist|public\/data)\// && !/^site\/data-inputs\// && !/^site\/public\/pathways\// && !/(^|\/)(__pycache__|\.ipynb_checkpoints)\// && !/\.log$$/ {print} /^site\/data-inputs\/cell-type-hierarchy.json$$/ || /^site\/public\/pathways\/\.gitkeep$$/ {print}' | sort -u | while IFS= read -r file; do test -f "$$file" && sha256sum "$$file"; done | sha256sum | cut -c1-12))
+SITE_BROWSER_IMAGE_TAG ?= $(SITE_IMAGE_TAG)
 # Freeze the content hashes at parse time. Recursive expansion can otherwise
 # recompute a different tag between an image prerequisite and its recipe.
 PYTHON_IMAGE_TAG := $(PYTHON_IMAGE_TAG)
@@ -79,7 +79,7 @@ MERGE_ARGS = $(if $(filter true 1 yes,$(MERGE_SINGLE_CELL)),--merge_single_cell,
 
 .PHONY: help install lint workflow-lint docs-check docs-update test-unit verify run-all-test \
 image-site image-site-browser \
-validate-study validate-test validate-full test-data download-inputs download-go-inputs images image-python \
+validate-study validate-test validate-full test-data download-inputs download-gene-set-inputs images image-python \
 	download-inputs-strict check-download-inputs \
 	image-r run run-test run-all split-cell-types split-cell-types-test \
 	run-cell-type-analysis run-cell-type-analysis-test \
@@ -100,6 +100,7 @@ validate-study validate-test validate-full test-data download-inputs download-go
 
 help: ## Show available development commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target> [STUDIES=<comma-separated-list>]\n\n"} /^[a-zA-Z_-]+:.*## / {printf "  %-31s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@printf '\nFrontend server: make serve-frontend SITE_PORT=8000 SITE_BIND=127.0.0.1\n  Set SITE_BIND=0.0.0.0 to listen on all host interfaces.\n'
 
 $(VENV_PYTHON):
 	python3 -m venv .venv
@@ -174,8 +175,9 @@ test-data: $(TEST_DATA_CONTAINER_PREREQS) ## Create missing 200-cell H5AD and RD
 download-inputs: image-python ## Best-effort public input download; never runs implicitly
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/download_inputs.py --project-root /work --studies "$(STUDIES)" $(if $(filter 1 true yes,$(DOWNLOAD_FORCE)),--force,)
 
-download-go-inputs: image-python ## Download the GO enrichment inputs only
+download-gene-set-inputs: image-python ## Download GO enrichment inputs and static atlas example pathways
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/download_inputs.py --project-root /work --artifacts "go_biological_process_gene_sets,go_ontology" $(if $(filter 1 true yes,$(DOWNLOAD_FORCE)),--force,)
+	python3 scripts/download_site_pathways.py --output-dir "$(SITE_PATHWAY_DIR)" $(if $(filter 1 true yes,$(DOWNLOAD_FORCE)),--force,)
 
 download-inputs-strict: image-python ## Explicit download preflight; fail unless every selected artifact is present and valid
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/download_inputs.py --project-root /work --studies "$(STUDIES)" $(if $(filter 1 true yes,$(DOWNLOAD_FORCE)),--force,) --require-all
@@ -189,10 +191,10 @@ image-python:
 	docker build -f docker/python.Dockerfile -t $(PYTHON_IMAGE) .
 
 image-site: ## Build the locked frontend runtime image (Node, npm, and frontend packages)
-	docker build -f docker/site.Dockerfile -t $(SITE_IMAGE) .
+	docker build -f docker/site.Dockerfile --target runtime -t $(SITE_IMAGE) .
 
-image-site-browser: image-site ## Build the frontend image with the matching Chromium and system libraries
-	docker build -f docker/site-browser.Dockerfile --build-arg SITE_IMAGE=$(SITE_IMAGE) -t $(SITE_BROWSER_IMAGE) .
+image-site-browser: ## Build the frontend image with the matching Chromium and system libraries
+	docker build -f docker/site.Dockerfile --target browser -t $(SITE_BROWSER_IMAGE) .
 
 image-r:
 	docker build -f docker/r-conversion.Dockerfile -t $(R_IMAGE) .
@@ -454,16 +456,19 @@ render-cell-type-reports-test: check-cell-type-reports-prerequisites $(PYTHON_CO
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 SITE_INPUT ?= $(OUTDIR)/analysis/per_type
+SITE_PATHWAY_DIR ?= site/public/pathways
 SITE_PORT ?= 8000
 SITE_BIND ?= 127.0.0.1
 SITE_ANALYSIS_DIR = $(patsubst %/,%,$(dir $(abspath $(SITE_INPUT))))
+SITE_OUTPUT_DIR = $(patsubst %/,%,$(dir $(SITE_ANALYSIS_DIR)))
+SITE_ANALYSIS_NAME = $(notdir $(SITE_ANALYSIS_DIR))
 SITE_INPUT_NAME = $(notdir $(patsubst %/,%,$(SITE_INPUT)))
 SITE_EXPORTER_REVISION = $(shell git rev-parse HEAD)
 SITE_CONTAINER_ROOT = /opt/pbmc-ageing/site
 SITE_DOCKER_USER = --user "$(shell id -u):$(shell id -g)"
 SITE_DOCKER_RUN = docker run --rm $(SITE_DOCKER_USER) -e HOME=/tmp
 
-.PHONY: site-install site-browser-install site-export site-build site-test site-test-browser site-test-workflow serve-frontend
+.PHONY: site-install site-browser-install site-export site-build site-test site-test-unit site-test-browser site-test-browser-navigation site-test-browser-release site-test-browser-focus site-test-workflow serve-frontend
 site-install: ## Install locked frontend dependencies locally
 	cd site && npm ci --no-bin-links --cache .npm-cache --no-audit --no-fund
 
@@ -471,23 +476,40 @@ site-browser-install: ## Install the locked browser locally for frontend browser
 	cd site && PLAYWRIGHT_BROWSERS_PATH="$(CURDIR)/site/.playwright-browsers" node node_modules/@playwright/test/cli.js install chromium
 
 site-export: image-site ## Export completed per-cell-type DE results in the frontend image
-	$(SITE_DOCKER_RUN) -v "$(SITE_ANALYSIS_DIR):/analysis:ro" -v "$(CURDIR)/site/public:$(SITE_CONTAINER_ROOT)/public" -v "$(CURDIR)/site/data-inputs:$(SITE_CONTAINER_ROOT)/data-inputs:ro" -e SITE_EXPORTER_REVISION="$(SITE_EXPORTER_REVISION)" $(SITE_IMAGE) node scripts/release.mjs "/analysis/$(SITE_INPUT_NAME)" "$(SITE_CONTAINER_ROOT)/public/data"
+	$(SITE_DOCKER_RUN) -v "$(SITE_OUTPUT_DIR):/analysis:ro" -v "$(CURDIR)/site/public:$(SITE_CONTAINER_ROOT)/public" -v "$(CURDIR)/site/data-inputs:$(SITE_CONTAINER_ROOT)/data-inputs:ro" -e SITE_EXPORTER_REVISION="$(SITE_EXPORTER_REVISION)" $(SITE_IMAGE) node scripts/release.mjs "/analysis/$(SITE_ANALYSIS_NAME)/$(SITE_INPUT_NAME)" "$(SITE_CONTAINER_ROOT)/public/data"
 
 site-build: image-site ## Validate the existing export and build the static frontend in the image
+	@echo '[site-build] Validating the existing release'
 	$(SITE_DOCKER_RUN) -v "$(CURDIR)/site/public:$(SITE_CONTAINER_ROOT)/public:ro" $(SITE_IMAGE) node scripts/verify-release.mjs public/data
+	@echo '[site-build] Building the frontend (type checking, then Vite)'
 	mkdir -p site/dist
 	$(SITE_DOCKER_RUN) -v "$(CURDIR)/site/public:$(SITE_CONTAINER_ROOT)/public:ro" -v "$(CURDIR)/site/dist:$(SITE_CONTAINER_ROOT)/dist" $(SITE_IMAGE) npm run build
+	@echo '[site-build] Frontend build complete: site/dist'
 
 site-test: image-site ## Test the frontend and export contract in the frontend image
 	$(SITE_DOCKER_RUN) $(SITE_IMAGE) node scripts/export.contract.mjs
 	$(SITE_DOCKER_RUN) $(SITE_IMAGE) node scripts/release.contract.mjs
 	$(SITE_DOCKER_RUN) $(SITE_IMAGE) npm test
 
+site-test-unit: image-site ## Run a focused Vitest file: SITE_TEST_FILE=src/path/file.test.ts
+	@test -n "$(SITE_TEST_FILE)" || { echo 'Set SITE_TEST_FILE to a Vitest file' >&2; exit 2; }
+	$(SITE_DOCKER_RUN) $(SITE_IMAGE) npm test -- "$(SITE_TEST_FILE)"
+
 site-test-browser: image-site-browser ## Build a synthetic release and run browser journeys in the browser image
 	docker run --rm $(SITE_BROWSER_IMAGE) npm run test:browser
+
+site-test-browser-navigation: image-site-browser ## Run browser navigation and visualization journeys
+	docker run --rm -e SITE_BROWSER_GROUP=navigation $(SITE_BROWSER_IMAGE) npm run test:browser
+
+site-test-browser-release: image-site-browser ## Run browser release, loading, and failure-mode checks
+	docker run --rm -e SITE_BROWSER_GROUP=release $(SITE_BROWSER_IMAGE) npm run test:browser
+
+site-test-browser-focus: image-site-browser ## Run browser journeys matching SITE_BROWSER_FILTER
+	@test -n "$(SITE_BROWSER_FILTER)" || { echo 'Set SITE_BROWSER_FILTER to part of a journey name' >&2; exit 2; }
+	docker run --rm -e SITE_BROWSER_FILTER="$(SITE_BROWSER_FILTER)" $(SITE_BROWSER_IMAGE) npm run test:browser
 
 site-test-workflow: image-site-browser ## Exercise existing test workflow outputs in the browser image
 	docker run --rm -v "$(CURDIR)/output/test:/analysis:ro" -v "$(CURDIR)/site/public/pathways:$(SITE_CONTAINER_ROOT)/public/pathways:ro" -v "$(CURDIR)/site/data-inputs:$(SITE_CONTAINER_ROOT)/data-inputs:ro" -e SITE_TEST_INPUT=/analysis/analysis/per_type $(SITE_BROWSER_IMAGE) node tests/browser/workflow.mjs
 
-serve-frontend: image-site ## Serve the frontend in the image with live reload
-	docker run --rm -p "$(SITE_BIND):$(SITE_PORT):$(SITE_PORT)" -v "$(CURDIR)/site:$(SITE_CONTAINER_ROOT)" -v "$(SITE_CONTAINER_ROOT)/node_modules" -w $(SITE_CONTAINER_ROOT) $(SITE_IMAGE) node node_modules/vite/bin/vite.js --host 0.0.0.0 --port $(SITE_PORT) --strictPort
+serve-frontend: image-site ## Serve the frontend with live reload; set SITE_PORT or SITE_BIND=0.0.0.0 for network access
+	docker run --rm --init --interactive --tty -p "$(SITE_BIND):$(SITE_PORT):$(SITE_PORT)" -v "$(CURDIR)/site:$(SITE_CONTAINER_ROOT)" -v "$(SITE_CONTAINER_ROOT)/node_modules" -w $(SITE_CONTAINER_ROOT) $(SITE_IMAGE) node node_modules/vite/bin/vite.js --host 0.0.0.0 --port $(SITE_PORT) --strictPort
