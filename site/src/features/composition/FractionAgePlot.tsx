@@ -1,6 +1,7 @@
 export type { FractionAgeEstimate } from '../../data/contracts.mjs'
 import type { FractionAgeEstimate } from '../../data/contracts.mjs'
-import { formatAxisValue, rangeAxis } from '../../theme/axisScale'
+import { formatAxisValue } from '../../theme/axisScale'
+import { absoluteFractionPoints, clipFractionInterval, pointBasedFractionAxis } from './ageFractionPlot'
 
 export function FractionAgePlot({
   estimates,
@@ -10,16 +11,14 @@ export function FractionAgePlot({
   studyColors: ReadonlyMap<string, string>
 }) {
   if (!estimates.length) return <p>No estimable age-bin fraction model is available for this cell type.</p>
-  const groups = [...new Set(estimates.map((item) => item.group))].sort()
+  const points = absoluteFractionPoints(estimates)
+  if (!points.length)
+    return <p>Absolute reference-bin estimates are unavailable. Rerender the DE reports and export the site data.</p>
+  const groups = [...new Set(points.map(({ item }) => item.group))].sort()
   const bins = [...new Set(estimates.map((item) => item.ageBin))].sort(
     (a, b) => Number(a.split('-')[0]) - Number(b.split('-')[0]),
   )
-  const points = estimates.filter((item) => [item.estimate, item.low, item.high].every(Number.isFinite))
-  if (!points.length) return <p>No finite age-bin estimates are available for this cell type.</p>
-  const minimum = Math.min(0, ...points.map((item) => item.low))
-  const maximum = Math.max(0, ...points.map((item) => item.high))
-  const padding = Math.max((maximum - minimum) * 0.1, 0.01)
-  const { low, high, ticks } = rangeAxis(minimum, maximum, padding)
+  const { low, high, ticks } = pointBasedFractionAxis(points)
   const left = 70,
     right = 790,
     top = 25,
@@ -29,23 +28,25 @@ export function FractionAgePlot({
   return (
     <div className="fraction-chart-panel">
       <p className="eyebrow">Age profile</p>
-      <h2>Adjusted fraction change across age</h2>
+      <h2>Adjusted fraction across age</h2>
       <p>
-        Each study is aligned to zero in its {estimates[0].referenceBin} reference group. Points show adjusted
-        percentage-point differences, with pointwise 95% confidence intervals and sample counts.
+        Points show estimated absolute fractions, anchored at each study's model-adjusted {estimates[0].referenceBin}
+        {' '}reference fraction. Other bins add their estimated age-bin contrast to that reference level. Whiskers show
+        pointwise 95% contrast intervals shifted to the reference level; intervals extending beyond the
+        point-based y-axis are clipped and marked with arrows.
       </p>
       <div className="fraction-chart-scroll">
         <svg
           viewBox="0 0 820 360"
           role="img"
-          aria-label="Adjusted fraction changes by age bin with 95 percent confidence intervals"
+          aria-label="Model-adjusted absolute fractions by age bin with clipped 95 percent confidence intervals"
         >
           {ticks.map((value) => {
             return (
               <g key={value}>
                 <line x1={left} x2={right} y1={y(value)} y2={y(value)} stroke={value === 0 ? '#8fa39a' : '#e1e7df'} strokeDasharray={value === 0 ? '4 5' : undefined} />
                 <text x={left - 10} y={y(value) + 4} textAnchor="end" className="fraction-chart-text" fontWeight={value === 0 ? '700' : undefined}>
-                  {formatAxisValue(value * 100, Math.max(Math.abs(low), Math.abs(high)) * 100)} pp
+                  {formatAxisValue(value * 100, Math.max(Math.abs(low), Math.abs(high)) * 100)}%
                 </text>
               </g>
             )
@@ -58,7 +59,7 @@ export function FractionAgePlot({
           {groups.flatMap((group, groupIndex) => {
             const offset = (groupIndex - (groups.length - 1) / 2) * Math.min(10, 30 / groups.length)
             const byBin = new Map(
-              points.filter((item) => item.group === group).map((item) => [item.ageBin, item]),
+              points.filter(({ item }) => item.group === group).map(({ item, ...point }) => [item.ageBin, { item, ...point }]),
             )
             return bins.slice(1).flatMap((bin, index) => {
               const before = byBin.get(bins[index])
@@ -80,18 +81,25 @@ export function FractionAgePlot({
               ]
             })
           })}
-          {points.map((item, index) => {
+          {points.map(({ item, estimate, low: intervalLow, high: intervalHigh }, index) => {
             const group = groups.indexOf(item.group),
               offset = (group - (groups.length - 1) / 2) * Math.min(10, 30 / groups.length),
               px = x(bins.indexOf(item.ageBin)) + offset,
-              color = studyColors.get(item.group) ?? '#65736f'
+              color = studyColors.get(item.group) ?? '#65736f',
+              interval = clipFractionInterval({ item, estimate, low: intervalLow, high: intervalHigh }, low, high)
             return (
               <g key={`${item.group}-${item.ageBin}-${index}`}>
-                <line x1={px} x2={px} y1={y(item.low)} y2={y(item.high)} stroke={color} strokeWidth="2" />
-                <circle cx={px} cy={y(item.estimate)} r="4" fill={color}>
+                <line x1={px} x2={px} y1={y(interval.low)} y2={y(interval.high)} stroke={color} strokeWidth="2" />
+                {interval.clippedLow && (
+                  <path d={`M ${px - 4} ${y(low) - 5} L ${px + 4} ${y(low) - 5} L ${px} ${y(low) + 1} Z`} fill={color} />
+                )}
+                {interval.clippedHigh && (
+                  <path d={`M ${px - 4} ${y(high) + 5} L ${px + 4} ${y(high) + 5} L ${px} ${y(high) - 1} Z`} fill={color} />
+                )}
+                <circle cx={px} cy={y(estimate)} r="4" fill={color}>
                   <title>
-                    {item.group}, {item.ageBin}: {(item.estimate * 100).toFixed(2)} pp (95% CI{' '}
-                    {(item.low * 100).toFixed(2)}–{(item.high * 100).toFixed(2)} pp), n={item.samples}
+                    {item.group}, {item.ageBin}: {(estimate * 100).toFixed(2)}% estimated fraction (shifted 95% CI{' '}
+                    {(intervalLow * 100).toFixed(2)}–{(intervalHigh * 100).toFixed(2)}%), n={item.samples}
                   </title>
                 </circle>
               </g>
@@ -99,6 +107,15 @@ export function FractionAgePlot({
           })}
           <text x={(left + right) / 2} y="350" textAnchor="middle" className="fraction-chart-text">
             Age (years)
+          </text>
+          <text
+            x="15"
+            y={(top + bottom) / 2}
+            textAnchor="middle"
+            className="fraction-chart-text"
+            transform={`rotate(-90 15 ${(top + bottom) / 2})`}
+          >
+            Adjusted fraction (%)
           </text>
         </svg>
       </div>

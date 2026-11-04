@@ -11,19 +11,23 @@ export async function addStudySupport(stage) {
       const key = JSON.stringify([model.covariate, model.contrast])
       if (!supports.has(key)) supports.set(key, new Map())
       const counts = supports.get(key)
-      const seen = new Set()
+      // A study can contain multiple source rows that resolve to the same
+      // displayed gene symbol. Count that gene once for the study, and treat
+      // it as significant if any corresponding row passes the threshold.
+      const studyGenes = new Map()
       for (const path of [model.recordsAsset, ...Object.values(model.recordBuckets || {})].filter(Boolean)) {
         const chunk = JSON.parse(await readFile(join(stage, path), 'utf8'))
         for (const record of chunk.cellTypes[0].models[0].records) {
           if (record.padj == null) continue
-          const gene = record.gene.toUpperCase()
-          if (seen.has(gene)) throw new Error(`Duplicate gene in ${model.id}: ${record.gene}`)
-          seen.add(gene)
-          const value = counts.get(gene) || { significant: 0, tested: 0 }
-          value.tested += 1
-          if (record.padj < 0.05) value.significant += 1
-          counts.set(gene, value)
+          const gene = record.gene
+          studyGenes.set(gene, (studyGenes.get(gene) || false) || record.padj < 0.05)
         }
+      }
+      for (const [gene, significant] of studyGenes) {
+        const value = counts.get(gene) || { significant: 0, tested: 0 }
+        value.tested += 1
+        if (significant) value.significant += 1
+        counts.set(gene, value)
       }
     }
     for (const model of cell.models) {
@@ -34,7 +38,7 @@ export async function addStudySupport(stage) {
         const target = join(stage, path)
         const chunk = JSON.parse(await readFile(target, 'utf8'))
         for (const record of chunk.cellTypes[0].models[0].records)
-          record.studySupport = counts.get(record.gene.toUpperCase()) || null
+          record.studySupport = counts.get(record.gene) || null
         await writeFile(target, JSON.stringify(chunk))
       }
     }

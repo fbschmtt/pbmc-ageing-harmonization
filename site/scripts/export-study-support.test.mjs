@@ -17,10 +17,15 @@ it('counts finite study p-values for each matching contrast, including nonsignif
     { id: 'different', model: 'per_study', study: 'c', covariate: 'age', contrast: 'different', recordsAsset: 'de-models/c.json' },
   ]
   const records = {
-    merged: [{ gene: 'GENE', padj: 0.01 }, { gene: 'MISSING', padj: 0.01 }],
+    merged: [{ gene: 'GENE', padj: 0.01 }, { gene: 'gene', padj: 0.01 }, { gene: 'MISSING', padj: 0.01 }],
     lookup: [{ gene: 'OTHER', padj: 0.5 }],
     a: [{ gene: 'GENE', padj: 0.01 }],
-    'a-other': [{ gene: 'OTHER', padj: 0.05 }, { gene: 'MISSING', padj: null }],
+    'a-other': [
+      { gene: 'OTHER', padj: 0.05 },
+      { gene: 'MISSING', padj: null },
+      { gene: 'GENE', padj: 0.2 },
+      { gene: 'gene', padj: 0.2 },
+    ],
     b: [{ gene: 'GENE', padj: 0.04 }, { gene: 'OTHER', padj: 0.001 }],
     c: [{ gene: 'GENE', padj: 0.001 }],
   }
@@ -31,6 +36,7 @@ it('counts finite study p-values for each matching contrast, including nonsignif
   const read = async (name) => JSON.parse(await readFile(join(root, `de-models/${name}.json`), 'utf8')).cellTypes[0].models[0].records
   expect(await read('merged')).toMatchObject([
     { gene: 'GENE', studySupport: { significant: 2, tested: 2 } },
+    { gene: 'gene', studySupport: { significant: 0, tested: 1 } },
     { gene: 'MISSING', studySupport: null },
   ])
   expect(await read('lookup')).toMatchObject([{ gene: 'OTHER', studySupport: { significant: 1, tested: 2 } }])

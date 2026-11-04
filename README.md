@@ -204,6 +204,14 @@ this pattern. Harmonization reports record the source column, symbol-like
 feature count, identifier-like feature count, missing names, and duplicate-name
 counts so source annotation quality is visible rather than implicit.
 
+Nehar-Belaid Treg per-study results contain both `C2ORF15` and `C2orf15` in the
+sex model. These spellings are kept distinct: feature aggregation matches exact
+symbol text, and the site exporter now matches exact capitalization when
+counting study support. `C2orf15` is the [HGNC-approved symbol](https://www.ncbi.nlm.nih.gov/gene/150590).
+The current handling prevents an export collision but does not combine the
+features. If canonicalization is added later, resolve symbols through stable
+gene IDs before aggregating counts; do not change capitalization globally.
+
 Configuration loading also checks adapter module existence, count-source and
 feature-repair policies, conversion declarations, and that every study input
 and preparation dependency is represented in `config/input_sources.json`.
@@ -745,7 +753,7 @@ studies, and sample counts so the actual support can be checked.
 | Juvenile versus adult age effects | Fits one model across all eligible ages with shared study-site intercepts, an age-group intercept at the juvenile/adult boundary, and separate within-group age slopes. It exports the adult age slope, the juvenile age slope, and a direct Wald contrast for predicted age 25 vs age 5, with gene-wise adjusted p-values for each contrast. The predicted contrast holds the other model covariates fixed and uses the fitted piecewise-linear trend; no study-specific slopes are fitted. Every otherwise eligible juvenile sample is retained. A rank-deficient shared design is recorded as non-estimable. The report shows juvenile-only age support, the adult-versus-juvenile slope comparison, and the age-25-versus-age-5 contrast against the juvenile slope, followed by the juvenile volcano plot and gene table. |
 | Age-trajectory DE | Replaces continuous age with age bins and retains the other core terms. It uses the configured age and bin-support filters; optional covariates are not added. |
 | Abundance changes | Fits adult-only, study-specific OLS models. Within each study, an optional covariate is included only if at least 95% of adult samples have a valid value and it varies. The model then uses complete cases across its selected terms. Smoking accepts only `yes` and `no`; other values are missing. These are study-specific estimates, not a pooled abundance effect. |
-| Age-bin abundance | Fits separate OLS fraction models per study and denominator, aligning each study's 20–30 reference to zero. Uses ten-year bins below age 90, the configured per-study minimum support, and available varying study site, sex, BMI, CMV and smoking covariates with the same 95% rule and complete cases. |
+| Age-bin abundance | Fits separate OLS fraction models per study and denominator, with each study's 20–30 reference contrast set to zero. The Composition tab anchors those contrasts at each study's adjusted reference fraction to show absolute estimated fractions. Uses ten-year bins below age 90, the configured per-study minimum support, and available varying study site, sex, BMI, CMV and smoking covariates with the same 95% rule and complete cases. |
 | Gene profiles | The PyDESeq2 age model uses the combined primary design. The exploratory age-bin model uses the same core adjustments; the per-study-slope and mixed models adjust for sex and library depth. These profile models do not add BMI, CMV, or smoking. |
 | Expression atlas and residual WGCNA | Atlas technology contrasts are descriptive, not covariate-adjusted DE. WGCNA's metadata associations are post-fit associations with module eigengenes, not covariate adjustment in the gene-level fit. |
 
@@ -810,8 +818,11 @@ per-type DE report.
 
 The report also fits separate study-specific age-bin OLS fraction models for
 both retained-PBMC and L1-parent denominators. Each supported bin is contrasted
-with the same study's 20–30 bin; estimates are aligned at zero and are not
-absolute fractions. The minimum per bin is the configured
+with the same study's 20–30 bin; the fitted coefficients are aligned at zero
+and are not absolute fractions. In the Composition tab, these contrasts are
+offset by each study's model-adjusted reference fraction so the trajectory
+points show absolute estimated fractions. Its point-based y-axis clips longer
+contrast intervals and marks truncated ends with arrows. The minimum per bin is the configured
 `study_comparison_minimum_samples_per_bin`; a supported reference and at least
 one other bin are required. Intervals are pointwise 95% OLS intervals and
 reported p-values are unadjusted across bins. Missing reference bins, insufficient

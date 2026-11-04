@@ -29,6 +29,15 @@ symbols during harmonization.
 Nehar-Belaid26 uses Supplementary Data 1, sheet `1a`, as the authoritative
 metadata for the in-house scRNA-seq cohort. The configured input is the GEO RAW tar, whose compressed 10x Matrix Market members are read directly without extraction. All complete GEX 10x triplets are discovered from archive member names; their `JB` subject IDs join to Supplementary Data 1a `IDs`, and its `Names` values become `sample_id`. In the published label H5AD, `obs["sample_id"]` is the sample identity; its cell index is not used for that purpose. Labels transfer only when `sample_id` and the A/C/G/T barcode sequence uniquely agree. This intentionally ignores the numeric 10x suffix because the published H5AD reassigned it during concatenation. Among the retained H5AD Nehar-Belaid cells, all 88 sample IDs occur in the supplement; the supplement has seven additional samples (`HC17`, `HI3`, `HI26`, `HI27`, `HO13`, `HO21`, `HY19`) with no retained label-H5AD cells, so their labels remain `not_provided`.
 
+Feature duplicate aggregation uses the exact `gene_symbol` text and does not
+normalize capitalization. Nehar-Belaid Treg per-study results contained both
+`C2ORF15` and `C2orf15`; the latter is the [HGNC-approved symbol](https://www.ncbi.nlm.nih.gov/gene/150590).
+The site exporter now preserves these as distinct symbols so capitalization
+variants do not collide during study-support counting. This does not merge the
+features during analysis. If canonicalization is needed, resolve symbols using
+stable gene IDs before summing counts; do not uppercase or lowercase every
+symbol indiscriminately.
+
 The Terekhova compact lookup is the canonical runtime input mapping each cell ID
 to its demultiplexed `Tube_id`. It was generated from the published
 `all_pbmcs_metadata.csv`, which is not reconstructible from `mmc2.xlsx` because
