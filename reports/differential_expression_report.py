@@ -3815,7 +3815,7 @@ if de_dir:
                 "principal components retained. The primary clusters use Leiden on a "
                 f"{trajectory_settings.residual_leiden_neighbors}-neighbor graph built from "
                 f"up to {trajectory_settings.residual_pc_hdbscan_components} PCs. The "
-                f"selected resolution targets at least "
+                f"selected resolution targets about "
                 f"{trajectory_settings.residual_leiden_min_clusters} clusters."
             ))
             with report_phase("residual_sample_umap_plots", n_samples=len(residual_clusters)):
@@ -3828,9 +3828,9 @@ if de_dir:
             display(Markdown("### Alternative clusterings"))
             display(Markdown(
                 "The primary Leiden resolution is selected from the configured candidates "
-                f"{trajectory_settings.residual_leiden_resolutions}: choose the lowest that "
-                f"reaches {trajectory_settings.residual_leiden_min_clusters} clusters, or "
-                "the candidate with the most clusters if none reach the target. The table "
+                f"{trajectory_settings.residual_leiden_resolutions}: choose the one whose "
+                f"cluster count is closest to {trajectory_settings.residual_leiden_min_clusters}, "
+                "with ties favoring fewer clusters. The table "
                 "shows candidate cluster counts; plots compare K-means and one configured "
                 "HDBSCAN result on UMAP and PCs. Marker contrasts cover at most the "
                 f"{trajectory_settings.residual_marker_max_clusters} largest clusters."

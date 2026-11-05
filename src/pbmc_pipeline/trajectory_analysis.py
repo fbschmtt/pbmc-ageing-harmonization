@@ -294,22 +294,24 @@ def residual_leiden_label_column(resolution: float) -> str:
 def select_residual_leiden_resolution(
     labels_by_resolution: dict[float, np.ndarray], minimum_clusters: int,
 ) -> float:
-    """Choose the lowest tested Leiden resolution reaching the cluster-count target.
+    """Choose the tested Leiden resolution closest to the cluster-count target.
 
-    If no tested resolution reaches the target, use the resolution with the most
-    clusters, preferring the lower resolution when counts tie.
+    Ties prefer fewer clusters, then the lower resolution. This avoids large
+    jumps in cluster count when adjacent candidate resolutions split the graph
+    very differently.
     """
     cluster_counts = {
         resolution: int(pd.Series(labels).nunique())
         for resolution, labels in labels_by_resolution.items()
     }
-    eligible = [
-        resolution for resolution, count in cluster_counts.items()
-        if count >= minimum_clusters
-    ]
-    if eligible:
-        return min(eligible)
-    return min(cluster_counts, key=lambda resolution: (-cluster_counts[resolution], resolution))
+    return min(
+        cluster_counts,
+        key=lambda resolution: (
+            abs(cluster_counts[resolution] - minimum_clusters),
+            cluster_counts[resolution],
+            resolution,
+        ),
+    )
 
 
 def residual_leiden_label_columns(settings: AgeTrajectorySettings) -> list[str]:

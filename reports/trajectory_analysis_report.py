@@ -536,8 +536,8 @@ display(Markdown(
     f"Primary residual clusters use Leiden on the graph of the first up to "
     f"{metadata['residual_pc_hdbscan_components']} PCs, with "
     f"{metadata['residual_leiden_neighbors']} neighbors. Per-type and combined analyses "
-    f"select the lowest tested resolution reaching {metadata['residual_leiden_min_clusters']} "
-    "clusters, or the tested resolution with the most clusters if none reach that target. "
+    f"select the tested resolution whose cluster count is closest to the target of "
+    f"{metadata['residual_leiden_min_clusters']} clusters (ties favor fewer clusters). "
     f"Trajectory UMAP separately uses {metadata['umap_neighbors']} neighbors; gene-expression UMAP uses "
     f"{expression_atlas_support.get('umap_neighbors', 'not run')} neighbors after up to "
     f"{expression_atlas_support.get('umap_pca_components', 'not run')} per-gene-standardized PCs."
@@ -937,10 +937,10 @@ if cross_residual_path.is_file() and cross_residual_support.get("n_cell_types", 
             display(Markdown("_Cross-cell-type residual PCA scores are unavailable._"))
         display(Markdown("### Alternative clusterings"))
         display(Markdown(
-            "Leiden on the PC graph is the primary clustering. It uses the lowest tested "
-            f"resolution reaching {age_trajectory_settings.residual_leiden_min_clusters} "
-            "clusters, or the tested resolution with the most clusters if none reach that "
-            f"target. The summary table includes the tested resolutions "
+            "Leiden on the PC graph is the primary clustering. It uses the tested "
+            "resolution whose cluster count is closest to the target of "
+            f"{age_trajectory_settings.residual_leiden_min_clusters} clusters "
+            "(ties favor fewer clusters). The summary table includes the tested resolutions "
             f"{age_trajectory_settings.residual_leiden_resolutions}; plots compare K-means "
             "and one configured HDBSCAN result on UMAP and PCs. Marker contrasts use at "
             f"most the largest {age_trajectory_settings.residual_marker_max_clusters} clusters."

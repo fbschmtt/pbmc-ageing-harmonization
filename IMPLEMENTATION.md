@@ -412,7 +412,7 @@ checked for drift by `make docs-check`.
 | `residual_pc_hdbscan_components` | 100 | Maximum number of leading residual PCs used for the HDBSCAN-in-PC-space alternative and primary Leiden graph. |
 | `residual_leiden_neighbors` | 15 | Number of PC-space nearest neighbors used to construct the Leiden graph; capped at one fewer than the available samples. |
 | `residual_leiden_resolutions` | `[0.25, 0.5, 1.0, 1.5]` | Candidate Leiden resolutions tested on the same PC-space graph. |
-| `residual_leiden_min_clusters` | 10 | Target used to select the lowest candidate resolution yielding at least this many clusters; if none do, use the candidate yielding the most clusters. |
+| `residual_leiden_min_clusters` | 10 | Target cluster count; select the candidate resolution whose cluster count is closest to this value, with ties favoring fewer clusters. |
 | `residual_marker_max_clusters` | 16 | Maximum number of largest clusters included in marker and feature-origin contrasts. |
 <!-- generated-age-trajectory-settings:end -->
 
@@ -436,9 +436,10 @@ requires at least ten eligible pseudobulks in each retained bin, and adjusts for
 age-bin, sex, log10(total counts), and study site when that term is estimable. Samples are clustered
 using up to `residual_pca_components` centered PCA scores. UMAP uses Euclidean
 distance in PC space. Primary residual labels use Leiden on a PC-space
-nearest-neighbor graph. The selected resolution is the lowest configured
-candidate yielding at least `residual_leiden_min_clusters` groups; if no
-candidate reaches the target, the candidate with the most groups is selected.
+nearest-neighbor graph. The selected resolution is the configured candidate
+whose cluster count is closest to `residual_leiden_min_clusters`, with ties
+favoring fewer clusters. This avoids selecting an extreme overshoot when the
+candidate resolutions produce a large jump in cluster count.
 The combined cross-cell-type report shows candidate cluster counts and compares the selected result with
 silhouette-selected K-means on UMAP and one configured HDBSCAN result on UMAP
 and on up to the configured number of leading PCs. The HDBSCAN comparisons

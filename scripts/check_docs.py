@@ -49,7 +49,7 @@ AGE_SETTING_MEANINGS = {
     "residual_pc_hdbscan_components": "Maximum number of leading residual PCs used for the HDBSCAN-in-PC-space alternative and primary Leiden graph.",
     "residual_leiden_neighbors": "Number of PC-space nearest neighbors used to construct the Leiden graph; capped at one fewer than the available samples.",
     "residual_leiden_resolutions": "Candidate Leiden resolutions tested on the same PC-space graph.",
-    "residual_leiden_min_clusters": "Target used to select the lowest candidate resolution yielding at least this many clusters; if none do, use the candidate yielding the most clusters.",
+    "residual_leiden_min_clusters": "Target cluster count; select the candidate resolution whose cluster count is closest to this value, with ties favoring fewer clusters.",
     "residual_marker_max_clusters": "Maximum number of largest clusters included in marker and feature-origin contrasts.",
 }
 
