@@ -559,11 +559,6 @@ def _run_model(
     except _NonEstimableModel as exc:
         details.update({"status": "skipped", "reason": str(exc)})
         return details
-    except ValueError as exc:
-        # Formula construction and DESeq validation use ValueError for models
-        # that cannot be estimated from this subset; keep other fits runnable.
-        details.update({"status": "skipped", "reason": str(exc)})
-        return details
     except Exception as exc:  # noqa: BLE001 - report one failed fit and continue other models
         details.update({"status": "failed", "error": f"{type(exc).__name__}: {exc}"})
         return details
@@ -1126,6 +1121,7 @@ def _write_differential_expression_manifest(
     test_mode: bool,
     synthetic_test_data: bool,
     per_type_output_dir: Path | None = None,
+    allow_partial_results: bool = False,
 ) -> dict:
     """Write the stable top-level DE index after all cell-type tasks finish."""
     spec = pipeline["differential_expression"]
@@ -1292,8 +1288,13 @@ def _write_differential_expression_manifest(
     (output_dir / "differential_expression.json").write_text(
         json.dumps(report, indent=2) + "\n"
     )
-    if failed and not completed:
+    if not completed:
         raise RuntimeError("No per-study or merged differential-expression model completed")
+    if failed and not allow_partial_results:
+        raise RuntimeError(
+            f"{failed} differential-expression model(s) failed; "
+            "pass --allow-partial-results to accept partial output"
+        )
     return report
 
 
@@ -1305,6 +1306,7 @@ def run_differential_expression(
     cpus: int = 1,
     test_mode: bool = False,
     synthetic_test_data: bool = False,
+    allow_partial_results: bool = False,
 ) -> dict:
     """Fit all cell types serially; retained for direct CLI/API use."""
     adata, spec, labels = _load_pseudobulk(input_path, pipeline)
@@ -1323,6 +1325,7 @@ def run_differential_expression(
         input_path, output_dir, pipeline, records,
         test_mode=test_mode,
         synthetic_test_data=synthetic_test_data,
+        allow_partial_results=allow_partial_results,
     )
 
 
@@ -1360,6 +1363,7 @@ def combine_cell_type_differential_expression(
     test_mode: bool = False,
     synthetic_test_data: bool = False,
     per_type_output_dir: Path | None = None,
+    allow_partial_results: bool = False,
 ) -> dict:
     """Collect parallel task results into the established DE output contract."""
     import shutil
@@ -1397,6 +1401,7 @@ def combine_cell_type_differential_expression(
         test_mode=test_mode,
         synthetic_test_data=synthetic_test_data,
         per_type_output_dir=per_type_output_dir,
+        allow_partial_results=allow_partial_results,
     )
 
 
@@ -1447,6 +1452,11 @@ def main() -> None:
         action="store_true",
         help="label results as synthetic test data without bypassing production inclusion filters",
     )
+    parser.add_argument(
+        "--allow-partial-results",
+        action="store_true",
+        help="succeed when at least one DE model completes and some others fail",
+    )
     args = parser.parse_args()
     if args.cpus < 1:
         parser.error("--cpus must be positive")
@@ -1471,6 +1481,7 @@ def main() -> None:
             test_mode=args.test_mode,
             synthetic_test_data=args.synthetic_test_data,
             per_type_output_dir=args.per_type_output_dir,
+            allow_partial_results=args.allow_partial_results,
         )
     elif args.cell_type:
         run_cell_type_differential_expression(
@@ -1490,6 +1501,7 @@ def main() -> None:
             cpus=args.cpus,
             test_mode=args.test_mode,
             synthetic_test_data=args.synthetic_test_data,
+            allow_partial_results=args.allow_partial_results,
         )
     LOGGER.info("Differential-expression results written to %s", args.output_dir)
 

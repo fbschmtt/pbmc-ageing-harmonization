@@ -15,10 +15,13 @@ downloader as study inputs; use `make download-gene-set-inputs` to retrieve them
 the static atlas example pathways without downloading study data. They are not
 tracked in Git.
 
-Downsampled smoke-test fixtures are kept separately under `test_data/` and are
-created or refreshed with `make test-data`. Do not use test-scale subsets as
-production inputs. See [INPUT_FILES.md](../INPUT_FILES.md) for the configured
-studies and their source paths. Generated conversions belong in `cache/`.
+In this development workspace, expression H5ADs under `input_data/` are
+downsampled source copies (currently 200–2,000 cells) used to exercise the
+study adapters; they are not production inputs. The deterministic 200-cell
+smoke-test fixtures are a separate layer under `test_data/`, created or
+refreshed with `make test-data`. A production checkout must provide the complete
+source artifacts described in [INPUT_FILES.md](../INPUT_FILES.md), not these
+development copies or test fixtures. Generated conversions belong in `cache/`.
 
 Fachrul26 and Perez22 carry the metadata needed by their adapters in the H5AD
 `.obs` tables, so they have no supplementary runtime dependencies. Their source

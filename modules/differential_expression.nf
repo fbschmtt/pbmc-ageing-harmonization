@@ -55,6 +55,7 @@ process WRITE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION_MANIFEST {
     path cell_type_results
     val de_test_mode
     val synthetic_test_data
+    val allow_partial_results
 
     output:
     path 'analysis/combined/differential_expression', emit: results
@@ -63,12 +64,13 @@ process WRITE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION_MANIFEST {
     script:
     def test_mode_argument = de_test_mode ? '--test-mode' : ''
     def synthetic_data_argument = synthetic_test_data ? '--synthetic-test-data' : ''
+    def partial_results_argument = allow_partial_results ? '--allow-partial-results' : ''
     """
     pbmc-differential-expression --input ${pseudobulk_input} \
       --output-dir analysis/combined/differential_expression \
       --per-type-output-dir analysis/per_type --config ${pipeline_config} \
       --combine-cell-type-results ${cell_type_results} \
-      ${test_mode_argument} ${synthetic_data_argument}
+      ${test_mode_argument} ${synthetic_data_argument} ${partial_results_argument}
     """
 }
 
@@ -95,7 +97,6 @@ process RENDER_CROSS_CELL_TYPE_ANALYSIS_REPORT {
 
 process RENDER_PER_TYPE_DIFFERENTIAL_EXPRESSION_REPORTS {
     tag { slug }
-    errorStrategy 'ignore'
     publishDir "${params.outdir}/analysis/per_type", mode: 'copy', overwrite: true,
         saveAs: { filename ->
             filename.startsWith("${slug}/differential_expression/") ? filename : null

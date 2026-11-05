@@ -8,6 +8,7 @@ const bins = ['20-30', '30-40', '40-50', '50-60', '60-70', '70-80', '80-90']
 
 export async function exportTrajectoryView(input, output, cellTypes, counts) {
   const trajectoryOut = join(dirname(output), 'pipeline-trajectory-index.json')
+  const previewOut = join(dirname(output), 'pipeline-trajectory-preview.svg')
   const base = join(input, '..', 'combined', 'trajectory')
   const csv = await optional(join(base, 'cross_cell_type_trajectory_clusters.csv'))
   const meta = await optional(join(base, 'analysis_metadata.json'))
@@ -105,6 +106,34 @@ export async function exportTrajectoryView(input, output, cellTypes, counts) {
   }
   counts.trajectory.exported = trajectory.length
   if (trajectory.length) {
+    const visible = trajectory.filter((record) => record.adjustedPValue < 0.05)
+    if (visible.length) {
+      const width = 900,
+        height = 560,
+        padding = 28
+      const extent = visible.reduce(
+        (value, record) => ({
+          minX: Math.min(value.minX, record.x),
+          maxX: Math.max(value.maxX, record.x),
+          minY: Math.min(value.minY, record.y),
+          maxY: Math.max(value.maxY, record.y),
+        }),
+        { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity },
+      )
+      const { minX, maxX, minY, maxY } = extent
+      const xSpan = Math.max(maxX - minX, Number.EPSILON)
+      const ySpan = Math.max(maxY - minY, Number.EPSILON)
+      const points = visible.map((record) => {
+        const x = padding + ((record.x - minX) / xSpan) * (width - padding * 2)
+        const y = height - padding - ((record.y - minY) / ySpan) * (height - padding * 2)
+        const color = record.tissue === 'brain' ? '#bb806f' : '#789eaa'
+        return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="2.2" fill="${color}" fill-opacity="0.66"/>`
+      }).join('')
+      await writeFile(
+        previewOut,
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="title"><title id="title">Preview of significant cross-cell-type age-bin trajectories</title><rect width="100%" height="100%" fill="#f7f8f3"/>${points}</svg>\n`,
+      )
+    } else await remove(previewOut)
     await writeFile(
       trajectoryOut,
       JSON.stringify({
@@ -127,5 +156,8 @@ export async function exportTrajectoryView(input, output, cellTypes, counts) {
         genes: [...new Set(trajectory.map((r) => r.gene))].sort(),
       }),
     )
-  } else await remove(trajectoryOut)
+  } else {
+    await remove(trajectoryOut)
+    await remove(previewOut)
+  }
 }

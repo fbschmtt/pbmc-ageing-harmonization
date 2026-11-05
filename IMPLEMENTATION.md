@@ -102,7 +102,8 @@ The core merge writes no global normalization, embedding, graph, or prediction.
   cross-cell-type analysis report rendered by `run-de`.
 - `scripts/render_report_index.py`: builds the lightweight HTML index from
   harmonization QC, integration benchmark, the combined cross-cell-type report,
-  and the residual and DE reports currently published per type.
+  and available per-type residual, DE, and age-clock reports. When present, the
+  run and cell-type manifests restrict the study and per-type lists.
 - `src/pbmc_pipeline/synthetic_de.py`: deterministic on-demand positive-fit
   pseudobulk fixture generation (36 samples per study, balanced across two
   developmental and seven adult age decades); the generated H5AD is ignored
@@ -161,7 +162,9 @@ For `--outdir <outdir>`, the normal outputs are:
   benchmark report)
 - `<outdir>/analysis/per_type/<cell-type-slug>/split.h5ad` (reusable raw-count split)
 - `<outdir>/analysis/per_type/<cell-type-slug>/analysis/{analysis.h5ad,report.html,executed.ipynb}` (optional cell-type analysis and reports)
-- `<outdir>/index.html` (links to harmonization QC, integration benchmark, combined cross-type analysis, and available residual and DE reports per cell type)
+- `<outdir>/index.html` (links to harmonization QC, integration benchmark, combined cross-type analysis, and available per-type residual, DE, and age-clock reports)
+- `<outdir>/analysis/per_type/<cell-type-slug>/ageing_clock/` (optional clock models, metadata, and reports)
+- `<outdir>/analysis/per_type/age_clock_all_types_summary.json` (optional all-type clock run summary)
 - `<outdir>/analysis/per_type/cell_type_manifest.json` (optional downstream provenance and completeness contract)
 - `<outdir>/analysis/combined/differential_expression/*.csv` (combined cross-cell-type DE results and manifest)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/...csv` (per-study and per-type combined covariate results)
@@ -196,10 +199,10 @@ the configured unnormalized integer count matrix. `.raw` is `None` and
 `.layers` is empty. Normalized matrices may be created transiently for
 annotation or embeddings, but are never retained in the output. This prevents
 an alternate normalized matrix from being mistaken for analysis input.
-For CellTypist harmonization, the validated count object is written to the final
-H5AD before normalization. Analysis then uses the in-memory `.X`; after
-annotation, that normalized matrix is released and the H5AD's metadata and
-embeddings are updated in place while preserving the saved count matrix.
+For CellTypist harmonization, the validated count object is written to the
+output H5AD before normalization. Analysis then uses the in-memory `.X`; after
+annotation, that normalized matrix is released and metadata and embeddings are
+updated in place, preserving the saved count matrix.
 
 Merged pseudobulk `.var` records per-study gene availability. A gene absent
 from an input study is represented by an outer-join zero only for that study;
@@ -267,8 +270,9 @@ object.
 The analysis task writes raw counts to the planned `analysis/analysis.h5ad`
 before normalizing `.X` in memory. After PCA, Harmony neighbours/UMAP, Leiden
 clustering, and marker ranking, it releases the normalized `.X` and updates
-metadata and embeddings in that H5AD, preserving the on-disk counts without an
-in-memory raw-count copy. PCA preparation uses the shared
+metadata and embeddings in place. This preserves the on-disk counts without an
+in-memory raw-count copy.
+PCA preparation uses the shared
 `pbmc_pipeline.embedding.prepare_sparse_pca` function described above. Stage
 orchestration, graph construction, Harmony, clustering, and markers are in
 `pbmc_pipeline.cell_type.analyse_cell_type`; harmonization orchestration is in

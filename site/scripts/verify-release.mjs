@@ -93,6 +93,23 @@ export async function verifyRelease(directory) {
         throw new Error(`Invalid study figure: ${asset.path}`)
       continue
     }
+    if (asset.kind === 'de_download') {
+      if (!asset.path.startsWith('de-downloads/') || !asset.path.endsWith('.csv'))
+        throw new Error(`Invalid combined-model download: ${asset.path}`)
+      continue
+    }
+    if (asset.kind === 'de_preview') {
+      if (!asset.path.startsWith('de-previews/') || !asset.path.endsWith('.svg') ||
+          !bytes.toString('utf8').startsWith('<svg xmlns="http://www.w3.org/2000/svg"'))
+        throw new Error(`Invalid differential-expression preview: ${asset.path}`)
+      continue
+    }
+    if (asset.kind === 'trajectory_preview') {
+      if (asset.path !== 'pipeline-trajectory-preview.svg' ||
+          !bytes.toString('utf8').startsWith('<svg xmlns="http://www.w3.org/2000/svg"'))
+        throw new Error('Invalid trajectory map preview image')
+      continue
+    }
     const value = JSON.parse(bytes.toString('utf8'))
     if (value.releaseId !== manifest.releaseId || !validAsset(asset.kind, value))
       throw new Error(`Invalid release asset: ${asset.path}`)
@@ -130,9 +147,13 @@ export async function verifyRelease(directory) {
     if (ids.has(cell.id) || labels.has(cell.label)) throw new Error('Duplicate cell type ID or label')
     ids.add(cell.id)
     labels.add(cell.label)
+    if (cell.previewAsset && !seen.has(cell.previewAsset))
+      throw new Error(`Missing differential-expression preview: ${cell.previewAsset}`)
     if (new Set(cell.models.map((model) => model.id)).size !== cell.models.length)
       throw new Error(`Duplicate model ID: ${cell.id}`)
     for (const model of cell.models) {
+      if (model.downloadAsset && (model.model === 'per_study' || !seen.has(model.downloadAsset)))
+        throw new Error(`Invalid combined-model download reference: ${cell.id}/${model.id}`)
       if (!model.recordsAsset) continue
       const chunk = parsed.get(model.recordsAsset)
       if (
@@ -163,10 +184,21 @@ export async function verifyRelease(directory) {
     }
     if (cell.trajectoryAsset && !parsed.has(cell.trajectoryAsset))
       throw new Error(`Missing age preview: ${cell.trajectoryAsset}`)
+    if (cell.referenceExpressionAsset) {
+      const expression = parsed.get(cell.referenceExpressionAsset)
+      if (!expression || expression.cellType !== cell.label)
+        throw new Error(`Invalid reference-expression asset reference: ${cell.id}`)
+    }
   }
   const trajectory = parsed.get('pipeline-trajectory-index.json')
   for (const target of Object.values(trajectory?.geneBuckets || {})) {
     if (!parsed.has(target)) throw new Error('Missing trajectory gene chunk')
+  }
+  const trajectoryMap = parsed.get('pipeline-trajectory-map.json')
+  for (const target of Object.values(trajectoryMap?.geneBuckets || {})) {
+    const chunk = parsed.get(target)
+    if (!chunk || chunk.release !== trajectoryMap.release)
+      throw new Error(`Invalid trajectory detail reference: ${target}`)
   }
   for (const [path, preview] of parsed) {
     if (!path.startsWith('age-previews/') || !preview.geneBuckets) continue

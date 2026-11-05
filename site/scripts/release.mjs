@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { gzip, gzipSync } from 'node:zlib'
@@ -19,6 +19,31 @@ import { addStudySupport } from './export-study-support.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const gzipAsync = promisify(gzip)
+function differentialPreviewSvg(records, label) {
+  const width = 900, height = 520, left = 76, right = 24, top = 48, bottom = 58
+  const safeLabel = label.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;')
+  const finite = records.filter((record) => Number.isFinite(record.effect) && Number.isFinite(record.padj))
+  if (!finite.length) return null
+  const nonSignificant = finite.filter((record) => record.padj >= 0.05)
+  const significant = finite.filter((record) => record.padj < 0.05)
+  const sample = (rows, maximum) => rows.length <= maximum
+    ? rows
+    : rows.filter((_, index) => index % Math.ceil(rows.length / maximum) === 0).slice(0, maximum)
+  const visible = [...sample(nonSignificant, 2400), ...sample(significant, 3600)]
+  const magnitudes = finite.map((record) => Math.abs(record.effect)).sort((a, b) => a - b)
+  const xLimit = Math.max(0.5, magnitudes[Math.floor((magnitudes.length - 1) * 0.98)])
+  const maxScore = finite.reduce((maximum, record) => Math.max(maximum, -Math.log10(Math.max(record.padj, 1e-15))), 0)
+  const yLimit = Math.max(2, Math.min(15, maxScore))
+  const x = (value) => left + ((Math.max(-xLimit, Math.min(xLimit, value)) + xLimit) / (2 * xLimit)) * (width - left - right)
+  const y = (value) => height - bottom - (Math.min(yLimit, value) / yLimit) * (height - top - bottom)
+  const points = visible.map((record) => {
+    const score = -Math.log10(Math.max(record.padj, 1e-15))
+    const significant = record.padj < 0.05
+    return `<circle cx="${x(record.effect).toFixed(1)}" cy="${y(score).toFixed(1)}" r="2.1" fill="${significant ? '#3b8c78' : '#9ca6a3'}" fill-opacity="${significant ? '0.72' : '0.32'}"/>`
+  }).join('')
+  const threshold = -Math.log10(0.05)
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="title desc"><title id="title">Differential expression preview for ${safeLabel}</title><desc id="desc">Static preview of the combined age model volcano plot. Interactive results are loading.</desc><rect width="100%" height="100%" fill="#fbfaf7"/><text x="${left}" y="28" font-family="sans-serif" font-size="17" fill="#263633">${safeLabel} · Combined age model</text><path d="M${left} ${top}V${height-bottom}H${width-right}" fill="none" stroke="#6d7773" stroke-width="1"/><path d="M${left} ${y(threshold).toFixed(1)}H${width-right}" stroke="#9d7d45" stroke-dasharray="5 5" stroke-width="1"/>${points}<text x="${(left + width - right) / 2}" y="${height-16}" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#44524e">Effect (log₂ fold change)</text><text transform="translate(18 ${(top + height - bottom) / 2}) rotate(-90)" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#44524e">−log₁₀ adjusted p-value</text><text x="${width-right-8}" y="${(y(threshold)-6).toFixed(1)}" text-anchor="end" font-family="sans-serif" font-size="11" fill="#806538">adjusted p = 0.05</text></svg>\n`
+}
 const formatElapsed = (milliseconds) => {
   const seconds = Math.floor(milliseconds / 1000)
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
@@ -65,9 +90,26 @@ export async function createRelease(inputPath, targetPath, options = {}) {
     progress(`Preparing release from ${input}`)
     const before = await timed('checking and hashing analysis inputs', () => sourceInventory(input, slowHash))
     const counts = await timed('exporting differential-expression and summary data', () => exportAtlas(input, join(stage, 'de-index.json'), {
-      writeModel: async (cell, model, cellIndex, modelIndex) => {
+      writeModel: async (cell, model, cellIndex, modelIndex, sourceFile) => {
         const asset = `de-models/${cellIndex}-${modelIndex}.json`
         await mkdir(join(stage, 'de-models'), { recursive: true })
+        if (model.model !== 'per_study' && model.model !== 'developmental') {
+          const downloadAsset = `de-downloads/${cell.id}/${model.model}-${model.covariate}.csv`
+          const downloadPath = join(stage, downloadAsset)
+          await mkdir(dirname(downloadPath), { recursive: true })
+          await copyFile(sourceFile, downloadPath)
+          model.downloadAsset = downloadAsset
+        }
+        if (model.model === 'merged' && model.covariate === 'age') {
+          const preview = differentialPreviewSvg(model.records, cell.label)
+          if (preview) {
+            const previewAsset = `de-previews/${cell.id}.svg`
+            const previewPath = join(stage, previewAsset)
+            await mkdir(dirname(previewPath), { recursive: true })
+            await writeFile(previewPath, preview)
+            cell.previewAsset = previewAsset
+          }
+        }
         const allRecords = model.records
         const otherBuckets = new Map()
         for (const record of allRecords) {
@@ -154,6 +196,43 @@ export async function createRelease(inputPath, targetPath, options = {}) {
     const trajectoryPath = join(stage, 'pipeline-trajectory-index.json')
     if (await exists(trajectoryPath)) {
       const trajectory = JSON.parse(await readFile(trajectoryPath, 'utf8'))
+      const mapBuckets = new Map()
+      for (const record of trajectory.records) {
+        const bucket = geneBucket(record.gene)
+        if (!mapBuckets.has(bucket)) mapBuckets.set(bucket, [])
+        mapBuckets.get(bucket).push(record)
+      }
+      const trajectoryMap = {
+        schemaVersion: 1,
+        release: trajectory.release,
+        warning: trajectory.warning,
+        description: trajectory.description,
+        records: trajectory.records
+          .filter((record) => record.adjustedPValue < 0.05)
+          .map(({ id, x, y, cellType, tissue, gene, adjustedPValue, cluster }) =>
+            ({ id, x, y, cellType, tissue, gene, adjustedPValue, cluster })),
+        tissues: trajectory.tissues,
+        cellTypes: trajectory.cellTypes,
+        genes: trajectory.genes,
+        geneBuckets: {},
+      }
+      if (mapBuckets.size) await mkdir(join(stage, 'trajectory-details'), { recursive: true })
+      for (const [bucket, records] of mapBuckets) {
+        const path = `trajectory-details/${bucket}.json`
+        await writeFile(
+          join(stage, path),
+          JSON.stringify({
+            schemaVersion: 1,
+            release: trajectory.release,
+            records,
+            genes: [...new Set(records.map((record) => record.gene))],
+            cellTypes: trajectory.cellTypes,
+            tissues: trajectory.tissues,
+          }),
+        )
+        trajectoryMap.geneBuckets[bucket] = path
+      }
+      await writeFile(join(stage, 'pipeline-trajectory-map.json'), JSON.stringify(trajectoryMap))
       const buckets = new Map()
       for (const record of trajectory.records) {
         if (record.adjustedPValue < 0.05) continue

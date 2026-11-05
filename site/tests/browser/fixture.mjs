@@ -63,6 +63,10 @@ export async function makeFixture(root) {
     'gene,log2FoldChange,padj,pvalue,lfcSE,baseMean,contrast\nGENE1,0.12,0.001,0.0001,0.02,10,per year\nGENE2,-0.35,0.02,0.01,0.04,20,per year\nGENE3,0.23,0.5,0.4,0.05,7,per year\n',
   )
   await write(
+    join(dir, 'reference_expression.csv'),
+    'cell_type,gene,reference_bin,n_studies,n_samples,reference_cpm\nCD14 monocyte,GENE1,20-30,1,12,123.4\nCD14 monocyte,GENE2,20-30,1,12,56.7\n',
+  )
+  await write(
     join(dir, 'study.csv'),
     'gene,log2FoldChange,padj,pvalue,lfcSE,baseMean,contrast\nGENE1,0.44,0.004,0.001,0.03,9,per decade\nGENE2,-0.21,0.03,0.02,0.05,19,per decade\n',
   )

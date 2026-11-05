@@ -7,9 +7,6 @@ class ValidationError(ValueError):
     """Raised when an input or output violates the pipeline contract."""
 
 
-COUNT_INTEGER_TOLERANCE = 1e-2
-
-
 def validate_counts(adata) -> None:
     import numpy as np
     from scipy import sparse
@@ -19,11 +16,11 @@ def validate_counts(adata) -> None:
         raise ValidationError("Count matrix contains no non-zero values")
     if not np.isfinite(values).all() or values.min() < 0:
         raise ValidationError("Count matrix must be finite and nonnegative")
-    max_integer_deviation = float(np.abs(values - np.rint(values)).max())
-    if max_integer_deviation > COUNT_INTEGER_TOLERANCE:
+    if not np.equal(values, np.rint(values)).all():
+        max_integer_deviation = float(np.abs(values - np.rint(values)).max())
         raise ValidationError(
-            "Matrix is not count-like: maximum deviation from the nearest integer is "
-            f"{max_integer_deviation:.3g}, exceeding {COUNT_INTEGER_TOLERANCE:g}"
+            "Matrix contains non-integer counts: maximum deviation from the nearest "
+            f"integer is {max_integer_deviation:.3g}"
         )
 
 

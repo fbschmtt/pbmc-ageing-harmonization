@@ -618,6 +618,23 @@ footer {
   }
 }
 
+.trajectory-map-loading {
+  max-width: 1000px;
+  margin: 24px 0;
+  border: 1px solid #d9e1da;
+  background: #f7f8f3;
+}
+.trajectory-map-loading img {
+  display: block;
+  width: 100%;
+  max-height: 62vh;
+  object-fit: contain;
+}
+.trajectory-map-loading figcaption {
+  padding: 10px 14px;
+  color: #526961;
+  font-size: 13px;
+}
 .trajectory-notice {
   padding: 12px max(4vw, 34px);
   background: #f5eddb;

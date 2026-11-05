@@ -568,18 +568,19 @@ def _legacy_bulk_metadata(
 ) -> pd.DataFrame:
     """Aggregate only explicitly approved sample-level metadata columns."""
     values_by_column: dict[str, list[object]] = {}
+    group_codes = pd.Series(codes, index=obs.index, name="group_code")
     for column in columns:
-        aggregated: list[object] = []
-        series = obs[column]
-        for group_code in range(n_groups):
-            values = series.iloc[np.flatnonzero(codes == group_code)]
+        def summarize(values: pd.Series) -> object:
             present = values[values.notna()]
             if present.empty:
-                aggregated.append(np.nan)
-            elif len(present) == len(values) and present.nunique(dropna=True) == 1:
-                aggregated.append(present.iloc[0])
-            else:
-                aggregated.append("Heterogeneous During Bulk")
+                return np.nan
+            if len(present) == len(values) and present.nunique(dropna=True) == 1:
+                return present.iloc[0]
+            return "Heterogeneous During Bulk"
+
+        grouped = obs[column].groupby(group_codes, sort=False, dropna=False)
+        summarized = grouped.agg(summarize).reindex(range(n_groups))
+        aggregated = summarized.tolist()
         if "Heterogeneous During Bulk" in aggregated:
             values_by_column[column] = [
                 value if isinstance(value, str) else str(value) for value in aggregated

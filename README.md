@@ -191,16 +191,19 @@ metadata-only filtering from leaking excluded cells into downstream outputs.
 Choose `counts_source` as `X`, `raw`, or `layer:<layer_name>` after checking
 which matrix contains unnormalized integer counts. The harmonized output always
 stores only those selected counts in `.X`; source `.raw` and every source layer
-are removed. For CellTypist studies, harmonization writes this count object to
-the final H5AD before normalizing `.X` in memory, then updates metadata and
-embeddings on disk while preserving the saved counts.
+are removed. For CellTypist studies, harmonization writes counts to the output
+H5AD before normalizing `.X` in memory. After annotation, it updates metadata
+and embeddings in place while preserving the saved count matrix, then writes
+the run report.
 
 When an H5AD uses Ensembl IDs as `.var_names` but carries gene symbols in a
 feature metadata column, configure `features.source_column` to that symbol
 column (usually `feature_name`). The harmonizer repairs `.var_names` from this
-column and sums duplicate symbols according to `duplicate_policy`; it does not
-use the Ensembl index for downstream gene joins. Fachrul26 and Perez22 follow
-this pattern. Harmonization reports record the source column, symbol-like
+column and sums duplicate symbols according to `duplicate_policy`. Named genes
+use the configured source column; only missing or blank names fall back to the
+original `.var_names` identifiers; unresolved identifiers cause harmonization
+to fail rather than creating a shared placeholder gene. Fachrul26 and Perez22
+follow this pattern. Harmonization reports record the source column, symbol-like
 feature count, identifier-like feature count, missing names, and duplicate-name
 counts so source annotation quality is visible rather than implicit.
 
@@ -280,7 +283,7 @@ configuration field; it is intentionally not duplicated in `uns`.
 | AIDA25         | [10.1016/j.cell.2025.02.017](https://doi.org/10.1016/j.cell.2025.02.017)     | `donor_id`                  | country-qualified donor ID    | supplementary experimental batch | Source `obs.assay` reports 10x 5′ v2. Lonza controls (`DCP_ID` prefixed `LONZA`) are reported as European and retained in harmonized and pseudobulk data for calibration, but excluded from DE models by subject ID. Repeated donor-country records are deduplicated in the supplementary metadata join and their batch is marked unclear. BMI uses the supplementary donor metadata.                                                                                                                                                                                                                                                        |
 | AIFI           | [10.1038/s41586-025-09686-5](https://doi.org/10.1038/s41586-025-09686-5)     | specimen GUID prefix        | specimen GUID                 | `pool_id` (`aifi_` prefix)       | The configured Immune Health Atlas reference has one sample per donor. Each `pool_id` combines hashed samples and is distributed across chips and wells; a sample maps to one pool, while it can span wells. We use this lowest shared grouping for technical batch. A broader `batch_id` groups the processing occasion (up to 24 samples across multiple pools), not an exact timestamp; when the same aliquots are processed for scRNA-seq and flow cytometry on the same day, they share a Batch ID. The source fixture confirms one pool per specimen and multiple specimens per pool. Although the source includes `sample.visitName`, it is not retained as a separate harmonized timepoint field. The source H5AD has no assay field. ([AIFI pipeline](https://apps.allenimmunology.org/aifi/pipelines/multiplexed-scrna-seq/)) |
 | CIMA           | [10.1126/science.adt3130](https://doi.org/10.1126/science.adt3130)           | `obs.sample`                | `obs.sample`                  | `obs.RNA_experiment`             | The H5AD embeds the retained sample and experiment fields; `RNA_experiment` groups samples by date-coded RNA processing experiment, while `library` can vary within a sample. Each of the 408 retained sample IDs maps to exactly one of 51 RNA experiment groups in local metadata. The separately supplied metadata table is deliberately not a workflow input. Native `cell_type_l4` (70 labels) is retained as the per-study label. Paper methods report DNBelab C Series, STAR v2.7.2b, GRCh38, and exclusion of intronic reads; no demultiplexing method is described, so `none` is inferred. Frozen status is not reported.                                                            |
-| OneK1K         | [10.1126/science.abf3041](https://doi.org/10.1126/science.abf3041)           | `donor_id`                  | `donor_id`                    | `pool_number`                    | No separate specimen identifier is present in the source H5AD; the sample-per-donor assumption remains under review.                                                                                                                                                                                                                                                                                                             |
+| OneK1K         | [10.1126/science.abf3041](https://doi.org/10.1126/science.abf3041)           | `donor_id`                  | `donor_id`                    | `pool_number`                    | Donors are the biological sample-level replicates. `pool_number` records the multiplexed 10x processing pool, which contains cells from multiple donors, and is retained as a technical batch. The source has no separate specimen or timepoint field.                                                                                                                                                                                   |
 | Terekhova23    | [10.1016/j.immuni.2023.10.013](https://doi.org/10.1016/j.immuni.2023.10.013) | `Donor_id`                  | `Tube_id`                     | barcode-derived batch            | Only each donor's earliest available visit is retained before harmonization; later-visit cells are excluded. Tubes spanning multiple barcode-derived batches receive sample-specific fallback values to preserve one batch assignment per tube. The paper explicitly reports frozen input material.                                                                                                                                                                                                                                    |
 | Terekhova26    | [10.1016/j.immuni.2026.09.012](https://doi.org/10.1016/j.immuni.2026.09.012) | `obs.donor_id`              | `obs.donor_id`                | `obs.Pool`                       | The supplied author-reannotated KCL H5AD embeds all runtime metadata. Native `author_celltype` (59 labels) is retained as the per-study label. Genetic demultiplexing (`souporcell_donor`) is paired with HTO antibodies that map genotypes to samples. Paper methods report cryopreserved/thawed PBMCs, Cell Ranger multi v9.0.1, and GRCh38-2020-A; intronic reads are inferred included from the Cell Ranger v6+ default arguments. |
 | Wang25         | [10.1038/s41590-024-02059-6](https://doi.org/10.1038/s41590-024-02059-6)     | `Sample ID`                 | `Sample ID`                   | sample-specific fallback        | No separate donor or technical-batch identifier has yet been recovered, so each sample is its own batch. Fresh/frozen status is not provided in the paper or supplementary metadata; the author was contacted but did not respond.                                                                                                                                                                                                                           |
@@ -337,6 +340,12 @@ configured path. It is an acquisition preflight, not a routine test, and never
 runs as part of analysis commands. Run it before production when download
 integrity matters. Existing files are left unchanged unless
 `DOWNLOAD_FORCE=true` is supplied deliberately.
+
+This preflight can check only integrity values recorded for each artifact. A
+manual-only source with no expected size or checksum is checked for presence
+only; for example, the local Terekhova23 H5AD is a development subsample and
+can pass that presence check. See [INPUT_FILES.md](INPUT_FILES.md) for the
+development-versus-production input distinction and per-source details.
 
 The manifest records manual-only sources and their acquisition instructions.
 Synapse expression objects require portal access, the AIDA publisher
@@ -506,8 +515,8 @@ templates are not tracked. The published `executed.ipynb` is the audit artifact.
 
 The merge QC report summarizes sample-level technology, intronic-read
 inclusion, and frozen-status distributions with provenance status. OneK1K's
-sample counts use `donor_id` until its biological collection identity is
-confirmed.
+sample counts use `donor_id`; its `pool_number` is a multiplexed technical
+processing group, not the biological sample.
 
 ### Report artifacts and web delivery
 
@@ -549,10 +558,10 @@ creates the type-specific PCA/UMAP/Leiden embedding, marker tables, PC--age
 correlation table, and `analysis.h5ad`. The PCA section shows each principal
 component's individual share of variance explained, not cumulative variance.
 Analysis writes the raw-count `analysis.h5ad` before normalization, then updates
-its metadata and embeddings on disk after analysis finishes. This avoids
-holding a second full counts matrix in memory. Shared feature selection and PCA
-preparation live in `pbmc_pipeline.embedding.prepare_sparse_pca`; per-type graph
-construction, Harmony correction, clustering, and marker ranking are in
+its metadata and embeddings in place after analysis finishes. This avoids
+holding a second full counts matrix in memory. Shared feature selection and PCA preparation live in
+`pbmc_pipeline.embedding.prepare_sparse_pca`; per-type graph construction,
+Harmony correction, clustering, and marker ranking are in
 `pbmc_pipeline.cell_type.analyse_cell_type`.
 `RENDER_CELL_TYPE_REPORT` then loads
 that analysis artifact plus the primitive raw-count H5AD to create the executed
@@ -597,13 +606,14 @@ first, then `make run-cell-type-analysis-test` to consume the test merge under
 
 The central HTML report index is written to `<outdir>/index.html`. It links
 to the merged and per-study harmonization QC reports, integration benchmark,
-combined cross-cell-type analysis, and currently published residual, DE, and
-age-clock reports for each type. Age-clock entries include the merged method
-comparison and each method's report, based on the clock manifest. Core,
-integration-benchmark, DE, cell-type, and age-clock Make targets refresh it
-after publishing. The index checks report files independently, and adds known
-types from the cell-type and age-clock manifests when available. To rebuild it
-manually after moving or removing reports, run
+combined cross-cell-type analysis, and per-type residual, DE, and age-clock
+reports. When present, the run manifest limits study QC links to its selected
+studies, and the cell-type manifest defines the per-type list. Without a
+cell-type manifest, the index discovers types from available report files.
+Age-clock entries include the merged method comparison and each method's report,
+based on the clock manifest. Core, integration-benchmark, DE, cell-type, and
+age-clock Make targets refresh it after publishing. To rebuild it manually
+after moving or removing reports, run
 `make render-report-index OUTDIR=<outdir>`.
 
 The raw-count splits are published under `<outdir>/analysis/per_type/<cell-type-slug>/split.h5ad` so one
@@ -925,6 +935,12 @@ without repeating analysis. That renderer writes single-cell artifacts beneath
 report files into the DE directory. Named Nextflow subworkflows group splitting
 plus analysis, analysis of an existing split, and report rendering while
 retaining the separate single-cell and pseudobulk entry points.
+
+DE model failures are recorded in the manifest, and the workflow now fails when
+any requested model fails or when no model completes. To accept partial results
+when at least one model completes, run `make run-de ALLOW_PARTIAL_RESULTS=true`
+(or the corresponding `run-de-test` target). Per-type DE report-rendering
+failures also fail the workflow.
 
 ### Focused gene profiling
 

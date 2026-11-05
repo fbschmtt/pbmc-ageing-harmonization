@@ -82,6 +82,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
     })
     const built = await verifyRelease(join(dist, 'data'))
     assert.equal(built.releaseId, manifest.releaseId)
+    assert.ok(built.assets.some((asset) => asset.kind === 'trajectoryMap'))
     const report = built.assets.find((asset) => asset.kind === 'report' && asset.cellType === 'CD14 monocyte')
     assert.ok(report)
     assert.equal(
@@ -96,7 +97,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       executablePath: process.env.SITE_BROWSER_EXECUTABLE || undefined,
     })
 
-    await runJourney('release', 'fetches only the selected DE model and uses compressed assets', async () => {
+    await runJourney('release', 'preloads combined age results and keeps per-study fits lazy', async () => {
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
@@ -107,24 +108,88 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
           requests.some((path) => path.includes('/data/de-models/')),
           false,
         )
-        await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
-        await visible(page.locator('.de-statistics'))
+        await page.waitForTimeout(1600)
         const catalogue = JSON.parse(await readFile(join(dist, 'data/de-index.json'), 'utf8'))
         const cell = catalogue.cellTypes.find((item) => item.label === 'CD14 monocyte')
+        const combined = cell.models.find((model) => model.model === 'merged' && model.covariate === 'age')
         const other = cell.models.find((model) => model.model === 'per_study')
         const otherPaths = [other.recordsAsset, ...Object.values(other.recordBuckets || {})]
-        await page.getByLabel('Highlight genes').fill('GENE3')
-        await page.waitForTimeout(1400)
         const wasRequested = (asset) =>
           requests.some((path) => path.endsWith(`/${asset}`) || path.endsWith(`/${asset}.gz.bin`))
+        assert.equal(wasRequested(combined.recordsAsset), true, 'Combined age results were not preloaded')
+        assert.equal(wasRequested(cell.referenceExpressionAsset), true, 'Reference CPM was not preloaded')
+        assert.equal(otherPaths.some(wasRequested), false, 'Per-study model was prefetched')
+        await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
+        await visible(page.locator('.de-statistics'))
+        await visible(page.getByText('123.4 CPM', { exact: false }))
+        assert.equal(await page.getByText('Mean normalized count', { exact: false }).count(), 0)
+        await visible(page.getByRole('link', { name: 'Download complete combined-model results (CSV)' }))
+        await page.getByLabel('Highlight genes').fill('GENE3')
         assert.equal(otherPaths.some(wasRequested), false, 'Unselected model was prefetched')
         assert.ok(requests.some((path) => path.includes('/data/de-models/') && path.endsWith('.gz.bin')))
         await chooseMenu(page, 'Model and contrast', 'study_a · Age (per decade)')
         await visible(page.getByText('Effect: age · per decade.', { exact: false }))
+        assert.equal(await page.getByRole('link', { name: /Download complete combined-model results/ }).count(), 0)
         assert.equal(wasRequested(other.recordsAsset), true, 'Selected model was not fetched')
         await visible(page.getByText('1 of 1 studies significant', { exact: true }))
         assert.ok((await page.locator('svg[aria-label^="Volcano plot"] title').allTextContents())
           .some((title) => title.includes('1 of 1 studies significant')))
+      } finally {
+        await context.close()
+      }
+    })
+
+    await runJourney('release', 'shows static previews while DE and trajectory data load', async () => {
+      const context = await browser.newContext()
+      let resumeDe, resumeTrajectory
+      const deGate = new Promise((resolve) => { resumeDe = resolve })
+      const trajectoryGate = new Promise((resolve) => { resumeTrajectory = resolve })
+      try {
+        const page = await context.newPage()
+        await page.route('**/data/de-models/**', async (route) => {
+          await deGate
+          await route.continue()
+        })
+        await page.goto(served.url)
+        await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
+        await visible(page.locator('.de-preview img'))
+        assert.match(await page.locator('.de-preview img').getAttribute('src'), /de-previews\/cd14-monocyte\.svg/)
+        resumeDe()
+        await visible(page.locator('.de-statistics'))
+
+        await page.route('**/data/pipeline-trajectory-map.json*', async (route) => {
+          await trajectoryGate
+          await route.continue()
+        })
+        await page.getByText('Age-bin trajectories', { exact: false }).first().click()
+        await page.getByRole('button', { name: /Cross-type trajectory map/ }).click()
+        await visible(page.locator('.trajectory-map-loading img'))
+        resumeTrajectory()
+        await visible(page.locator('.trajectory-notice'))
+      } finally {
+        resumeDe()
+        resumeTrajectory()
+        await context.close()
+      }
+    })
+
+    await runJourney('release', 'uses legacy trajectory data when the compact map asset is absent', async () => {
+      const context = await browser.newContext()
+      try {
+        const page = await context.newPage()
+        const legacy = {
+          ...built,
+          assets: built.assets.filter((asset) => asset.kind !== 'trajectoryMap' && !asset.path.startsWith('trajectory-details/')),
+        }
+        await page.route('**/data/release.json.gz.bin', (route) =>
+          route.fulfill({ body: gzipSync(JSON.stringify(legacy)), contentType: 'application/octet-stream' }),
+        )
+        await page.goto(served.url)
+        await page.getByText('Age-bin trajectories', { exact: false }).first().click()
+        await page.getByRole('button', { name: /Cross-type trajectory map/ }).click()
+        await visible(page.locator('.trajectory-notice'))
+        await visible(page.locator('.umap'))
+        assert.equal(await page.getByText('Trajectory data is unavailable.').count(), 0)
       } finally {
         await context.close()
       }
@@ -147,7 +212,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
             delete model.recordBuckets
           }
         await page.route('**/data/de-index.json*', (route) =>
-          route.request().url().endsWith('.gz.bin')
+          new URL(route.request().url()).pathname.endsWith('.gz.bin')
             ? route.fulfill({
                 body: gzipSync(JSON.stringify(legacy)),
                 contentType: 'application/octet-stream',
@@ -535,14 +600,14 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
             ],
           }
           await page.route('**/data/release.json*', (route) =>
-            route.request().url().endsWith('.gz.bin')
+            new URL(route.request().url()).pathname.endsWith('.gz.bin')
               ? route.fulfill({
                   body: gzipSync(JSON.stringify(updated)),
                   contentType: 'application/octet-stream',
                 })
               : route.fulfill({ json: updated }),
           )
-          await page.route('**/data/gene-metadata.json', (route) =>
+          await page.route('**/data/gene-metadata.json*', (route) =>
             route.fulfill({ json: { releaseId: built.releaseId, schemaVersion: 1, genes: 'invalid' } }),
           )
           await page.goto(served.url)
@@ -573,7 +638,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
               ? { ...original, cellTypes: [{ ...original.cellTypes[0], models: 'broken' }] }
               : { ...original, releaseId: 'different-release' }
           await page.route('**/data/de-index.json*', (route) =>
-            route.request().url().endsWith('.gz.bin')
+            new URL(route.request().url()).pathname.endsWith('.gz.bin')
               ? route.fulfill({
                   body: gzipSync(JSON.stringify(payload)),
                   contentType: 'application/octet-stream',

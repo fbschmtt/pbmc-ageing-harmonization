@@ -36,6 +36,45 @@ export async function exportAtlas(inputPath, outputPath, options = {}) {
       trajectoryAsset: null,
       models,
     }
+    const referencePath = join(dir, 'reference_expression.csv')
+    try {
+      const { headers, rows } = parseCsv(await readFile(referencePath, 'utf8'))
+      const required = ['gene', 'reference_bin', 'n_studies', 'n_samples', 'reference_cpm']
+      if (required.some((name) => !headers.includes(name)))
+        throw new Error(`${referencePath}: missing reference-expression columns`)
+      const col = Object.fromEntries(headers.map((name, index) => [name, index]))
+      const referenceBin = rows[0]?.[col.reference_bin]
+      const genes = {}
+      for (const row of rows) {
+        const gene = row[col.gene]
+        const cpm = numeric(row[col.reference_cpm])
+        const studies = numeric(row[col.n_studies])
+        const samples = numeric(row[col.n_samples])
+        if (!gene || !referenceBin || row[col.reference_bin] !== referenceBin || cpm === null || cpm < 0 ||
+            !Number.isInteger(studies) || studies < 1 || !Number.isInteger(samples) || samples < studies ||
+            Object.hasOwn(genes, gene))
+          throw new Error(`${referencePath}: invalid or duplicate reference-expression row`)
+        genes[gene] = { cpm, studies, samples }
+      }
+      const methodPath = join(dir, 'reference_expression_metadata.json')
+      let method = 'Equal-study mean of per-study mean log1p(CPM), back-transformed with expm1'
+      try {
+        const metadata = JSON.parse(await readFile(methodPath, 'utf8'))
+        if (typeof metadata.method === 'string' && metadata.method) method = metadata.method
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+      }
+      const referenceExpressionAsset = `reference-expression/${entry.name}.json`
+      const referenceExpressionDirectory = resolve(output, '..', 'reference-expression')
+      await mkdir(referenceExpressionDirectory, { recursive: true })
+      await writeFile(
+        resolve(output, '..', referenceExpressionAsset),
+        JSON.stringify({ schemaVersion: 1, cellType: metadata.cell_type, referenceBin, method, genes }),
+      )
+      cell.referenceExpressionAsset = referenceExpressionAsset
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
     for (const model of metadata.models || []) {
       if (model.status !== 'complete' || model.purpose === 'age_trajectory') continue
       for (const [covariate, path] of Object.entries(model.results_by_covariate || {})) {
@@ -74,7 +113,7 @@ export async function exportAtlas(inputPath, outputPath, options = {}) {
         }
         if (options.writeModel) {
           if (!models.length) cell.trajectoryAsset = await writeAgePreview(dir, entry.name, metadata, output)
-          await options.writeModel(cell, exportedModel, cellTypes.length, models.length)
+          await options.writeModel(cell, exportedModel, cellTypes.length, models.length, file)
         }
         models.push(exportedModel)
       }

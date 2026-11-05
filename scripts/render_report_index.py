@@ -55,8 +55,14 @@ def render_report_index(outdir: Path) -> Path:
     harmonization_dir = outdir / "harmonization"
     qc_root = harmonization_dir / "harmonization_qc"
     merged_qc_report = qc_root / "merged" / "report.html"
+    run_manifest = _read_json(outdir / "run_manifest.json")
+    selected_studies = run_manifest.get("selected_studies")
     study_qc_reports = sorted(
-        (path for path in qc_root.glob("*/report.html") if path.parent.name != "merged"),
+        (
+            path for path in qc_root.glob("*/report.html")
+            if path.parent.name != "merged"
+            and (selected_studies is None or path.parent.name in selected_studies)
+        ),
         key=lambda path: path.parent.name,
     )
     benchmark_dir = harmonization_dir / "integration_benchmark"
@@ -74,16 +80,19 @@ def render_report_index(outdir: Path) -> Path:
         ]
     else:
         manifest_slugs = []
-    available_slugs = {
-        path.parent.parent.name
-        for pattern in ("*/analysis/report.html", "*/differential_expression/report.html")
-        for path in per_type_root.glob(pattern)
-    }
-    available_slugs.update(
-        path.parent.parent.name
-        for path in per_type_root.glob("*/ageing_clock/age_clock.json")
-    )
-    slugs = sorted(set(manifest_slugs) | available_slugs)
+    if cell_type_manifest.is_file():
+        slugs = sorted(set(manifest_slugs))
+    else:
+        # Standalone report targets may run without a cell-type manifest.
+        # Once a manifest exists, its contents define the current report set.
+        slugs = sorted({
+            path.parent.parent.name
+            for pattern in ("*/analysis/report.html", "*/differential_expression/report.html")
+            for path in per_type_root.glob(pattern)
+        } | {
+            path.parent.parent.name
+            for path in per_type_root.glob("*/ageing_clock/age_clock.json")
+        })
 
     def link(path: Path, label: str) -> str:
         relative = path.relative_to(outdir).as_posix()

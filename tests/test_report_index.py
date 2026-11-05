@@ -79,9 +79,9 @@ def test_report_index_links_published_reports_from_output_root(tmp_path: Path) -
     assert 'href="analysis/combined/trajectory/report.html"' in html
     assert 'href="analysis/per_type/cd14-monocyte/analysis/report.html"' in html
     assert 'href="analysis/per_type/cd14-monocyte/differential_expression/report.html"' in html
-    assert 'href="analysis/per_type/naive-cd4-t-cell/differential_expression/report.html"' in html
+    assert 'href="analysis/per_type/naive-cd4-t-cell/differential_expression/report.html"' not in html
     assert 'href="analysis/per_type/cd14-monocyte/ageing_clock/report.html"' in html
-    assert 'href="analysis/per_type/age-only-type/ageing_clock/report.html"' in html
+    assert 'href="analysis/per_type/age-only-type/ageing_clock/report.html"' not in html
     assert 'href="analysis/per_type/cd14-monocyte/ageing_clock/elastic_net/report.html"' in html
     assert (
         'href="analysis/per_type/cd14-monocyte/ageing_clock/'
@@ -93,8 +93,8 @@ def test_report_index_links_published_reports_from_output_root(tmp_path: Path) -
     assert "DE & abundance" in unescape(html)
     assert "Age clock" in html
     assert "Study-balanced elastic net" in unescape(html)
-    assert "Age-only type" in html
-    assert "<code>age-only-type</code>" in html
+    assert "Age-only type" not in html
+    assert "<code>age-only-type</code>" not in html
     assert (
         "<table><thead><tr><th>Cell type</th><th>Single-cell</th>"
         "<th>DE &amp; abundance</th>"

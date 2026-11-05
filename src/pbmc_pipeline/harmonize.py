@@ -392,7 +392,20 @@ def _repair_features(adata, spec: dict):
     import pandas as pd
     from scipy import sparse
 
-    names = _feature_names(adata, spec).astype(str)
+    names = _feature_names(adata, spec)
+    missing = names.isna() | names.str.strip().eq("")
+    if missing.any():
+        # Preserve unresolved features under their source identifiers rather
+        # than turning missing symbols into a shared artificial gene label.
+        identifiers = pd.Series(adata.var_names.astype(str), index=names.index, dtype="string")
+        names = names.copy()
+        names.loc[missing] = identifiers.loc[missing]
+        unresolved = names.loc[missing].isna() | names.loc[missing].str.strip().isin(
+            {"", "<NA>", "nan", "None"}
+        )
+        if unresolved.any():
+            raise ValueError("Missing feature names cannot be resolved to source identifiers")
+    names = names.astype(str)
     duplicated = names.duplicated(keep=False).to_numpy()
     duplicate_count = int(duplicated.sum())
     policy = spec.get("duplicate_policy", "error")

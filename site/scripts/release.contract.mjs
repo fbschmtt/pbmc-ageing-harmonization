@@ -66,8 +66,15 @@ test('release validates and inventories a snapshot; failure preserves previous r
     assert.equal(JSON.parse(de).releaseId, release.releaseId)
     assert.equal(release.assets.find((a) => a.path === 'de-index.json').sha256, sha(de))
     assert.equal(JSON.parse(de).cellTypes[0].warning, 'Synthetic data')
+    const dePreview = JSON.parse(de).cellTypes[0].previewAsset
+    assert.equal(dePreview, 'de-previews/monocyte.svg')
+    assert.match(await readFile(join(target, dePreview), 'utf8'), /<svg xmlns=/)
+    assert.ok(release.assets.some((asset) => asset.path === dePreview && asset.kind === 'de_preview'))
     const model = JSON.parse(de).cellTypes[0].models[0]
     assert.deepEqual(model.records, [])
+    assert.equal(model.downloadAsset, 'de-downloads/monocyte/merged-age.csv')
+    assert.equal(release.assets.find((asset) => asset.path === model.downloadAsset).kind, 'de_download')
+    assert.match(await readFile(join(target, model.downloadAsset), 'utf8'), /GENE2,0\.2,0\.5/)
     const chunk = JSON.parse(await readFile(join(target, model.recordsAsset), 'utf8'))
     assert.deepEqual(
       chunk.cellTypes[0].models[0].records.map((record) => record.gene),

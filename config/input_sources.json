@@ -114,9 +114,9 @@
         "terekhova23"
       ],
       "path": "input_data/terekhova23/pbmc_gex_raw_with_var_obs.h5ad",
-      "manual_url": "https://www.synapse.org/Synapse:syn49637038",
+      "manual_url": "https://www.synapse.org/Synapse:syn56693935.1",
       "source_page": "https://doi.org/10.1016/j.immuni.2023.10.013",
-      "note": "The source archive is hosted by Synapse and requires portal access. The downloader supports public direct URLs and does not implement authenticated portal downloads."
+      "note": "Download raw_counts_h5ad.tar.gz from Synapse entity syn56693935 and extract pbmc_gex_raw_with_var_obs.h5ad to this path. The downloader cannot authenticate to Synapse, and no full-file size or checksum is recorded, so it cannot distinguish a development subsample from the complete source."
     },
     {
       "id": "wang_expression",

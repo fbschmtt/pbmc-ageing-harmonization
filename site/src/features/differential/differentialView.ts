@@ -19,11 +19,12 @@ export function visibleGenes(records: Gene[], requested: ReadonlySet<string>): G
 }
 
 export function initialCell(cells: Cell[], gene: string | null, type: string | null): Cell {
+  const preferred = cells.find((item) => item.label.toLowerCase() === 'naive cd8 t cell')
   const hasGene = (item: Cell) =>
     item.models
       .find((model) => model.id === defaultModelId(item.models))
       ?.records.some((record) => record.gene === gene && hasPlottableEstimate(record))
-  return cells.find((item) => item.label === type) ?? cells.find(hasGene) ?? cells[0]
+  return cells.find((item) => item.label === type) ?? cells.find(hasGene) ?? preferred ?? cells[0]
 }
 
 export function filterGenes(model: Model | undefined, search: string): Gene[] {

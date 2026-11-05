@@ -513,13 +513,19 @@ def test_parallel_cell_type_results_rebuild_the_standard_de_manifest(tmp_path) -
     for slug, cell_type in cell_types:
         result_dir = tmp_path / "task_results" / slug
         result_dir.mkdir(parents=True)
+        (result_dir / "age.csv").write_text("gene\n", encoding="utf-8")
         (result_dir / "cell_type_result.json").write_text(json.dumps({
             "cell_type": cell_type,
             "slug": slug,
             "n_pseudobulks": 24,
             "metadata_exclusions": {},
             "excluded_samples": [],
-            "models": [],
+            "models": [{
+                "model": "per_study",
+                "study": "study_a",
+                "status": "complete",
+                "results_by_covariate": {"age": "age.csv"},
+            }],
         }))
         task_results.append(result_dir)
 
@@ -532,7 +538,7 @@ def test_parallel_cell_type_results_rebuild_the_standard_de_manifest(tmp_path) -
         per_type_output_dir=tmp_path / "analysis" / "per_type",
     )
 
-    assert report["status"] == "no_estimable_models"
+    assert report["status"] == "complete"
     assert list(report["results_by_cell_type"]) == [slug for slug, _ in cell_types]
     result_dir = (
         tmp_path / "analysis" / "per_type" / cell_types[0][0] / "differential_expression"

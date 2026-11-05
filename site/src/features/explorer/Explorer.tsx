@@ -1,7 +1,7 @@
-import { lazy, Suspense, useMemo } from 'react'
+import { lazy, Suspense, useEffect, useMemo } from 'react'
 import { GeneTypePairCard, type GeneTypePairActions } from '../../components/GeneTypePairCard'
 import { GeneSetInput } from '../../components/GeneSetInput'
-import type { Atlas, TrajectoryRecord } from '../../data/atlas'
+import type { TrajectoryMap, TrajectoryPoint, TrajectoryRecord } from '../../data/atlas'
 import type { GeneMetadataIndex } from '../../data/geneMetadata'
 import { choosePoint } from '../../data/pointSelection'
 import { parseGeneSet } from '../../data/geneSet'
@@ -19,7 +19,9 @@ export type ExplorerState = {
   umapResetVersion: number
 }
 type ExplorerProps = {
-  atlas: Atlas
+  atlas: TrajectoryMap
+  details: TrajectoryRecord[]
+  onEnsureDetails: (point: TrajectoryPoint) => void
   state: ExplorerState
   onStateChange: (state: ExplorerState) => void
   preferredGene: string | null
@@ -34,6 +36,8 @@ type ExplorerProps = {
 }
 export function Explorer({
   atlas,
+  details,
+  onEnsureDetails,
   state,
   onStateChange,
   preferredGene,
@@ -60,6 +64,10 @@ export function Explorer({
       (record) => record.gene === preferredGene,
     )
   const highlightedGenes = useMemo(() => parseGeneSet(highlightGenes), [highlightGenes])
+  const selectedDetail = details.find((record) => record.id === selectedInView?.id)
+  useEffect(() => {
+    if (selectedInView) onEnsureDetails(selectedInView)
+  }, [selectedInView?.id, onEnsureDetails])
   const highlightedMatchCount = useMemo(
     () => filtered.filter((record) => highlightedGenes.has(record.gene.toUpperCase())).length,
     [filtered, highlightedGenes],
@@ -151,13 +159,15 @@ export function Explorer({
           </div>
         </div>
         <aside className="detail-panel">
-          {selectedInView ? (
+          {selectedDetail ? (
             <GeneTypePairCard
-              record={selectedInView}
+              record={selectedDetail}
               actions={{ ...actions, onOpenTrajectory: undefined }}
-              metadata={geneMetadata?.genes[selectedInView.gene]}
+              metadata={geneMetadata?.genes[selectedDetail.gene]}
               metadataRelease={geneMetadata?.release}
             />
+          ) : selectedInView ? (
+            <p role="status">Loading details for {selectedInView.gene}…</p>
           ) : (
             <p>
               {filtered.length

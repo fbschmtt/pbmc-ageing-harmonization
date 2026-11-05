@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { prefetchReleaseAsset } from '../data/release'
 import type { Page } from './navigation'
 
 const pages: { id: Page; label: string; description: string }[] = [
@@ -22,6 +23,8 @@ export function TrajectoryMenu({ page, navigate }: { page: Page; navigate: (page
     <details
       ref={menu}
       className={`trajectory-menu ${active ? 'active' : ''}`}
+      onPointerEnter={() => void prefetchReleaseAsset('pipeline-trajectory-map.json').catch(() => {})}
+      onFocusCapture={() => void prefetchReleaseAsset('pipeline-trajectory-map.json').catch(() => {})}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false
       }}

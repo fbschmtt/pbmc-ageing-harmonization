@@ -207,7 +207,7 @@
         ]
       },
       "provenance": {
-        "sample": "needs_review: the source H5AD has donor_id and pool_number but no sample or timepoint key; currently donor_id is used for both sample and subject. Confirm one biological collection per donor.",
+        "sample": "The OneK1K cohort contributes PBMC scRNA-seq profiles at the donor level; donor_id is used for both sample and subject because no separate specimen or timepoint key is present. pool_number identifies the multiplexed processing pool and is retained as batch_single_cell, not as a biological replicate.",
         "technology": "obs.assay; values report 10x 3' v2",
         "frozen": "inferred fresh from source protocol; confirm frozen-state metadata",
         "include_intronic": "inferred",

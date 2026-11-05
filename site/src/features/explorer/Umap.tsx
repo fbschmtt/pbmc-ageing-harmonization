@@ -2,17 +2,17 @@ import { OrthographicView, type OrthographicViewState, type PickingInfo } from '
 import { ScatterplotLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { TrajectoryRecord } from '../../data/atlas'
+import type { TrajectoryPoint } from '../../data/atlas'
 import { deckColors } from '../../theme/visualEncoding'
 import { initialUmapView, type UmapViewState } from './umapView'
 
 type UmapProps = {
-  records: TrajectoryRecord[]
-  matchingRecords: TrajectoryRecord[]
-  selected: TrajectoryRecord | null
+  records: TrajectoryPoint[]
+  matchingRecords: TrajectoryPoint[]
+  selected: TrajectoryPoint | null
   focusSelection: boolean
   highlightedGenes: ReadonlySet<string>
-  onSelect: (record: TrajectoryRecord) => void
+  onSelect: (record: TrajectoryPoint) => void
   initialViewState: UmapViewState | null
   resetVersion: number
   onViewStateChange: (viewState: UmapViewState) => void
@@ -21,15 +21,15 @@ type UmapProps = {
 type Size = { width: number; height: number }
 
 const view = new OrthographicView({ id: 'umap', flipY: false })
-const getPosition = (record: TrajectoryRecord): [number, number] => [record.x, record.y]
-const getFillColor = (record: TrajectoryRecord) =>
+const getPosition = (record: TrajectoryPoint): [number, number] => [record.x, record.y]
+const getFillColor = (record: TrajectoryPoint) =>
   record.tissue === 'brain' ? deckColors.brain : deckColors.blood
-const getSubduedFillColor = (record: TrajectoryRecord) =>
+const getSubduedFillColor = (record: TrajectoryPoint) =>
   record.tissue === 'brain' ? deckColors.subduedBrain : deckColors.subduedBlood
-const getHighlightedFillColor = (record: TrajectoryRecord) =>
+const getHighlightedFillColor = (record: TrajectoryPoint) =>
   record.tissue === 'brain' ? deckColors.highlightedBrain : deckColors.highlightedBlood
 
-function fitView(records: TrajectoryRecord[], { width, height }: Size): OrthographicViewState {
+function fitView(records: TrajectoryPoint[], { width, height }: Size): OrthographicViewState {
   if (records.length === 0) return { target: [0, 0, 0], zoom: 0 }
 
   let minX = Infinity
@@ -135,7 +135,7 @@ export function Umap({
   const pointRadiusScale = 2.75 / 2 ** Number(fittedViewState.zoom ?? 0)
   const pointsLayer = useMemo(
     () =>
-      new ScatterplotLayer<TrajectoryRecord>({
+      new ScatterplotLayer<TrajectoryPoint>({
         id: 'umap-points',
         data: records,
         getPosition,
@@ -152,7 +152,7 @@ export function Umap({
 
   const matchingPointsLayer = useMemo(
     () =>
-      new ScatterplotLayer<TrajectoryRecord>({
+      new ScatterplotLayer<TrajectoryPoint>({
         id: 'umap-matching-points',
         data: matchingRecords,
         getPosition,
@@ -165,7 +165,7 @@ export function Umap({
         pickable: true,
         autoHighlight: true,
         highlightColor: [29, 52, 48, 70],
-        onClick: ({ object }: PickingInfo<TrajectoryRecord>) => {
+        onClick: ({ object }: PickingInfo<TrajectoryPoint>) => {
           if (object) onSelectRef.current(object)
         },
       }),
@@ -177,7 +177,7 @@ export function Umap({
       highlightedGenes.has(record.gene.toUpperCase()),
     )
     return highlightedRecords.length
-      ? new ScatterplotLayer<TrajectoryRecord>({
+      ? new ScatterplotLayer<TrajectoryPoint>({
           id: 'umap-gene-highlights',
           data: highlightedRecords,
           getPosition,
@@ -192,7 +192,7 @@ export function Umap({
           lineWidthUnits: 'pixels',
           stroked: true,
           pickable: true,
-          onClick: ({ object }: PickingInfo<TrajectoryRecord>) => {
+          onClick: ({ object }: PickingInfo<TrajectoryPoint>) => {
             if (object) onSelectRef.current(object)
           },
         })
@@ -202,7 +202,7 @@ export function Umap({
   const selectionLayer = useMemo(
     () =>
       selected
-        ? new ScatterplotLayer<TrajectoryRecord>({
+        ? new ScatterplotLayer<TrajectoryPoint>({
             id: 'umap-selection',
             data: [selected],
             getPosition,
@@ -255,7 +255,7 @@ export function Umap({
         getCursor={({ isDragging, isHovering }) =>
           isDragging ? 'grabbing' : isHovering ? 'pointer' : 'grab'
         }
-        getTooltip={({ object }: PickingInfo<TrajectoryRecord>) =>
+        getTooltip={({ object }: PickingInfo<TrajectoryPoint>) =>
           object
             ? {
                 text: `${object.gene} · ${object.cellType}`,

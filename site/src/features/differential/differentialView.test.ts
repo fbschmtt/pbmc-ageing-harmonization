@@ -41,6 +41,14 @@ describe('differential view selection', () => {
     expect(initialCell(cells, 'Y', 'A').label).toBe('A')
     expect(initialCell(cells, 'Y', null).label).toBe('B')
   })
+  it('defaults to Naive CD8 T cell when there is no explicit gene or cell selection', () => {
+    const cells = [
+      cell('CD14 monocyte', []),
+      cell('Naive CD8 T cell', []),
+      cell('Naive CD4 T cell', []),
+    ]
+    expect(initialCell(cells, null, null).label).toBe('Naive CD8 T cell')
+  })
   it('filters to finite estimates and sorts by adjusted p value', () => {
     const records = [gene('ZZ', 1, 0.2), gene('ZA', 1, 0.01), gene('ZX', null, 0.001), gene('BAD', 1, 2)]
     expect(filterGenes(model(records), ' z ').map((x) => x.gene)).toEqual(['ZA', 'ZZ'])

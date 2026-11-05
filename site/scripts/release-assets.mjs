@@ -14,6 +14,10 @@ const kindOf = (name) =>
       ? 'de'
       : name.startsWith('trajectory-extras/') && name.endsWith('.json')
         ? 'trajectory'
+        : name.startsWith('trajectory-details/') && name.endsWith('.json')
+          ? 'trajectory'
+          : name === 'pipeline-trajectory-map.json'
+            ? 'trajectoryMap'
         : name === 'pipeline-trajectory-index.json'
           ? 'trajectory'
           : name === 'pipeline-composition-index.json'
@@ -22,7 +26,15 @@ const kindOf = (name) =>
               ? 'metadata'
               : name === 'pathway-index.json'
                 ? 'pathways'
-                : name.startsWith('age-previews/') && name !== 'age-previews/manifest.json'
+                : name === 'pipeline-trajectory-preview.svg'
+                  ? 'trajectory_preview'
+                  : name.startsWith('reference-expression/') && name.endsWith('.json')
+                    ? 'referenceExpression'
+                    : name.startsWith('de-downloads/') && name.endsWith('.csv')
+                      ? 'de_download'
+                      : name.startsWith('de-previews/') && name.endsWith('.svg')
+                        ? 'de_preview'
+                      : name.startsWith('age-previews/') && name !== 'age-previews/manifest.json'
                   ? 'preview'
                   : null
 
@@ -36,6 +48,11 @@ export async function stampAssets(stage, id, onProgress) {
     const name = relative(stage, path).replaceAll('\\', '/')
     const kind = kindOf(name)
     if (!kind) continue // internal age-preview cleanup manifest
+    if (kind === 'de_download' || kind === 'de_preview' || kind === 'trajectory_preview') {
+      const contents = await readFile(path)
+      assets.push({ path: name, kind, bytes: contents.length, sha256: hash(contents) })
+      continue
+    }
     const value = JSON.parse(await readFile(path, 'utf8'))
     if (!validAsset(kind, value)) throw new Error(`Invalid ${kind} asset: ${name}`)
     value.releaseId = id

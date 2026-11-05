@@ -1,4 +1,4 @@
-import { useReducer } from 'react'
+import { useEffect, useReducer } from 'react'
 import type { PathwaySet } from '../data/pathways'
 import { DifferentialPage } from '../features/differential/DifferentialPage'
 import { Explorer } from '../features/explorer/Explorer'
@@ -8,7 +8,7 @@ import { OverviewPage } from '../features/content/OverviewPage'
 import { GeneTypeMatrix } from '../features/pathways/PathwaysPage'
 import { PathwaySelector } from '../features/pathways/PathwaySelector'
 import { ProfilesPage } from '../features/profiles/ProfilesPage'
-import type { TrajectoryRecord } from '../data/atlas'
+import type { TrajectoryPoint, TrajectoryRecord } from '../data/atlas'
 import { navigation } from './navigation'
 import { usePageNavigation } from './usePageNavigation'
 import { useSiteData } from './useSiteData'
@@ -16,14 +16,24 @@ import { releaseLabel } from './releaseLabel'
 import { TrajectoryMenu } from './TrajectoryMenu'
 import { atlasSessionReducer, initialAtlasSession } from './session'
 import { SingleCellPage } from '../features/singleCell/SingleCellPage'
+import { preloadCombinedAgeModel } from '../data/differential'
 
 export function App() {
   const [session, dispatch] = useReducer(atlasSessionReducer, initialAtlasSession)
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void preloadCombinedAgeModel(session.selectedCellType).catch(() => {})
+    }, 1200)
+    return () => window.clearTimeout(timer)
+  }, [session.selectedCellType])
   const { page, navigate } = usePageNavigation()
   const {
     release,
     releaseLoading,
     atlas,
+    trajectoryMap,
+    trajectoryDetails,
+    ensureTrajectoryDetails,
     loadError,
     pathwaySets,
     geneMetadata,
@@ -34,6 +44,16 @@ export function App() {
   const updateHighlightGenes = (value: string) => dispatch({ type: 'editGeneSet', value })
   const selectPathway = (pathway: PathwaySet) => dispatch({ type: 'selectPathway', pathway })
   const activePathway = pathwaySets.find((pathway) => pathway.id === session.activePathwayId) ?? null
+  const dePreviewAssets = release?.assets.filter((asset) => asset.kind === 'de_preview') ?? []
+  const selectedPreviewSlug = session.selectedCellType
+    ?.toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+  const loadingPreviewPath =
+    dePreviewAssets.find((asset) => asset.path === `de-previews/${selectedPreviewSlug}.svg`)?.path ??
+    dePreviewAssets.find((asset) => asset.path === 'de-previews/naive-cd8-t-cell.svg')?.path ??
+    dePreviewAssets[0]?.path
+  const trajectoryNotice = page === 'trajectories' ? trajectoryMap : atlas
   const openProfile = (record: TrajectoryRecord, tab: 'gene' | 'cellType', selectPair = true) => {
     dispatch({ type: 'selectGene', gene: record.gene, cellType: record.cellType })
     dispatch({ type: 'openProfile', tab, record, selectPair })
@@ -114,6 +134,8 @@ export function App() {
       {page === 'overview' && <OverviewPage onNavigate={navigate} />}
       {page === 'differential' && (
         <DifferentialPage
+          loadingPreviewPath={loadingPreviewPath}
+          releaseId={release?.releaseId}
           highlightGenes={session.highlightGenes}
           activePathway={activePathway}
           preferredGene={session.selectedGene}
@@ -127,13 +149,13 @@ export function App() {
           onSelectGene={(gene, cellType) => dispatch({ type: 'selectGene', gene, cellType })}
         />
       )}
-      {['genes', 'cellTypes', 'trajectories', 'geneTypeMatrix'].includes(page) && atlas && (
+      {['genes', 'cellTypes', 'trajectories', 'geneTypeMatrix'].includes(page) && trajectoryNotice && (
         <div className="trajectory-notice">
-          {atlas.warning && <strong>{atlas.warning} </strong>}
-          {atlas.description}
+          {trajectoryNotice.warning && <strong>{trajectoryNotice.warning} </strong>}
+          {trajectoryNotice.description}
         </div>
       )}
-      {!atlas && ['genes', 'cellTypes', 'trajectories', 'geneTypeMatrix'].includes(page) && (
+      {!atlas && !trajectoryMap && ['genes', 'cellTypes', 'trajectories', 'geneTypeMatrix'].includes(page) && (
         <section className="content-page">
           <h1>
             {loadError === 'invalid'
@@ -144,12 +166,23 @@ export function App() {
                   ? 'Trajectory data is unavailable.'
                   : 'Loading trajectory data…'}
           </h1>
-          <p>Run make site-export with completed pipeline trajectory results.</p>
+          {loadError && <p>Run make site-export with completed pipeline trajectory results.</p>}
+          {page === 'trajectories' && release?.assets.some((asset) => asset.kind === 'trajectory_preview') && (
+            <figure className="trajectory-map-loading">
+              <img
+                src={`${import.meta.env.BASE_URL}data/pipeline-trajectory-preview.svg?release=${encodeURIComponent(release.releaseId)}`}
+                alt="Preview of significant age-bin trajectories in the cross-cell-type map"
+              />
+              <figcaption role="status">Preparing the interactive map and its trajectory records…</figcaption>
+            </figure>
+          )}
         </section>
       )}
-      {page === 'trajectories' && atlas && (
+      {page === 'trajectories' && trajectoryMap && (
         <Explorer
-          atlas={atlas}
+          atlas={trajectoryMap}
+          details={trajectoryDetails}
+          onEnsureDetails={(point: TrajectoryPoint) => ensureTrajectoryDetails(point)}
           state={session.trajectory}
           preferredGene={session.selectedGene}
           onSelectGene={(gene, cellType) => dispatch({ type: 'selectGene', gene, cellType })}

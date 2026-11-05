@@ -49,7 +49,11 @@ a local cleanup list and is not a browser data asset.
 | Asset | Meaning and key fields |
 |---|---|
 | `de-index.json` and `de-models/*.json` | The index lists models and points to a default chunk containing adjusted p < 0.05 plus gene lookup chunks for all other records. A complete gene symbol retrieves its lookup chunk. `effect` is log2 fold change; `padj` and `pvalue` are probabilities, `se` is effect standard error, and `baseMean` is PyDESeq2’s mean size-factor-normalized count. `studySupport`, when available, counts per-study results for the same covariate and contrast with adjusted p < 0.05 and records the number with a finite adjusted p-value. The count ignores effect direction; studies with missing results or adjusted p-values are not counted as tested. It is descriptive, and per-study models can have different covariate adjustments. Null numeric values mean no finite estimate was supplied. |
+| `reference-expression/<cell-type>.json` | Study-balanced CPM for genes with reference-bin pseudobulk support, with the reference bin, method, and contributing sample and study counts. CPM is normalized expression, not an absolute molecule count. |
+| `de-previews/<cell-type>.svg` | Static preview of the merged age-model volcano plot, shown while the interactive DE records load. |
 | `age-previews/<slug>.json` and gene chunks | Age-bin effects from the separate combined age-bin model are partitioned by gene. `effect` is log2 fold change relative to `referenceBin`; null denotes a missing estimate. |
+| `pipeline-trajectory-map.json` | Compact significant-point coordinates and labels for the global map. Full seven-bin profiles are fetched from `trajectory-details/<gene-bucket>.json` when a point or gene needs detail. |
+| `pipeline-trajectory-preview.svg` | Static preview shown while the interactive global map loads. |
 | `pipeline-trajectory-index.json` | Only gene–cell-type trajectories selected for clustering. Each record has UMAP `x`/`y`, cluster, omnibus adjusted p-value, seven scaled age-bin values, and the signed maximum absolute **raw** log2 fold change relative to 20–30. When available, reference expression is study-balanced reference-bin CPM with contributing sample and study counts. Cell count is unavailable. This is not the universe of tested genes. |
 | `pipeline-composition-index.json` | Study-level `records` describe mean adult fractions within an AIFI L1 parent and model diagnostics. `coefficients` are per-study effects with confidence bounds; age is per decade. `ageEstimates` are adjusted fraction changes relative to `referenceBin` for `l1_parent` or `retained_pbmc`, with confidence bounds and per-bin sample counts. Reference mean and adjusted fractions can be null. `ageStatus` records model completion or skip reasons. Fractions measure relative representation, not absolute abundance. |
 | `pathway-index.json` | Optional curated sets with identifier, label, description, uppercase genes and source filename. Source-file hashes are recorded in the release manifest; permissions and citations require separate review. |
@@ -60,11 +64,11 @@ a local cleanup list and is not a browser data asset.
 | `images/<release-id>/studies/<study>-umap.png` | The standalone AIFI L2 UMAP from the study QC notebook, with a transparent background. Older QC notebooks without this figure do not produce a UMAP asset; rerender the study report to include it. |
 | `images/<release-id>/studies/<study>-heatmap.png` | The study-label versus AIFI L2 comparison extracted from the study QC notebook, with a transparent background, when available. |
 
-DE model chunks are fetched only for the currently selected cell type and
-model. Gene-set prefetching is limited to that selected model. Older exports
-with all model records embedded in `de-index.json` are filtered in the view,
-but necessarily download the entire index; regenerate the export to enable
-on-demand model loading.
+The remembered cell type's merged age-model summary is preloaded after the page
+settles (Naive CD8 T cell on a fresh session), along with its reference CPM.
+Other cell types and models load when selected. Hovering or focusing the
+trajectory menu prefetches the compact map asset; profile details load on demand.
+Older exports without the compact map fall back to `pipeline-trajectory-index.json`.
 
 The manifest includes study identifiers observed in exported models and selected
 study harmonization reports. The dataset page indicates which studies have each
@@ -95,14 +99,14 @@ include them in deployment. The manifest also has a gzip companion. HTTP
 compression and caching for HTML, JavaScript, CSS and fallback JSON still
 depend on hosting configuration.
 
-The trajectory map starts with retained trajectory records having adjusted
-omnibus p < 0.05. Explicit gene lookup also loads matching records above that
-threshold from `trajectory-extras/`. The source contains only trajectories
-selected for clustering; the lookup cannot supply genes absent from that source.
-The selected pathway or entered gene set is prefetched in the background, with two workers per view;
-large pathways can still fetch many chunks. A bounded in-memory cache shares
-in-flight and recently used assets for the current page session. It is not a
-persistent cache or a substitute for host-side HTTP caching.
+The compact map starts with retained trajectory records having adjusted
+omnibus p < 0.05. Selecting a point or focusing a gene loads its full records
+from `trajectory-details/`; these chunks also contain records above that
+threshold. Older profile views use `pipeline-trajectory-index.json` and its
+`trajectory-extras/` chunks. The source contains only trajectories selected
+for clustering; lookup cannot supply genes absent from that source. JSON assets
+are kept in a bounded in-memory cache and fetched with a release-versioned URL
+through the browser's HTTP cache, so a repeat visit can reuse downloaded data.
 
 PANTHER metadata and pathway indexes are rebuilt in staging when their source
 inputs are available. They are not copied from a previous release. Check the

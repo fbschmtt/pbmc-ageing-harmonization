@@ -42,6 +42,7 @@ workflow {
         )
         def de_test_mode = channel.value(params.de_test_mode as boolean)
         def synthetic_test_data = channel.value(params.de_synthetic_test_data as boolean)
+        def allow_partial_results = channel.value(params.allow_partial_results as boolean)
         LIST_PSEUDOBULK_CELL_TYPES(pseudobulk_input, pipeline_config)
         def cell_types = LIST_PSEUDOBULK_CELL_TYPES.out.cell_types
             .splitText()
@@ -67,6 +68,7 @@ workflow {
                 .collect(),
             de_test_mode,
             synthetic_test_data,
+            allow_partial_results,
         )
         RENDER_CROSS_CELL_TYPE_ANALYSIS_REPORT(
             WRITE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION_MANIFEST.out.per_type,

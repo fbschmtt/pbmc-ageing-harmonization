@@ -231,6 +231,7 @@ export async function loadReleaseManifest(): Promise<ReleaseManifest> {
 }
 
 const assetCache = new Map<string, Promise<unknown>>()
+const prefetchCache = new Map<string, Promise<ArrayBuffer>>()
 const maxCachedAssets = 48
 
 export function fetchReleaseAsset(path: string): Promise<unknown> {
@@ -240,7 +241,7 @@ export function fetchReleaseAsset(path: string): Promise<unknown> {
     assetCache.set(path, cached)
     return cached
   }
-  const request = fetchUncachedReleaseAsset(path).catch((error) => {
+  const request = fetchUncachedReleaseAsset(path, prefetchCache.get(path)).catch((error) => {
     if (assetCache.get(path) === request) assetCache.delete(path)
     throw error
   })
@@ -249,15 +250,61 @@ export function fetchReleaseAsset(path: string): Promise<unknown> {
   return request
 }
 
-async function fetchUncachedReleaseAsset(path: string): Promise<unknown> {
+export function prefetchReleaseAsset(path: string): Promise<void> {
+  if (assetCache.has(path)) return Promise.resolve()
+  const cached = prefetchCache.get(path)
+  if (cached) return cached.then(() => {})
+  const request = (async () => {
+    const release = await loadReleaseManifest()
+    const asset = release.assets.find((item) => item.path === path)
+    if (!asset) throw new AssetError('unavailable', `Asset not included in release: ${path}`)
+    const compressed = asset.gzipPath && typeof DecompressionStream !== 'undefined'
+    const assetUrl = `${import.meta.env.BASE_URL}data/${compressed ? asset.gzipPath : path}?release=${encodeURIComponent(release.releaseId)}`
+    const response = await fetch(assetUrl, { cache: 'force-cache' })
+    if (!response.ok) throw new AssetError('unavailable', `Release asset unavailable: ${path}`)
+    return response.arrayBuffer()
+  })().catch((error) => {
+    if (prefetchCache.get(path) === request) prefetchCache.delete(path)
+    throw error
+  })
+  prefetchCache.set(path, request)
+  window.setTimeout(() => {
+    if (prefetchCache.get(path) === request) prefetchCache.delete(path)
+  }, 30_000)
+  return request.then(() => {})
+}
+
+async function fetchUncachedReleaseAsset(path: string, prefetched?: Promise<ArrayBuffer>): Promise<unknown> {
   const release = await loadReleaseManifest()
   const asset = release.assets.find((item) => item.path === path)
   if (!asset) throw new AssetError('unavailable', `Asset not included in release: ${path}`)
   const compressed = asset.gzipPath && typeof DecompressionStream !== 'undefined'
-  const response = await fetch(`${import.meta.env.BASE_URL}data/${compressed ? asset.gzipPath : path}`)
-  if (!response.ok) throw new AssetError('unavailable', `Release asset unavailable: ${path}`)
+  const assetUrl = `${import.meta.env.BASE_URL}data/${compressed ? asset.gzipPath : path}?release=${encodeURIComponent(release.releaseId)}`
+  let bytes: ArrayBuffer | undefined
+  let response: Response | undefined
+  if (prefetched) {
+    try {
+      bytes = await prefetched
+      if (prefetchCache.get(path) === prefetched) prefetchCache.delete(path)
+    } catch {
+      response = await fetch(assetUrl, { cache: 'force-cache' })
+    }
+  } else {
+    response = await fetch(assetUrl, { cache: 'force-cache' })
+  }
+  if (response && !response.ok) throw new AssetError('unavailable', `Release asset unavailable: ${path}`)
   let value: unknown
-  if (compressed && response.body) {
+  if (bytes) {
+    try {
+      const body = new Response(bytes).body
+      const contents = compressed && body
+        ? await new Response(body.pipeThrough(new DecompressionStream('gzip'))).text()
+        : new TextDecoder().decode(bytes)
+      value = JSON.parse(contents)
+    } catch {
+      throw new AssetError('invalid', `Invalid ${compressed ? 'compressed ' : ''}asset: ${path}`)
+    }
+  } else if (response && compressed && response.body) {
     try {
       value = JSON.parse(
         await new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).text(),
@@ -265,7 +312,11 @@ async function fetchUncachedReleaseAsset(path: string): Promise<unknown> {
     } catch {
       throw new AssetError('invalid', `Invalid compressed asset: ${path}`)
     }
-  } else value = await readJson(response)
+  } else if (response) {
+    value = await readJson(response)
+  } else {
+    throw new AssetError('unavailable', `Release asset unavailable: ${path}`)
+  }
   if (
     typeof value !== 'object' ||
     value === null ||

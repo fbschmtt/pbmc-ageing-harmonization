@@ -1,4 +1,4 @@
-import type { TrajectoryRecord } from '../../data/atlas'
+import type { TrajectoryPoint } from '../../data/atlas'
 
 export const maxFocusPatternLength = 160
 
@@ -17,7 +17,7 @@ export function compileFocusQuery(query: string) {
   }
 }
 
-export function recordMatchesFocus(record: TrajectoryRecord, query: string, expression: RegExp | null) {
+export function recordMatchesFocus(record: TrajectoryPoint, query: string, expression: RegExp | null) {
   if (!query) return true
   return Boolean(expression?.test(record.gene) || expression?.test(record.cellType))
 }

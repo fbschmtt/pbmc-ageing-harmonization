@@ -1,9 +1,12 @@
 /** @typedef {{ gene: string; effect: number | null; padj: number | null; pvalue: number | null; se: number | null; baseMean: number | null; studySupport?: { significant: number; tested: number } | null }} Gene */
-/** @typedef {{ id: string; model: string; study: string | null; covariate: string; contrast: string | null; design: string; samples: number; studies: Record<string, number>; records: Gene[]; recordsAsset?: string; recordBuckets?: Record<string, string> }} Model */
-/** @typedef {{ id: string; label: string; tissue: string; analysisMode: string; warning: string | null; trajectoryAsset: string | null; models: Model[] }} Cell */
-/** @typedef {{ schemaVersion: number; source: string; cellTypes: Cell[] }} DifferentialRelease */
+/** @typedef {{ id: string; model: string; study: string | null; covariate: string; contrast: string | null; design: string; samples: number; studies: Record<string, number>; records: Gene[]; recordsAsset?: string; recordBuckets?: Record<string, string>; downloadAsset?: string }} Model */
+/** @typedef {{ id: string; label: string; tissue: string; analysisMode: string; warning: string | null; trajectoryAsset: string | null; referenceExpressionAsset?: string; previewAsset?: string; models: Model[] }} Cell */
+/** @typedef {{ schemaVersion: number; releaseId?: string; source: string; cellTypes: Cell[] }} DifferentialRelease */
+/** @typedef {{ schemaVersion: number; releaseId?: string; cellType: string; referenceBin: string; method: string; genes: Record<string, { cpm: number; studies: number; samples: number }> }} ReferenceExpression */
 /** @typedef {{ id: string; x: number; y: number; cellType: string; tissue: string; gene: string; adjustedPValue: number; referenceExpression: number | null; referenceExpressionStudies?: number | null; referenceExpressionSamples?: number | null; meanCellsPerDonor: number | null; valueAtMaxAbsChange: number; cluster: string; trajectory: number[] }} TrajectoryRecord */
+/** @typedef {{ id: string; x: number; y: number; cellType: string; tissue: string; gene: string; adjustedPValue: number; cluster: string }} TrajectoryPoint */
 /** @typedef {{ release: string; warning?: string | null; description?: string; records: TrajectoryRecord[]; tissues: string[]; cellTypes: string[]; genes: string[]; geneBuckets?: Record<string, string> }} Atlas */
+/** @typedef {{ schemaVersion: number; releaseId?: string; release: string; warning?: string | null; description?: string; records: TrajectoryPoint[]; tissues: string[]; cellTypes: string[]; genes: string[]; geneBuckets?: Record<string, string> }} TrajectoryMap */
 /** @typedef {{ cellType: string; parent: string; study: string; samples: number; meanFraction: number; residualSd: number | null; binomialSamplingSd: number | null; covariates: string; warning: string | null }} Fraction */
 /** @typedef {{ cellType: string; parent: string; study: string; covariate: string; term: string; contrast: string; estimate: number; low: number; high: number; samples: number }} FractionCoefficient */
 /** @typedef {{ cellType: string; denominator: string; referenceBin: string; referenceMeanFraction: number | null; referenceAdjustedFraction: number | null; ageBin: string; group: string; estimate: number; low: number; high: number; samples: number }} FractionAgeEstimate */
@@ -19,7 +22,7 @@
 /** @typedef {{ gene: string; effect: number; padj: number | null }} ClusterMarker */
 /** @typedef {{ cluster: string; image: string; fits: { study: string | null; samples: number; meanFraction: number; slopePpPerDecade: number | null }[] }} ClusterFractionDetail */
 /** @typedef {{ schemaVersion: number; cellType: string; nCells: number; nClusters: number; integration: string; image: string; fractionImage?: string | null; fractionNote?: string | null; fractionHasStudyTrends?: boolean; fractionIncludesZeros?: boolean; fractionDetails?: ClusterFractionDetail[] | null; groups: { cluster: string; higher?: ClusterMarker[]; lower?: ClusterMarker[]; markers?: { gene: string; score: number; padj: number | null }[] }[] }} SingleCell */
-/** @typedef {{ de: DifferentialRelease; trajectory: Atlas; composition: FractionIndex; preview: Preview; pathways: { pathwaySets: PathwaySet[] }; metadata: GeneMetadataIndex; singleCell: SingleCell; singleCellIndex: SingleCellIndex }} Assets */
+/** @typedef {{ de: DifferentialRelease; trajectory: Atlas; trajectoryMap: TrajectoryMap; composition: FractionIndex; preview: Preview; pathways: { pathwaySets: PathwaySet[] }; metadata: GeneMetadataIndex; singleCell: SingleCell; singleCellIndex: SingleCellIndex; referenceExpression: ReferenceExpression }} Assets */
 
 // Shared runtime contract for published JSON and browser loaders.
 const obj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x)
@@ -53,6 +56,7 @@ const model = (x) =>
   obj(x.studies) &&
   Object.values(x.studies).every(count) &&
   (x.recordsAsset === undefined || str(x.recordsAsset)) &&
+  (x.downloadAsset === undefined || str(x.downloadAsset)) &&
   (x.recordBuckets === undefined || (obj(x.recordBuckets) && Object.values(x.recordBuckets).every(str))) &&
   arr(x.records, gene)
 const cell = (x) =>
@@ -63,6 +67,8 @@ const cell = (x) =>
   str(x.analysisMode) &&
   nullableString(x.warning) &&
   nullableString(x.trajectoryAsset) &&
+  (x.referenceExpressionAsset === undefined || str(x.referenceExpressionAsset)) &&
+  (x.previewAsset === undefined || str(x.previewAsset)) &&
   arr(x.models, model) &&
   x.models.length > 0
 const trajectory = (x) =>
@@ -136,6 +142,22 @@ const validators = {
       arr(g.markers, (m) => obj(m) && str(m.gene) && num(m.score) && m.score > 0 && (m.padj === null || probability(m.padj)))
     )),
   de: (x) => base(x) && str(x.source) && arr(x.cellTypes, cell) && x.cellTypes.length > 0,
+  referenceExpression: (x) =>
+    base(x) &&
+    str(x.cellType) &&
+    str(x.referenceBin) &&
+    str(x.method) &&
+    obj(x.genes) &&
+    Object.values(x.genes).every(
+      (record) =>
+        obj(record) &&
+        num(record.cpm) &&
+        record.cpm >= 0 &&
+        count(record.studies) &&
+        record.studies > 0 &&
+        count(record.samples) &&
+        record.samples >= record.studies,
+    ),
   trajectory: (x) =>
     base(x) &&
     str(x.release) &&
@@ -143,6 +165,18 @@ const validators = {
     (x.description === undefined || typeof x.description === 'string') &&
     (x.geneBuckets === undefined || (obj(x.geneBuckets) && Object.values(x.geneBuckets).every(str))) &&
     arr(x.records, trajectory) &&
+    ['tissues', 'cellTypes', 'genes'].every((k) => arr(x[k], str)),
+  trajectoryMap: (x) =>
+    base(x) &&
+    str(x.release) &&
+    (x.warning === undefined || nullableString(x.warning)) &&
+    (x.description === undefined || typeof x.description === 'string') &&
+    (x.geneBuckets === undefined || (obj(x.geneBuckets) && Object.values(x.geneBuckets).every(str))) &&
+    arr(x.records, (record) =>
+      obj(record) && str(record.id) && num(record.x) && num(record.y) &&
+      str(record.cellType) && str(record.tissue) && str(record.gene) &&
+      probability(record.adjustedPValue) && str(record.cluster),
+    ) &&
     ['tissues', 'cellTypes', 'genes'].every((k) => arr(x[k], str)),
   composition: (x) =>
     base(x) &&

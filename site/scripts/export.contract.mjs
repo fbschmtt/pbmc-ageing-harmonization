@@ -146,6 +146,14 @@ test('exports supported trajectory and parent-fraction summaries without donor d
     assert.equal(counts.trajectory.exported, 1)
     assert.deepEqual(counts.trajectory.excluded, { cell_type_not_exported: 1 })
     const atlas = JSON.parse(await readFile(join(root, 'data', 'pipeline-trajectory-index.json'), 'utf8'))
+    const catalogue = JSON.parse(await readFile(out, 'utf8'))
+    const reference = JSON.parse(
+      await readFile(join(root, 'data', catalogue.cellTypes[0].referenceExpressionAsset), 'utf8'),
+    )
+    assert.equal(reference.referenceBin, '20-30')
+    assert.deepEqual(reference.genes.GENE1, { cpm: 123.4, studies: 2, samples: 11 })
+    const preview = await readFile(join(root, 'data', 'pipeline-trajectory-preview.svg'), 'utf8')
+    assert.match(preview, /<circle /)
     assert.equal(atlas.records[0].valueAtMaxAbsChange, 5)
     assert.deepEqual(atlas.records[0].trajectory, [0, 1, 2, 3, 4, 5, 6])
     assert.equal(atlas.records[0].referenceExpression, 123.4)

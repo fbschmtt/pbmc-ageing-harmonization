@@ -1,6 +1,11 @@
 import { cellTypeColor } from '../../theme/cellTypeColors'
 import { assetFailureKind, type AssetFailureKind } from '../../data/release'
-import { loadDifferential, loadModelRecords } from '../../data/differential'
+import {
+  loadDifferential,
+  loadModelRecords,
+  loadReferenceExpression,
+  type ReferenceExpression,
+} from '../../data/differential'
 import { geneBucket } from '../../data/geneBucket.mjs'
 import type { DifferentialRelease as Release, Gene } from '../../data/contracts.mjs'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -14,18 +19,20 @@ import type { PathwaySet } from '../../data/pathways'
 import { visualColors } from '../../theme/visualEncoding'
 import { defaultModelId, groupModels, modelLabel } from './modelSelection'
 import { filterGenes, hasPlottableEstimate, initialCell, visibleGenes } from './differentialView'
+import { studySupportColor } from './studySupportScale'
 import { GeneAgePreview } from './GeneAgePreview'
 import './differential.css'
 
 const fmt = (value: number | null | undefined) => (value == null ? '—' : value.toPrecision(3))
-const supportColors = ['#d3e2d9', '#94beb0', '#4c9081', '#205a51']
 const missingSupportColor = '#b9bdbc'
-const supportColor = (support: Gene['studySupport']) =>
-  support ? supportColors[Math.min(support.significant, 3)] : missingSupportColor
+const supportColor = (support: Gene['studySupport'], maximum: number) =>
+  support ? studySupportColor(support.significant, maximum) : missingSupportColor
 const supportLabel = (support: Gene['studySupport']) =>
   support ? `${support.significant} of ${support.tested} studies significant` : 'Study support unavailable'
 
 export function DifferentialPage({
+  loadingPreviewPath,
+  releaseId,
   highlightGenes,
   activePathway,
   preferredGene,
@@ -38,6 +45,8 @@ export function DifferentialPage({
   onSelectPathway,
   onHighlightGenesChange,
 }: {
+  loadingPreviewPath?: string
+  releaseId?: string
   highlightGenes: string
   activePathway: PathwaySet | null
   preferredGene: string | null
@@ -58,6 +67,7 @@ export function DifferentialPage({
   const [loadedRecords, setLoadedRecords] = useState<Record<string, Gene[]>>({})
   const [modelFailure, setModelFailure] = useState<AssetFailureKind | null>(null)
   const [lookupFailure, setLookupFailure] = useState(false)
+  const [referenceExpression, setReferenceExpression] = useState<ReferenceExpression | null>(null)
   useEffect(() => {
     let active = true
     loadDifferential()
@@ -82,6 +92,24 @@ export function DifferentialPage({
   const modelId = preferredModelId ?? (cell ? defaultModelId(cell.models) : '')
   const modelMetadata = cell?.models.find((item) => item.id === modelId)
   const recordsAsset = modelMetadata?.recordsAsset
+  useEffect(() => {
+    if (!cell?.referenceExpressionAsset) {
+      setReferenceExpression(null)
+      return
+    }
+    let active = true
+    setReferenceExpression(null)
+    loadReferenceExpression(cell.referenceExpressionAsset, cell.label)
+      .then((value) => {
+        if (active) setReferenceExpression(value)
+      })
+      .catch(() => {
+        if (active) setReferenceExpression(null)
+      })
+    return () => {
+      active = false
+    }
+  }, [cell?.referenceExpressionAsset, cell?.label])
   useEffect(() => {
     if (!recordsAsset || !cell || !modelMetadata || loadedRecords[recordsAsset]) return
     let active = true
@@ -197,6 +225,15 @@ export function DifferentialPage({
             Run <code>make site-export</code> with completed pipeline results to populate this view.
           </p>
         )}
+        {loadingPreviewPath && (
+          <figure className="de-preview">
+            <img
+              src={`${import.meta.env.BASE_URL}data/${loadingPreviewPath}?release=${encodeURIComponent(releaseId || '')}`}
+              alt="Static preview of the combined age differential-expression results"
+            />
+            <figcaption role="status">Loading the interactive differential-expression results…</figcaption>
+          </figure>
+        )}
       </section>
     )
   const points = (model?.records || []).filter(hasPlottableEstimate)
@@ -206,6 +243,10 @@ export function DifferentialPage({
     (record) => record.gene === preferredGene,
   )
   const highlightedCount = points.filter((record) => geneSet.has(record.gene.toUpperCase())).length
+  const supportMaximum = points.reduce(
+    (maximum, record) => Math.max(maximum, record.studySupport?.tested ?? 0),
+    Math.max(1, Object.keys(model?.studies ?? {}).length),
+  )
   const selectCell = (id: string) => {
     const next = release.cellTypes.find((item) => item.id === id)!
     setCellId(id)
@@ -235,6 +276,16 @@ export function DifferentialPage({
           {modelFailure ? 'Could not load the selected model results.' : 'Loading selected model results…'}
         </p>
       )}
+      {modelMetadata?.model === 'merged' && modelMetadata.covariate === 'age' &&
+        recordsAsset && !loadedRecords[recordsAsset] && cell.previewAsset && (
+          <figure className="de-preview">
+            <img
+              src={`${import.meta.env.BASE_URL}data/${cell.previewAsset}?release=${encodeURIComponent(release?.releaseId || releaseId || '')}`}
+              alt={`Static preview of the combined age differential-expression results for ${cell.label}`}
+            />
+            <figcaption role="status">Loading the interactive results for {cell.label}…</figcaption>
+          </figure>
+        )}
       {lookupFailure && <p role="status">Could not load requested gene results.</p>}
       <VolcanoExplorer
         controls={
@@ -321,7 +372,7 @@ export function DifferentialPage({
                 Showing adjusted p &lt; 0.05 and explicitly requested genes. Enter a complete gene symbol to
                 retrieve other results.
               </p>
-              <p>Point color counts studies with adjusted p &lt; 0.05 for the same contrast, regardless of direction. Studies without an adjusted p-value are excluded from the count.</p>
+              <p>Point color counts studies with adjusted p &lt; 0.05 for the same contrast, regardless of effect direction. Each gene's tooltip gives significant and tested study counts.</p>
               {geneSet.size > 0 && (
                 <p>
                   Outlined: {highlightedCount.toLocaleString()} genes in{' '}
@@ -335,8 +386,9 @@ export function DifferentialPage({
         }
         legend={
           <>
-            {[0, 1, 2, 3].map((count) => <span key={count}>
-              <i style={{ backgroundColor: supportColors[count] }} /> {count === 3 ? '3+' : count} studies
+            {Array.from({ length: supportMaximum + 1 }, (_, count) => <span key={count}>
+              <i style={{ backgroundColor: studySupportColor(count, supportMaximum) }} />
+              {count}{count === supportMaximum ? ' studies' : ''}
             </span>)}
             <span><i style={{ backgroundColor: missingSupportColor }} /> Unavailable</span>
             <span>
@@ -364,7 +416,7 @@ export function DifferentialPage({
               threshold={0.05}
               ariaLabel="Volcano plot of effect versus negative log ten adjusted p-value. Search for a gene to select it with a keyboard."
               appearance={(record, isSelected) => ({
-                fill: supportColor(record.studySupport),
+                fill: supportColor(record.studySupport, supportMaximum),
                 stroke: isSelected
                   ? visualColors.selected
                   : geneSet.has(record.gene.toUpperCase())
@@ -406,21 +458,21 @@ export function DifferentialPage({
                     <dd>{fmt(selected.effect)}</dd>
                     <dt>Adjusted p-value</dt>
                     <dd>{fmt(selected.padj)}</dd>
-                    <dt>Significant studies</dt>
+                    <dt>Study support</dt>
                     <dd>{supportLabel(selected.studySupport)}</dd>
                     <dt>Standard error</dt>
                     <dd>{fmt(selected.se)}</dd>
-                    <dt>Mean normalized count</dt>
+                    <dt>Reference-bin expression ({referenceExpression?.referenceBin ?? '20–30'})</dt>
                     <dd>
-                      {selected.baseMean == null
-                        ? '—'
-                        : new Intl.NumberFormat('en', { maximumSignificantDigits: 3 }).format(
-                            selected.baseMean,
-                          )}
+                      {referenceExpression?.genes[selected.gene]
+                        ? `${new Intl.NumberFormat('en', { maximumSignificantDigits: 4 }).format(referenceExpression.genes[selected.gene].cpm)} CPM · ${referenceExpression.genes[selected.gene].samples} samples, ${referenceExpression.genes[selected.gene].studies} studies`
+                        : 'Unavailable'}
                     </dd>
                   </dl>
                   <p>
-                    Mean count is PyDESeq2 baseMean, averaged across samples after size-factor normalization.
+                    {referenceExpression?.method ||
+                      'Study-balanced mean of per-study mean log1p(CPM), back-transformed with expm1.'}{' '}
+                    CPM is normalized expression, not an absolute molecule count.
                   </p>
                 </>
               ) : (
@@ -444,6 +496,17 @@ export function DifferentialPage({
                 <dt>Contrast</dt>
                 <dd>{model.contrast || model.covariate}</dd>
               </dl>
+              {model.downloadAsset && model.model !== 'per_study' && (
+                <p className="de-model-download">
+                  <a
+                    href={`${import.meta.env.BASE_URL}data/${model.downloadAsset}?release=${encodeURIComponent(release.releaseId || '')}`}
+                    download={`${cell.id}-${model.model}-${model.covariate}.csv`}
+                  >
+                    Download complete combined-model results (CSV)
+                  </a>
+                  <span>Includes all tested genes, including nonsignificant results.</span>
+                </p>
+              )}
             </div>
           ) : (
             <p>Select a model to see its details.</p>

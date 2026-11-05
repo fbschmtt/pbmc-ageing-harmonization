@@ -1,11 +1,19 @@
 # External input files
 
 The pipeline source does not redistribute expression data, supplementary study
-metadata, or trained CellTypist models. Place each external file at the exact
-path below. Paths are relative to the repository root.
+metadata, or trained CellTypist models. This catalog describes the inputs
+required for production runs; it does not guarantee that a development checkout
+contains the complete source files. Paths are relative to the repository root.
 
-Checksums are recorded where the file is currently available locally. Acquisition
-is strictly opt-in: only the explicit downloader commands described in the
+The current development workspace keeps downsampled expression H5ADs under
+their configured `input_data/` paths to exercise the study adapters without
+storing the multi-gigabyte production sources. Those workspace copies range
+from 200 to 2,000 cells. The full-file sizes in this catalog refer to the
+published sources, not the local development copies. The generated 200-cell
+Nextflow fixtures under `test_data/` are a separate layer of test data.
+
+Integrity metadata is recorded where it is known. Acquisition is strictly
+opt-in: only the explicit downloader commands described in the
 [README](README.md#download-inputs) retrieve public files. They never run as
 part of installation, testing, or analysis, and they warn when pending sources
 may be large. The best-effort downloader reads `config/input_sources.json`,
@@ -14,7 +22,11 @@ and reports manual-only sources. Some full published H5ADs are large; entries
 explicitly marked as accepting a local subset retain the published full-file
 size as download documentation. Such a local development subset is reported as
 `local_subset` by the normal downloader and rejected by strict preflight. It
-must not be used for production analysis. To deliberately replace existing files, pass
+must not be used for production analysis. Development workspaces may also have
+subsamples at configured production paths when a source has no recorded size or
+checksum; for those files, presence alone does not establish that the full
+source was downloaded. The local Terekhova23 expression file is one such
+development subsample. To deliberately replace existing files, pass
 `DOWNLOAD_FORCE=true` to the Make target.
 
 ## Expression data
@@ -29,13 +41,20 @@ must not be used for production analysis. To deliberately replace existing files
 | Nehar-Belaid26 | `input_data/nehar_belaid26/GSE233321_all_PBMCs.h5ad` | [GEO label H5AD](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE233321); labels transfer only on unique `obs.sample_id` plus normalized barcode-sequence matches | 12,465,445,446 bytes expected |
 | OneK1K | `input_data/onek1k/81d84489-bff9-4fb6-b0ee-78348126eada.h5ad` | [CELLxGENE OneK1K dataset](https://cellxgene.cziscience.com/collections/dde06e0f-ab3b-46be-96a2-a8082383c4a1), raw-count H5AD | 4,436,424,475 bytes expected |
 | Perez22 | `input_data/perez22/c55dc602-d168-4d15-acc1-5de4f2f5d551.h5ad` | [CELLxGENE dataset](https://cellxgene.cziscience.com/collections/436154da-bcf1-4130-9c8b-120ff9a888f2), raw-count H5AD with embedded observation metadata | 12,218,105,530 bytes expected |
-| Terekhova23 | `input_data/terekhova23/pbmc_gex_raw_with_var_obs.h5ad` | [Synapse study data](https://www.synapse.org/Synapse:syn49637038); download manually after satisfying any login/access terms | Not yet recorded |
+| Terekhova23 | `input_data/terekhova23/pbmc_gex_raw_with_var_obs.h5ad` | [Synapse source archive (`syn56693935.1`)](https://www.synapse.org/Synapse:syn56693935.1); download and extract the H5AD manually after satisfying any login/access terms | Full-file size and SHA-256 not recorded |
 | Terekhova26 | `input_data/terekhova26/KCL_reannotated.h5ad` | Gated author-reannotated KCL H5AD; [EGA catalogue](https://www.ega-archive.org/datasets/EGAD50000003136) documents the underlying source study. Raw counts are in `.raw`; required runtime metadata is embedded in `obs`. | 793,806,465,248 bytes published full-file size; the local 2,000-cell subset is intentionally accepted |
 | Wang25 | `input_data/wang25/scRNA-seqProcessedLabelledObject.rds` | [Synapse entity syn61609846](https://www.synapse.org/Synapse:syn61609846), the published processed Seurat RDS; requires a Synapse login and is converted by `scripts/convert_rds.R` | Not yet recorded |
 
 The Wang RDS conversion produces
 `cache/converted/scRNA-seqProcessedLabelledObject.h5ad`. This is a generated
 intermediate, not an external input.
+
+The Terekhova23 H5AD currently in the development workspace is a 200-cell
+subsample (`200 × 36,601`), not the complete study expression object. Its source
+is a manual-only Synapse archive and this project has no full-file size or
+checksum recorded for it, so even strict input preflight cannot identify a
+smaller file from its presence alone. This is one case where a local development
+copy can appear present without proving that the complete source was acquired.
 
 ## Supplementary metadata
 
@@ -100,6 +119,11 @@ service and require interactive authentication. The binaries are excluded from
 redistribution pending confirmation of their license terms. The files are
 ignored by Git.
 
+The optional `aifi_models/AIFI_L2_imm_health_atlas_type_order_colors.csv` file
+provides published AIFI L2 colors in QC and integration reports. It is not a
+model input and is not required: reports use deterministic fallback colors
+when it is absent. See [`aifi_models/README`](aifi_models/README) for details.
+
 | Level | Required path | SHA-256 |
 |---|---|---|
 | AIFI L1 | `aifi_models/ref_pbmc_clean_celltypist_model_AIFI_L1_2024-04-18.pkl` | `c63ec36ec90e195706dbab0e5596082d3bc06d980fcb212781c60c5ddb63d973` |
@@ -109,8 +133,10 @@ ignored by Git.
 ## Test data
 
 `make test-data` creates deterministic 200-cell fixtures under `test_data/` from
-the production expression inputs. Python-source studies are first read through
-their configured input reader and then sampled by `scripts/create_test_data.py`;
+the configured expression inputs (complete sources in production, local source
+subsamples in this development workspace). Python-source studies are first
+read through their configured input reader and then sampled by
+`scripts/create_test_data.py`;
 thus Nehar-Belaid26 fixtures exercise direct tar reading during fixture creation,
 but test workflow runs read the resulting H5AD fixture. Each configured RDS
 conversion study is sampled by `scripts/create_test_rds.R`. These generated
