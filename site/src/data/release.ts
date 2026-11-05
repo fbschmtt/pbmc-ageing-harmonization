@@ -30,11 +30,16 @@ export type ReleaseManifest = {
     note: string
   }
   context?: {
+    singleCellSummary?: { studies: number; donors: number; cells: number } | null
     studies: {
       id: string
       inModels?: boolean
       harmonizationAvailable?: boolean
       publicationDoi: string | null
+      publicationTitle?: string | null
+      publicationCitation?: string | null
+      donors?: number | null
+      cells?: number | null
       annotation: string | null
       technology: string | null
       inclusion: string | null
@@ -96,6 +101,19 @@ const nullableNumber = (value: unknown) =>
   value === null || (typeof value === 'number' && Number.isFinite(value))
 function validContext(value: unknown): boolean {
   if (!object(value) || !Array.isArray(value.studies) || !object(value.studyReference)) return false
+  const summary = value.singleCellSummary
+  if (
+    summary !== undefined &&
+    summary !== null &&
+    (!object(summary) ||
+      !['studies', 'donors', 'cells'].every(
+        (key) =>
+          typeof summary[key] === 'number' &&
+          Number.isSafeInteger(summary[key]) &&
+          summary[key] >= 0,
+      ))
+  )
+    return false
   if (!nullableString(value.studyReference.sha256) || typeof value.studyReference.note !== 'string')
     return false
   if (
@@ -108,6 +126,15 @@ function validContext(value: unknown): boolean {
         (study.siteComments === undefined || nullableString(study.siteComments)) &&
         ['publicationDoi', 'annotation', 'technology', 'inclusion', 'licence'].every((key) =>
           nullableString(study[key]),
+        ) &&
+        ['publicationTitle', 'publicationCitation'].every(
+          (key) => study[key] === undefined || nullableString(study[key]),
+        ) &&
+        ['donors', 'cells'].every(
+          (key) =>
+            study[key] === undefined ||
+            study[key] === null ||
+            (typeof study[key] === 'number' && Number.isSafeInteger(study[key]) && study[key] >= 0),
         ),
     )
   )

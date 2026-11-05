@@ -44,24 +44,18 @@ def main() -> None:
             f"shape={artifact.shape}, missing_columns={sorted(missing)}"
         )
     expected_embeddings = {method["embedding_key"] for method in method_records}
-    expected_embeddings |= {
-        method["representation_key"]
-        for method in method_records
-        if method.get("representation_key")
-    }
     if set(artifact.obsm) != expected_embeddings or any(
         artifact.obsm[method["embedding_key"]].shape != (artifact.n_obs, 2)
         for method in method_records
     ):
         raise SystemExit("Integration benchmark artifact is missing its method embeddings")
-    expected_graphs = {
-        key for method in method_records for key in method["graph_keys"].values()
-    }
-    if set(artifact.obsp) != expected_graphs:
-        raise SystemExit(f"Integration benchmark has unexpected graph keys: {sorted(artifact.obsp)}")
+    if artifact.obsp:
+        raise SystemExit("Integration benchmark artifact unexpectedly retains neighbor graphs")
     metadata = artifact.uns.get("integration_benchmark", {})
     if metadata.get("source_matrix_retained") is not False:
         raise SystemExit("Integration benchmark artifact unexpectedly retains its source matrix")
+    if metadata.get("neighbor_graphs_retained") is not False:
+        raise SystemExit("Integration benchmark artifact unexpectedly retains neighbor graphs")
     if set(map(str, metadata.get("method_names", []))) != expected_methods:
         raise SystemExit("Integration benchmark artifact has unexpected method names")
 

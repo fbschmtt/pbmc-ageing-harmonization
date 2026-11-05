@@ -25,6 +25,20 @@ describe('release contracts', () => {
   }
   const release = { schemaVersion: 1, source: 'pseudobulk', cellTypes: [cell] }
   it('accepts valid data and null estimates', () => expect(validAsset('de', release)).toBe(true))
+  it('validates compact clock predictions without exposing sample identifiers', () => {
+    const index = {
+      schemaVersion: 1,
+      cellTypes: [{
+        id: 'a', label: 'A', methods: [{
+          id: 'elastic_net', name: 'Elastic net', description: 'Baseline',
+          training: { metrics: { n: 1, mae: 2, rmse: 2, r2: null }, predictions: [{ study: 'Study A', age: 40, predictedAge: 42 }] },
+          heldOut: { metrics: { n: 1, mae: 2, rmse: 2, r2: null }, predictions: [{ study: 'Study B', age: 50, predictedAge: 48 }] },
+        }],
+      }],
+    }
+    expect(validAsset('clock', index)).toBe(true)
+    expect(validAsset('clock', { ...index, cellTypes: [{ ...index.cellTypes[0], methods: [{ ...index.cellTypes[0].methods[0], heldOut: { ...index.cellTypes[0].methods[0].heldOut, predictions: [{ study: 'Study B', age: '50', predictedAge: 48 }] } }] }] })).toBe(false)
+  })
   it('validates reference-bin expression values and support counts', () => {
     expect(validAsset('referenceExpression', {
       schemaVersion: 1,

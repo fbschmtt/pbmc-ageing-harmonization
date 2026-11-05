@@ -49,6 +49,7 @@ a local cleanup list and is not a browser data asset.
 | Asset | Meaning and key fields |
 |---|---|
 | `de-index.json` and `de-models/*.json` | The index lists models and points to a default chunk containing adjusted p < 0.05 plus gene lookup chunks for all other records. A complete gene symbol retrieves its lookup chunk. `effect` is log2 fold change; `padj` and `pvalue` are probabilities, `se` is effect standard error, and `baseMean` is PyDESeq2’s mean size-factor-normalized count. `studySupport`, when available, counts per-study results for the same covariate and contrast with adjusted p < 0.05 and records the number with a finite adjusted p-value. The count ignores effect direction; studies with missing results or adjusted p-values are not counted as tested. It is descriptive, and per-study models can have different covariate adjustments. Null numeric values mean no finite estimate was supplied. |
+| `clock-data.json` | Optional baseline and most-advanced available clock predictions and metrics for each cell type, plus same-method equal-weight mean predictions across cell types when available. Training predictions are leave-one-study-out; held-out predictions come from studies excluded from fitting and tuning. The cross-type mean includes donors with predictions from at least two types and consistent study/age metadata. Donor identifiers and model coefficients are not exported. |
 | `reference-expression/<cell-type>.json` | Study-balanced CPM for genes with reference-bin pseudobulk support, with the reference bin, method, and contributing sample and study counts. CPM is normalized expression, not an absolute molecule count. |
 | `de-previews/<cell-type>.svg` | Static preview of the merged age-model volcano plot, shown while the interactive DE records load. |
 | `age-previews/<slug>.json` and gene chunks | Age-bin effects from the separate combined age-bin model are partitioned by gene. `effect` is log2 fold change relative to `referenceBin`; null denotes a missing estimate. |
@@ -57,16 +58,17 @@ a local cleanup list and is not a browser data asset.
 | `pipeline-trajectory-index.json` | Only gene–cell-type trajectories selected for clustering. Each record has UMAP `x`/`y`, cluster, omnibus adjusted p-value, seven scaled age-bin values, and the signed maximum absolute **raw** log2 fold change relative to 20–30. When available, reference expression is study-balanced reference-bin CPM with contributing sample and study counts. Cell count is unavailable. This is not the universe of tested genes. |
 | `pipeline-composition-index.json` | Study-level `records` describe mean adult fractions within an AIFI L1 parent and model diagnostics. `coefficients` are per-study effects with confidence bounds; age is per decade. `ageEstimates` are adjusted fraction changes relative to `referenceBin` for `l1_parent` or `retained_pbmc`, with confidence bounds and per-bin sample counts. Reference mean and adjusted fractions can be null. `ageStatus` records model completion or skip reasons. Fractions measure relative representation, not absolute abundance. |
 | `pathway-index.json` | Optional curated sets with identifier, label, description, uppercase genes and source filename. Source-file hashes are recorded in the release manifest; permissions and citations require separate review. |
-| `single-cell-index.json` and `single-cell/*.json` | Optional per-type summaries from completed single-cell analyses. When a cell-type manifest exists, only types marked complete in it are included; otherwise available completed reports are used. Each type contains the report's local cluster UMAP, up to eight positive and negative markers per cluster ranked by log₂ fold change, and cluster-fraction figures when available. Newly rendered reports provide a per-cluster figure and pooled/per-study summaries: sample counts, mean observed fraction, and unadjusted linear slopes in percentage points per decade. Figures show sample-level age and fraction points without sample identifiers. Newly rendered reports include eligible samples with zero cells in a cluster; older reports omit them. Trends are descriptive and the pooled trend is study-unadjusted. The original per-cell data and identifiers are not exported. Input report, notebook and marker-table hashes are included in the source inventory; hashes do not prove common run lineage. |
+| `single-cell-index.json` and `single-cell/*.json` | Optional per-type summaries from completed single-cell analyses. When a cell-type manifest exists, only types marked complete in it are included; otherwise available completed reports are used. Each type contains the report's local cluster UMAP, an optional image of significant merged age-DE gene expression on that UMAP, up to eight positive and negative markers per cluster ranked by log₂ fold change, and cluster-fraction figures when available. The age-DE figure selects up to five positive and four negative age effects by adjusted p-value and exports only the rendered PNG, not per-cell expression values. Newly rendered reports provide a per-cluster figure and pooled/per-study summaries: sample counts, mean observed fraction, and unadjusted linear slopes in percentage points per decade. Figures show sample-level age and fraction points without sample identifiers. Newly rendered reports include eligible samples with zero cells in a cluster; older reports omit them. Trends are descriptive and the pooled trend is study-unadjusted. The original per-cell data and identifiers are not exported. Input report, notebook and marker-table hashes are included in the source inventory; hashes do not prove common run lineage. |
 | `gene-metadata.json` | Optional PANTHER annotations for retained trajectory genes, including source version, URL and source SHA-256. Rebuilt only when the pinned source and trajectory index are available. |
 | `reports/<release-id>/analysis/…/report.html` | Available per-type DE and combined trajectory HTML reports, copied unchanged and linked from the modelling page. These reports may contain sample-level identifiers and diagnostics. The export does not include their linked CSV or other companion downloads; those links can be unavailable on the site. |
 | `reports/<release-id>/harmonization/harmonization_qc/<study>/report.html` | Available study QC reports, discovered from the harmonization output and linked on the datasets page. These may contain sample-level information; review them before publication. |
 | `images/<release-id>/studies/<study>-umap.png` | The standalone AIFI L2 UMAP from the study QC notebook, with a transparent background. Older QC notebooks without this figure do not produce a UMAP asset; rerender the study report to include it. |
 | `images/<release-id>/studies/<study>-heatmap.png` | The study-label versus AIFI L2 comparison extracted from the study QC notebook, with a transparent background, when available. |
 
-The remembered cell type's merged age-model summary is preloaded after the page
-settles (Naive CD8 T cell on a fresh session), along with its reference CPM.
-Other cell types and models load when selected. Hovering or focusing the
+The selected cell type's combined age-model records are preloaded on startup
+(Naive CD8 T cell on a fresh session), along with records for up to five other
+well-supported cell types. Other cell types and models load when selected.
+Hovering or focusing the
 trajectory menu prefetches the compact map asset; profile details load on demand.
 Older exports without the compact map fall back to `pipeline-trajectory-index.json`.
 
@@ -74,10 +76,11 @@ The manifest includes study identifiers observed in exported models and selected
 study harmonization reports. The dataset page indicates which studies have each
 kind of result. If a workflow run manifest is available, only its selected studies
 are used for harmonization reports, avoiding stale study outputs. Available
-DOIs, annotation and technology descriptions come from the current checkout of
-`config/studies.json`, whose fingerprint is recorded; this is not a verified
-analysis-time snapshot. Optional `site_comments` strings in individual study
-entries are displayed alongside that metadata. Data licences are recorded as unknown until reviewed.
+publication titles, formal citations, DOIs, annotation and technology descriptions
+come from the current checkout of `config/studies.json`, whose fingerprint is
+recorded; this is not a verified analysis-time snapshot. Donor and cell counts
+are derived from the available merged single-cell and study metadata. Data
+licences are recorded as unknown until reviewed.
 Age-bin support is drawn from the trajectory analysis metadata when available.
 Regenerating a study QC report updates its notebook and HTML; the site continues
 to show the previous export until `make site-export` is run again. See the

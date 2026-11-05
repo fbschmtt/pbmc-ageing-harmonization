@@ -1,7 +1,13 @@
 import type { Page } from '../../app/navigation'
 import { AtlasWorkflow } from './AtlasWorkflow'
 
-export function OverviewPage({ onNavigate }: { onNavigate: (page: Page) => void }) {
+export function OverviewPage({
+  onNavigate,
+  summary,
+}: {
+  onNavigate: (page: Page) => void
+  summary?: { studies: number; donors: number; cells: number } | null
+}) {
   return (
     <>
       <section className="hero">
@@ -11,6 +17,22 @@ export function OverviewPage({ onNavigate }: { onNavigate: (page: Page) => void 
           This atlas brings together single-cell studies of peripheral blood mononuclear cells (PBMCs) to
           examine how gene expression and cell-type composition vary with age.
         </p>
+        {summary && (
+          <dl className="atlas-summary" aria-label="Single-cell atlas coverage">
+            <div>
+              <dt>Studies</dt>
+              <dd>{summary.studies.toLocaleString()}</dd>
+            </div>
+            <div>
+              <dt>Individual donors</dt>
+              <dd>{summary.donors.toLocaleString()}</dd>
+            </div>
+            <div>
+              <dt>Cells</dt>
+              <dd>{summary.cells.toLocaleString()}</dd>
+            </div>
+          </dl>
+        )}
         <p className="hero-copy">
           Cells are assigned a shared cell-type annotation, then aggregated by sample and cell type for
           analysis. Differences between studies and uneven sample coverage should be considered when

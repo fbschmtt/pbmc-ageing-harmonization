@@ -12,8 +12,7 @@ export function FractionAgePlot({
 }) {
   if (!estimates.length) return <p>No estimable age-bin fraction model is available for this cell type.</p>
   const points = absoluteFractionPoints(estimates)
-  if (!points.length)
-    return <p>Absolute reference-bin estimates are unavailable. Rerender the DE reports and export the site data.</p>
+  if (!points.length) return <p>Absolute reference-bin estimates are unavailable.</p>
   const groups = [...new Set(points.map(({ item }) => item.group))].sort()
   const bins = [...new Set(estimates.map((item) => item.ageBin))].sort(
     (a, b) => Number(a.split('-')[0]) - Number(b.split('-')[0]),
@@ -26,7 +25,7 @@ export function FractionAgePlot({
   const x = (index: number) => left + (index * (right - left)) / Math.max(1, bins.length - 1)
   const y = (value: number) => bottom - ((value - low) / (high - low)) * (bottom - top)
   return (
-    <div className="fraction-chart-panel">
+    <div className="fraction-chart-panel atlas-card atlas-card-soft">
       <p className="eyebrow">Age profile</p>
       <h2>Adjusted fraction across age</h2>
       <p>

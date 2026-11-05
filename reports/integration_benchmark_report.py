@@ -97,8 +97,9 @@ scanorama_note = (
 )
 display(Markdown(
     "Each method's graph is used for both its UMAP and CellTypist majority "
-    "voting. The artifact retains both embeddings and neighbor graphs, but "
-    "omits the merged expression matrix. **scVI was not included** because the "
+    "voting. Sparse graph overlap is calculated during aggregation; the final "
+    "artifact retains labels and UMAPs, but omits expression, PCA, and graphs. "
+    "**scVI was not included** because the "
     "expected input is around six million cells; model training at that scale "
     "would be highly resource intensive and may exceed available GPU memory. "
     "Configured methods in this run: "
@@ -106,6 +107,17 @@ display(Markdown(
     + "."
     + scanorama_note
 ))
+failed_methods = run_report.get("failed_methods", [])
+if failed_methods:
+    display(Markdown(
+        "**Partial benchmark:** these configured methods did not produce an artifact: "
+        + "; ".join(
+            f"{method['name']} ({method.get('status', 'failed')}): "
+            f"{method.get('error', 'no details')}"
+            for method in failed_methods
+        )
+        + "."
+    ))
 display(pd.DataFrame([
     {
         "method": method["name"],
@@ -140,7 +152,8 @@ for method in embedding_methods:
 # ## 2. Type calling
 #
 # CellTypist majority-voting predictions are generated on each method's own
-# graph. The stored connectivities also let us compare graph membership.
+# graph. Sparse edge overlap is calculated during aggregation and recorded
+# below; the published H5AD omits the graph matrices.
 # Concordance rows are per-study AIFI-L2 labels and columns are benchmark calls;
 # values are row-normalized cell fractions.
 
@@ -165,26 +178,7 @@ figure.tight_layout()
 plt.show()
 
 # %%
-def edge_set(connectivities):
-    graph = connectivities.tocsr(copy=True)
-    graph.setdiag(0)
-    graph.eliminate_zeros()
-    rows, cols = graph.nonzero()
-    return set(zip(rows[rows < cols].tolist(), cols[rows < cols].tolist()))
-
-baseline = next((method for method in methods if method["name"] == "unintegrated_pca"), None)
-if baseline is not None:
-    baseline_edges = edge_set(adata.obsp[baseline["graph_keys"]["connectivities"]])
-    rows = []
-    for method in methods:
-        if method is baseline:
-            continue
-        edges = edge_set(adata.obsp[method["graph_keys"]["connectivities"]])
-        union = baseline_edges | edges
-        rows.append({
-            "graphs": f"unintegrated vs {method['name']}",
-            "shared_undirected_edges": len(baseline_edges & edges),
-            "union_undirected_edges": len(union),
-            "edge_jaccard": len(baseline_edges & edges) / len(union) if union else 1.0,
-        })
-    display(pd.DataFrame(rows))
+graph_comparisons = run_report.get("graph_comparisons", [])
+if graph_comparisons:
+    display(Markdown("### Neighbor graph overlap against unintegrated PCA"))
+    display(pd.DataFrame(graph_comparisons))

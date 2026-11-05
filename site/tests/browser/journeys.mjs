@@ -10,6 +10,7 @@ import { gzipSync } from 'node:zlib'
 import { chromium } from '@playwright/test'
 import { makeFixture } from './fixture.mjs'
 import { verifyRelease } from '../../scripts/verify-release.mjs'
+import { installOfflineRoutes } from './network.mjs'
 
 const site = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const types = {
@@ -41,6 +42,17 @@ async function serve(root) {
   return { server, url: `http://127.0.0.1:${server.address().port}/` }
 }
 const visible = async (locator) => locator.waitFor({ state: 'visible', timeout: 10000 })
+async function choosePageFromGroup(page, parent, child) {
+  const menu = page.locator('.site-nav .nav-menu').filter({ hasText: parent })
+  await menu.locator('summary').click()
+  // Submenu buttons include a descriptive second line in their accessible name,
+  // so match the visible page label within the selected menu instead.
+  await menu.locator('.nav-menu-panel button').filter({ hasText: child }).click()
+}
+async function openApp(page, url) {
+  await installOfflineRoutes(page, url)
+  await page.goto(url)
+}
 const menuTrigger = (page, label) =>
   page
     .locator('.choice-field')
@@ -103,7 +115,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         const page = await context.newPage()
         const requests = []
         page.on('request', (request) => requests.push(new URL(request.url()).pathname))
-        await page.goto(served.url)
+        await openApp(page, served.url)
         assert.equal(
           requests.some((path) => path.includes('/data/de-models/')),
           false,
@@ -117,19 +129,19 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         const wasRequested = (asset) =>
           requests.some((path) => path.endsWith(`/${asset}`) || path.endsWith(`/${asset}.gz.bin`))
         assert.equal(wasRequested(combined.recordsAsset), true, 'Combined age results were not preloaded')
-        assert.equal(wasRequested(cell.referenceExpressionAsset), true, 'Reference CPM was not preloaded')
         assert.equal(otherPaths.some(wasRequested), false, 'Per-study model was prefetched')
-        await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
         await visible(page.locator('.de-statistics'))
         await visible(page.getByText('123.4 CPM', { exact: false }))
         assert.equal(await page.getByText('Mean normalized count', { exact: false }).count(), 0)
-        await visible(page.getByRole('link', { name: 'Download complete combined-model results (CSV)' }))
+        await visible(page.getByRole('link', { name: 'Download DEG results', exact: true }))
+        await page.locator('.volcano-explorer-gene-set > summary').click()
         await page.getByLabel('Highlight genes').fill('GENE3')
         assert.equal(otherPaths.some(wasRequested), false, 'Unselected model was prefetched')
         assert.ok(requests.some((path) => path.includes('/data/de-models/') && path.endsWith('.gz.bin')))
-        await chooseMenu(page, 'Model and contrast', 'study_a · Age (per decade)')
+        await chooseMenu(page, 'Analysis', 'study_a · Age (per decade)')
         await visible(page.getByText('Effect: age · per decade.', { exact: false }))
-        assert.equal(await page.getByRole('link', { name: /Download complete combined-model results/ }).count(), 0)
+        assert.equal(await page.getByRole('link', { name: 'Download DEG results', exact: true }).count(), 0)
         assert.equal(wasRequested(other.recordsAsset), true, 'Selected model was not fetched')
         await visible(page.getByText('1 of 1 studies significant', { exact: true }))
         assert.ok((await page.locator('svg[aria-label^="Volcano plot"] title').allTextContents())
@@ -150,8 +162,8 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
           await deGate
           await route.continue()
         })
-        await page.goto(served.url)
-        await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
+        await openApp(page, served.url)
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
         await visible(page.locator('.de-preview img'))
         assert.match(await page.locator('.de-preview img').getAttribute('src'), /de-previews\/cd14-monocyte\.svg/)
         resumeDe()
@@ -161,8 +173,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
           await trajectoryGate
           await route.continue()
         })
-        await page.getByText('Age-bin trajectories', { exact: false }).first().click()
-        await page.getByRole('button', { name: /Cross-type trajectory map/ }).click()
+        await choosePageFromGroup(page, 'More age analysis', 'Age-bin trajectories')
         await visible(page.locator('.trajectory-map-loading img'))
         resumeTrajectory()
         await visible(page.locator('.trajectory-notice'))
@@ -184,9 +195,8 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         await page.route('**/data/release.json.gz.bin', (route) =>
           route.fulfill({ body: gzipSync(JSON.stringify(legacy)), contentType: 'application/octet-stream' }),
         )
-        await page.goto(served.url)
-        await page.getByText('Age-bin trajectories', { exact: false }).first().click()
-        await page.getByRole('button', { name: /Cross-type trajectory map/ }).click()
+        await openApp(page, served.url)
+        await choosePageFromGroup(page, 'More age analysis', 'Age-bin trajectories')
         await visible(page.locator('.trajectory-notice'))
         await visible(page.locator('.umap'))
         assert.equal(await page.getByText('Trajectory data is unavailable.').count(), 0)
@@ -219,16 +229,13 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
               })
             : route.fulfill({ json: legacy }),
         )
-        await page.goto(served.url)
-        await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
-        await visible(
-          page.getByText('This older export contains all models in one download.', { exact: false }),
-        )
+        await openApp(page, served.url)
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
         const plot = page.locator('svg[aria-label^="Volcano plot"]')
         await visible(plot)
         assert.equal(await plot.locator('circle').count(), 2)
         assert.equal(await plot.locator('title').filter({ hasText: 'GENE3' }).count(), 0)
-        await page.getByLabel('Find a gene').fill('GENE3')
+        await page.getByLabel('Search genes').fill('GENE3')
         await chooseMenu(page, 'Matching genes (1)', 'GENE3')
         assert.equal(await plot.locator('title').filter({ hasText: 'GENE3' }).count(), 1)
       } finally {
@@ -240,13 +247,16 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
-        await page.goto(served.url)
-        await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
+        await openApp(page, served.url)
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
         await visible(page.locator('.de-statistics'))
-        await page.getByLabel('Find a gene').fill('GENE3')
+        await page.getByLabel('Search genes').fill('GENE3')
         await chooseMenu(page, 'Matching genes (1)', 'GENE3')
         await visible(page.getByRole('heading', { name: 'GENE3', exact: true }))
-        await visible(page.locator('.de-statistics dd').first().filter({ hasText: '0.230' }))
+        const statistics = page.locator('.de-statistics dd')
+        await visible(statistics.nth(0).filter({ hasText: '2.30' }))
+        await visible(statistics.nth(1).filter({ hasText: '0.500' }))
+        await visible(statistics.nth(4).filter({ hasText: 'Unavailable' }))
       } finally {
         await context.close()
       }
@@ -256,9 +266,8 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
-        await page.goto(served.url)
-        await page.getByText('Age-bin trajectories', { exact: false }).first().click()
-        await page.getByRole('button', { name: /Genes.*Compare a gene/ }).click()
+        await openApp(page, served.url)
+        await choosePageFromGroup(page, 'Differential expression', 'By gene')
         await visible(page.getByLabel('Gene symbol'))
         await page.getByLabel('Gene symbol').fill('GENE2')
         await page
@@ -275,8 +284,8 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       const context = await browser.newContext({ viewport: { width: 375, height: 800 } })
       try {
         const page = await context.newPage()
-        await page.goto(served.url)
-        const workflow = page.getByRole('region', { name: 'How the atlas comes together' })
+        await openApp(page, served.url)
+        const workflow = page.getByRole('region', { name: 'How the data come together' })
         await visible(workflow)
         assert.equal(await workflow.locator('li').count(), 4)
         await visible(workflow.getByText('Sum gene counts by sample and cell type; count cells for composition.'))
@@ -292,13 +301,36 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       }
     })
 
+    await runJourney('navigation', 'clock selector includes cross-cell-type mean predictions', async () => {
+      const context = await browser.newContext()
+      try {
+        const page = await context.newPage()
+        await openApp(page, served.url)
+        await choosePageFromGroup(page, 'More age analysis', 'Transcriptomic clocks')
+        await visible(page.getByRole('heading', { name: 'Predicting age from gene expression' }))
+        await page.locator('.clock-method-card').first().waitFor({ state: 'visible' })
+        assert.equal(await page.locator('.clock-method-card').count(), 2)
+        assert.equal(await page.locator('.clock-plot svg').count(), 4)
+        assert.equal(await page.locator('.clock-plot svg').first().evaluate((svg) => getComputedStyle(svg).backgroundColor), 'rgba(0, 0, 0, 0)')
+        await page.getByLabel('Cell type').selectOption('cross-cell-type-mean')
+        await visible(page.getByText('Cross-cell-type ensemble', { exact: true }))
+        await visible(page.getByRole('heading', { name: 'Elastic net · mean across cell types' }))
+        assert.equal(await page.locator('.clock-method-card').count(), 1)
+        assert.equal(await page.locator('.clock-plot svg').count(), 2)
+        await page.getByLabel('Cell type').selectOption('cd14-monocyte')
+        assert.equal(await page.locator('.clock-method-card').count(), 2)
+      } finally {
+        await context.close()
+      }
+    })
+
     await runJourney('navigation', 'single-cell landscape shows embedding and ranked markers', async () => {
       const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
       try {
         const page = await context.newPage()
-        await page.goto(served.url)
-        await page.getByRole('button', { name: 'Single-cell', exact: true }).click()
-        await visible(page.getByRole('heading', { name: 'Single-cell landscape' }))
+        await openApp(page, served.url)
+        await page.getByRole('button', { name: 'Cell states', exact: true }).click()
+        await visible(page.getByRole('heading', { name: 'Cell states' }))
         await visible(page.getByRole('img', { name: 'UMAP of CD14 monocyte, colored by local cluster' }))
         await visible(page.getByText('TESTMARKER', { exact: true }))
         await visible(page.getByText('OTHER', { exact: true }))
@@ -338,7 +370,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
       try {
         const page = await context.newPage()
-        await page.goto(served.url)
+        await openApp(page, served.url)
         await page.getByRole('button', { name: 'Modelling', exact: true }).click()
         const guide = page.getByRole('region', { name: 'Three ways to look at age' })
         await visible(guide)
@@ -353,7 +385,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
-        await page.goto(served.url)
+        await openApp(page, served.url)
         await page.getByRole('heading', { name: 'Cell composition' }).click()
         await visible(page.locator('.pipeline-composition'))
         assert.equal(new URL(page.url()).hash, '#composition')
@@ -374,31 +406,31 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         const page = await context.newPage(),
           errors = []
         page.on('pageerror', (error) => errors.push(error.message))
-        await page.goto(served.url)
+        await openApp(page, served.url)
         await visible(page.getByText('SYNTHETIC TEST DATA · EXPORT', { exact: false }))
-        await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
         await visible(page.getByText('Synthetic fixture: not biological evidence.'))
-        await chooseMenu(page, 'Model and contrast', 'study_a · Age (per decade)')
+        await chooseMenu(page, 'Analysis', 'study_a · Age (per decade)')
         await visible(page.getByText('Effect: age · per decade.', { exact: false }))
-        await page.getByLabel('Find a gene').fill('GENE2')
+        await page.getByLabel('Search genes').fill('GENE2')
         await chooseMenu(page, 'Matching genes (1)', 'GENE2')
         await visible(page.getByRole('heading', { name: 'GENE2', exact: true }))
         await visible(page.locator('.de-statistics dd').first().filter({ hasText: '-0.210' }))
-        await page.getByText('Age-bin trajectories', { exact: false }).first().click()
-        await page.getByRole('button', { name: /Genes.*Compare a gene/ }).click()
+        await choosePageFromGroup(page, 'Differential expression', 'By gene')
         await visible(page.locator('.profiles-page'))
         assert.equal(await page.getByLabel('Gene symbol').inputValue(), 'GENE2')
         await visible(page.getByText('metadata unavailable', { exact: false }).first())
-        await page.getByText('Age-bin trajectories', { exact: false }).first().click()
-        await page.getByRole('button', { name: /Cross-type trajectory map.*Explore/ }).click()
+        await choosePageFromGroup(page, 'More age analysis', 'Age-bin trajectories')
         await visible(page.locator('.pair-card').getByRole('button', { name: 'GENE2', exact: true }))
         await page.getByRole('button', { name: 'Composition', exact: true }).click()
         await visible(page.getByText('Synthetic fixture: not biological evidence.'))
-        assert.equal(await page.locator('.fraction-baseline strong').textContent(), '25.00%')
-        await chooseMenu(page, 'Age plot denominator', 'Within retained PBMCs')
-        await visible(page.locator('.fraction-baseline strong').filter({ hasText: '40.00%' }))
+        await visible(page.locator('.fraction-chart-panel').first())
         const agePlot = page.locator('svg[aria-label^="Model-adjusted absolute fractions"]')
-        const tooltip = await agePlot.locator('title').allTextContents()
+        let tooltip = await agePlot.locator('title').allTextContents()
+        assert.ok(tooltip.some((value) => value.includes('25.00% estimated fraction')))
+        await chooseMenu(page, 'Age plot denominator', 'Within retained PBMCs')
+        await agePlot.locator('title').filter({ hasText: '40.00% estimated fraction' }).first().waitFor({ state: 'attached' })
+        tooltip = await agePlot.locator('title').allTextContents()
         assert.ok(tooltip.some((value) => value.includes('60.00% estimated fraction')))
         assert.ok((await agePlot.locator('path').count()) > 0)
         await visible(agePlot.getByText(/^40%$/))
@@ -418,27 +450,21 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       }
     })
 
-    await runJourney('navigation', 'shows release provenance, study context and sharing limitations', async () => {
+    await runJourney('navigation', 'shows study publication details and analysis reports', async () => {
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
-        await page.goto(served.url)
+        await openApp(page, served.url)
         await page.getByRole('button', { name: 'Datasets', exact: true }).click()
-        await visible(page.getByText('study_a', { exact: true }))
-        await visible(page.getByText('Fixture annotation', { exact: false }))
+        await visible(page.getByRole('heading', { name: 'study_a', exact: true }))
         assert.equal(
           await page.getByRole('link', { name: '10.1234/fixture' }).getAttribute('href'),
           'https://doi.org/10.1234/fixture',
         )
-        await visible(page.getByText('metadata comparison', { exact: false }))
         await page.getByRole('button', { name: 'Modelling', exact: true }).click()
-        await visible(page.getByText('Study licences are not recorded in this release.', { exact: false }))
-        await visible(
-          page.getByText('Included HTML reports may contain sample-level identifiers', { exact: false }),
-        )
-        await page.getByRole('button', { name: 'Download', exact: true }).click()
-        await visible(page.getByText('Downloads will be available in a future release.'))
-        assert.equal(await page.locator('.content-page a').count(), 0)
+        await visible(page.getByRole('heading', { name: 'Models and interpretation' }))
+        await visible(page.getByRole('heading', { name: 'Detailed model diagnostics' }))
+        await visible(page.getByRole('link', { name: 'Open the report index' }))
       } finally {
         await context.close()
       }
@@ -448,7 +474,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
-        await page.goto(served.url)
+        await openApp(page, served.url)
         await page.getByRole('button', { name: 'Composition', exact: true }).click()
         const trigger = menuTrigger(page, 'Cell type')
         await trigger.focus()
@@ -473,10 +499,10 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
-        await page.goto(served.url)
-        await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
+        await openApp(page, served.url)
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
         await visible(menuTrigger(page, 'Cell type'))
-        await page.getByLabel('Find a gene').fill('GENE2')
+        await page.getByLabel('Search genes').fill('GENE2')
         await chooseMenu(page, 'Matching genes (1)', 'GENE2')
         await chooseMenu(page, 'Cell type', 'Naive CD4 T cell')
         assert.equal(await menuTrigger(page, 'Cell type').locator('.choice-color').evaluate((dot) => dot.style.backgroundColor), 'rgb(89, 127, 198)')
@@ -484,7 +510,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         await visible(page.locator('.pipeline-composition'))
         await assertMenu(page, 'Cell type', 'Naive CD4 T cell')
         await chooseMenu(page, 'Cell type', 'CD14 monocyte')
-        await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
         await visible(page.getByRole('heading', { name: 'GENE2', exact: true }))
         await assertMenu(page, 'Cell type', 'CD14 monocyte')
         await chooseMenu(page, 'Cell type', 'CD16 monocyte')
@@ -493,12 +519,12 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
           page.getByText('Fraction summaries are unavailable for CD16 monocyte. Showing CD14 monocyte.'),
         )
         await assertMenu(page, 'Cell type', 'CD14 monocyte')
-        await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
         await visible(menuTrigger(page, 'Cell type'))
         await assertMenu(page, 'Cell type', 'CD16 monocyte')
         await page.getByRole('button', { name: 'Composition', exact: true }).click()
         await page.getByRole('button', { name: 'Use CD14 monocyte' }).click()
-        await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
         await visible(menuTrigger(page, 'Cell type'))
         await assertMenu(page, 'Cell type', 'CD14 monocyte')
       } finally {
@@ -506,18 +532,20 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       }
     })
 
-    await runJourney('navigation', 'shares a cell type chosen in the trajectory profile', async () => {
+    await runJourney('navigation', 'shares the cell type selected from the trajectory map', async () => {
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
-        await page.goto(served.url)
-        await page.getByText('Age-bin trajectories', { exact: false }).first().click()
-        await page.getByRole('button', { name: /Cell types.*Explore genes/ }).click()
-        await visible(page.locator('.profiles-page'))
-        await chooseMenu(page, 'Cell type', 'Naive CD4 T cell')
+        await openApp(page, served.url)
+        await choosePageFromGroup(page, 'More age analysis', 'Age-bin trajectories')
+        const card = page.locator('.pair-card')
+        await visible(card)
+        const cellType = (await card.locator('.pair-card-cell-link').textContent()).trim()
+        await card.locator('.pair-card-cell-link').click()
+        await visible(page.locator('.de-page'))
         await page.getByRole('button', { name: 'Composition', exact: true }).click()
         await visible(page.locator('.pipeline-composition'))
-        await assertMenu(page, 'Cell type', 'Naive CD4 T cell')
+        await assertMenu(page, 'Cell type', cellType)
       } finally {
         await context.close()
       }
@@ -529,20 +557,20 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         const context = await browser.newContext()
         try {
           const page = await context.newPage()
-          await page.goto(served.url)
-          await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
-          await visible(menuTrigger(page, 'Model and contrast'))
-          await chooseMenu(page, 'Model and contrast', 'study_a · Age (per decade)')
+          await openApp(page, served.url)
+          await choosePageFromGroup(page, 'Differential expression', 'By cell type')
+          await visible(menuTrigger(page, 'Analysis'))
+          await chooseMenu(page, 'Analysis', 'study_a · Age (per decade)')
           await chooseMenu(page, 'Cell type', 'Naive CD4 T cell')
-          await assertMenu(page, 'Model and contrast', 'study_a · Age (per decade)')
-          await page.getByLabel('Find a gene').fill('GENE2')
+          await assertMenu(page, 'Analysis', 'study_a · Age (per decade)')
+          await page.getByLabel('Search genes').fill('GENE2')
           await chooseMenu(page, 'Matching genes (1)', 'GENE2')
           await visible(page.locator('.de-statistics dd').first().filter({ hasText: '-0.670' }))
           await chooseMenu(page, 'Cell type', 'CD16 monocyte')
           await visible(
             page.getByText('The selected model is unavailable for CD16 monocyte.', { exact: false }),
           )
-          await assertMenu(page, 'Model and contrast', 'study_a · Age (per decade) (unavailable)')
+          await assertMenu(page, 'Analysis', 'study_a · Age (per decade) (unavailable)')
           await chooseMenu(page, 'Cell type', 'CD14 monocyte')
           await visible(page.locator('.de-statistics dd').first().filter({ hasText: '-0.210' }))
           await page.getByRole('button', { name: 'Composition', exact: true }).click()
@@ -550,9 +578,9 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
           await chooseMenu(page, 'Age plot denominator', 'Within retained PBMCs')
           await chooseMenu(page, 'Cell type', 'Naive CD4 T cell')
           await assertMenu(page, 'Age plot denominator', 'Within retained PBMCs')
-          await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
-          await visible(menuTrigger(page, 'Model and contrast'))
-          await assertMenu(page, 'Model and contrast', 'study_a · Age (per decade)')
+          await choosePageFromGroup(page, 'Differential expression', 'By cell type')
+          await visible(menuTrigger(page, 'Analysis'))
+          await assertMenu(page, 'Analysis', 'study_a · Age (per decade)')
           await assertMenu(page, 'Cell type', 'Naive CD4 T cell')
           await page.getByRole('button', { name: 'Composition', exact: true }).click()
           await visible(menuTrigger(page, 'Age plot denominator'))
@@ -575,8 +603,8 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
           await gate
           await route.continue()
         })
-        await page.goto(served.url)
-        await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
+        await openApp(page, served.url)
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
         await visible(page.getByRole('heading', { name: 'Loading differential expression…' }))
         resume()
         await visible(page.getByText('Synthetic fixture: not biological evidence.'))
@@ -610,9 +638,8 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
           await page.route('**/data/gene-metadata.json*', (route) =>
             route.fulfill({ json: { releaseId: built.releaseId, schemaVersion: 1, genes: 'invalid' } }),
           )
-          await page.goto(served.url)
-          await page.getByText('Age-bin trajectories', { exact: false }).first().click()
-          await page.getByRole('button', { name: /Genes.*Compare a gene/ }).click()
+          await openApp(page, served.url)
+          await choosePageFromGroup(page, 'Differential expression', 'By gene')
           await visible(page.locator('.profiles-page'))
           await visible(
             page.getByText(
@@ -645,8 +672,8 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
                 })
               : route.fulfill({ json: payload }),
           )
-          await page.goto(served.url)
-          await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
+          await openApp(page, served.url)
+          await choosePageFromGroup(page, 'Differential expression', 'By cell type')
           await visible(
             page.getByRole('heading', {
               name:

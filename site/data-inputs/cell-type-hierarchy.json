@@ -93,7 +93,7 @@
             "id": "pbmc-dendritic",
             "label": "Dendritic cells",
             "groupLabel": "PBMC — dendritic cells",
-            "match": { "exact": ["pDC"], "prefixes": ["cDC"] }
+            "match": { "exact": ["pDC", "ASDC"], "prefixes": ["cDC"] }
           }
         ]
       },

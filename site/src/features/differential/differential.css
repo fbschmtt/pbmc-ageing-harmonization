@@ -3,7 +3,7 @@
   padding: 18px max(4vw, 34px) 48px;
 }
 .de-page > p {
-  color: #65736f;
+  color: var(--atlas-muted);
   line-height: 1.5;
   font-size: 13px;
   margin: 0 0 10px;
@@ -12,7 +12,7 @@
   margin: 10px 0 14px;
   padding: 10px 14px;
   font-size: 13px;
-  background: #fff0df;
+  background: #fff4e9;
   border: 1px solid #dba78c;
   line-height: 1.6;
 }
@@ -33,23 +33,23 @@
   width: 100%;
   margin-top: 8px;
   padding: 12px;
-  border: 1px solid #ccd8cd;
+  border: 1px solid var(--atlas-border);
   background: white;
-  color: #1e302d;
+  color: var(--atlas-text);
   font: inherit;
 }
 .de-layout {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
   background: white;
-  border: 1px solid #d9ddd4;
+  border: 1px solid var(--atlas-border);
 }
 .de-plot,
 .de-context {
   padding: 25px;
 }
 .de-context {
-  background: #eff4ec;
+  background: var(--atlas-surface-soft);
   overflow-wrap: anywhere;
 }
 .de-plot h2,
@@ -62,8 +62,16 @@
 .de-context p,
 .de-context dd {
   font-size: 12px;
-  color: #65736f;
+  color: var(--atlas-muted);
   line-height: 1.6;
+}
+.de-plot .de-plot-loading {
+  display: grid;
+  min-height: 340px;
+  place-items: center;
+  color: var(--atlas-muted);
+  background: #fafbf8;
+  border: 1px dashed var(--atlas-border);
 }
 .de-plot svg {
   width: 100%;
@@ -71,9 +79,9 @@
 }
 .de-plot svg text {
   font:
-    11px Manrope,
+    11px var(--atlas-font-sans),
     sans-serif;
-  fill: #65736f;
+  fill: var(--atlas-muted);
 }
 .de-plot circle {
   cursor: pointer;
@@ -84,7 +92,7 @@
 .de-context dt {
   font-size: 11px;
   font-weight: 700;
-  color: #47796f;
+  color: var(--atlas-teal);
   margin-top: 16px;
 }
 .de-context dd {
@@ -102,12 +110,12 @@
   font-size: 12px;
 }
 .de-context .de-statistics dd {
-  color: #1e302d;
+  color: var(--atlas-text);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 .de-context .eyebrow {
-  margin-top: 24px;
+  margin-top: 16px;
 }
 .de-table-head {
   margin-top: 40px;
@@ -117,7 +125,7 @@
 }
 .de-table-head span {
   font-size: 12px;
-  color: #65736f;
+  color: var(--atlas-muted);
 }
 .de-table-wrap {
   overflow: auto;
@@ -130,7 +138,7 @@
 }
 .de-page th,
 .de-page td {
-  border-bottom: 1px solid #d9ddd4;
+  border-bottom: 1px solid var(--atlas-border);
   padding: 12px;
 }
 .de-page tbody tr {
@@ -161,29 +169,53 @@
   min-width: 200px;
   max-width: 100%;
   padding: 8px;
-  border: 1px solid #ccd8cd;
+  border: 1px solid var(--atlas-border);
   background: white;
-  color: #1e302d;
+  color: var(--atlas-text);
   font: inherit;
 }
 .de-gene-matches span {
-  color: #65736f;
+  color: var(--atlas-muted);
   font-weight: 400;
 }
-.de-model-download {
+.de-combined-download {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 4px 0 18px;
 }
-.de-model-download span {
-  color: #65736f;
+.de-combined-download p {
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.de-download-button {
+  display: inline-block;
+  padding: 9px 11px;
+  border: 1px solid var(--atlas-teal);
+  border-radius: var(--atlas-radius-control);
+  background: var(--atlas-teal);
+  color: white;
+  font: 600 13px var(--atlas-font-sans);
+  text-align: center;
+  text-decoration: none;
+}
+.de-download-button:visited {
+  color: white;
+}
+.de-download-button:disabled {
+  border-color: var(--atlas-border);
+  background: #e5e9e5;
+  color: #78827e;
+  cursor: not-allowed;
 }
 
 .de-trajectory-preview {
   margin-top: 22px;
   padding-top: 2px;
-  border-top: 1px solid #d9ddd4;
+  border-top: 1px solid var(--atlas-border);
 }
 .de-trajectory-preview svg {
   width: 100%;
@@ -192,9 +224,9 @@
 }
 .de-trajectory-preview svg text {
   font:
-    10px Manrope,
+    10px var(--atlas-font-sans),
     sans-serif;
-  fill: #65736f;
+  fill: var(--atlas-muted);
 }
 .de-gene-set {
   margin: 12px 0;
@@ -214,12 +246,27 @@
   flex-wrap: wrap;
   gap: 14px;
   font-size: 11px;
-  color: #65736f;
+  color: var(--atlas-muted);
 }
 .de-legend span {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+}
+.de-legend .de-support-legend {
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid #e1e5df;
+  border-radius: var(--atlas-radius-inset);
+  background: #fafbf8;
+}
+.de-legend .de-support-label {
+  color: #425c53;
+  font-weight: 700;
+}
+.de-legend .de-support-step {
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
 }
 .de-legend i {
   display: inline-block;
@@ -247,13 +294,30 @@
   display: block;
   width: min(100%, 900px);
   height: auto;
-  border: 1px solid var(--line, #d7ddd8);
+  border: 1px solid var(--line, var(--atlas-border));
   border-radius: 0.65rem;
-  background: #fbfaf7;
+  background: var(--atlas-surface);
 }
 
 .de-preview figcaption {
   margin-top: 0.5rem;
   color: var(--muted, #5c6763);
   font-size: 0.9rem;
+}
+.de-gene-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--color-border, #a9c0b5);
+  text-underline-offset: 0.15em;
+}
+
+.de-gene-link:hover,
+.de-gene-link:focus-visible {
+  color: var(--color-teal, #176b67);
+  text-decoration-color: currentColor;
 }

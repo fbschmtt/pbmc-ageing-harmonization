@@ -5,6 +5,8 @@
       "input": "input_data/aida25/3a8a77a6-f069-479c-a2c1-252feafd0106.h5ad",
       "test_input": "3a8a77a6-f069-479c-a2c1-252feafd0106.h5ad",
       "publication_doi": "10.1016/j.cell.2025.02.017",
+      "publication_title": "Asian diversity in human immune cells",
+      "publication_citation": "Kock KH et al. Cell. 2025;188(8):2288–2306.e24.",
       "counts_source": "raw",
       "features": {
         "source_column": "feature_name",
@@ -38,6 +40,8 @@
       "input": "input_data/aifi/human_immune_health_atlas_full.h5ad",
       "test_input": "human_immune_health_atlas_full.h5ad",
       "publication_doi": "10.1038/s41586-025-09686-5",
+      "publication_title": "Multi-omic profiling reveals age-related immune dynamics in healthy adults",
+      "publication_citation": "Gong Q et al. Nature. 2025;648:696–706.",
       "counts_source": "raw",
       "features": {
         "duplicate_policy": "error"
@@ -68,6 +72,8 @@
       "input": "input_data/CIMA/CIMA_RNA_6484974cells_36326genes_compressed.h5ad",
       "test_input": "CIMA_RNA_6484974cells_36326genes_compressed.h5ad",
       "publication_doi": "10.1126/science.adt3130",
+      "publication_title": "Chinese Immune Multi-Omics Atlas",
+      "publication_citation": "Yin J et al. Science. 2026;391(6781):eadt3130.",
       "counts_source": "layer:counts",
       "features": {
         "duplicate_policy": "error"
@@ -107,6 +113,8 @@
       "input": "input_data/fachrul26/6a322de5-4cc6-43f5-b35d-6f0c246fb297.h5ad",
       "test_input": "6a322de5-4cc6-43f5-b35d-6f0c246fb297.h5ad",
       "publication_doi": "10.64898/2026.02.15.704933",
+      "publication_title": "Ancestral and environmental diversity shape the immune landscape in Indonesia",
+      "publication_citation": "Fachrul M et al. bioRxiv. 2026. doi:10.64898/2026.02.15.704933.",
       "counts_source": "raw",
       "features": {
         "source_column": "feature_name",
@@ -142,6 +150,8 @@
       "input": "input_data/nehar_belaid26/GSE233321_RAW.tar",
       "test_input": "GSE233321_from_tar.h5ad",
       "publication_doi": "10.1038/s41467-026-73729-2",
+      "publication_title": "Single-cell map of the healthy human immune system across the lifespan reveals unique infant immune signatures",
+      "publication_citation": "Nehar-Belaid D et al. Nature Communications. 2026;17:7545.",
       "counts_source": "X",
       "features": {
         "source_column": "gene_symbol",
@@ -185,6 +195,8 @@
       "input": "input_data/onek1k/81d84489-bff9-4fb6-b0ee-78348126eada.h5ad",
       "test_input": "81d84489-bff9-4fb6-b0ee-78348126eada.h5ad",
       "publication_doi": "10.1126/science.abf3041",
+      "publication_title": "Single-cell eQTL mapping identifies cell type-specific genetic control of autoimmune disease",
+      "publication_citation": "Yazar S et al. Science. 2022;376(6589):eabf3041.",
       "counts_source": "X",
       "features": {
         "source_column": "feature_name",
@@ -219,6 +231,8 @@
       "input": "input_data/perez22/c55dc602-d168-4d15-acc1-5de4f2f5d551.h5ad",
       "test_input": "c55dc602-d168-4d15-acc1-5de4f2f5d551.h5ad",
       "publication_doi": "10.1126/science.abf1970",
+      "publication_title": "Single-cell RNA-seq reveals cell type-specific molecular and genetic associations to lupus",
+      "publication_citation": "Perez RK et al. Science. 2022;376(6589):eabf1970.",
       "counts_source": "raw",
       "features": {
         "source_column": "feature_name",
@@ -256,6 +270,8 @@
       "input": "input_data/terekhova23/pbmc_gex_raw_with_var_obs.h5ad",
       "test_input": "pbmc_gex_raw_with_var_obs.h5ad",
       "publication_doi": "10.1016/j.immuni.2023.10.013",
+      "publication_title": "Single-cell atlas of healthy human blood unveils age-related loss of NKG2C+GZMB−CD8+ memory T cells and accumulation of type 2 memory T cells",
+      "publication_citation": "Terekhova M et al. Immunity. 2023;56(12):2836–2854.e9.",
       "counts_source": "X",
       "features": {
         "duplicate_policy": "error"
@@ -288,6 +304,8 @@
       "input": "input_data/terekhova26/KCL_reannotated.h5ad",
       "test_input": "KCL_reannotated.h5ad",
       "publication_doi": "10.1016/j.immuni.2026.09.012",
+      "publication_title": "Single-cell analyses of global cohorts outline determinants of immune aging and link the ratio of GZMK+ to GZMB+ Tem cells to health trajectories",
+      "publication_citation": "Terekhova M et al. Immunity. 2026. doi:10.1016/j.immuni.2026.09.012.",
       "counts_source": "raw",
       "features": {
         "source_column": "gene_symbol",
@@ -326,6 +344,8 @@
       "input": "cache/converted/scRNA-seqProcessedLabelledObject.h5ad",
       "test_input": "scRNA-seqProcessedLabelledObject.h5ad",
       "publication_doi": "10.1038/s41590-024-02059-6",
+      "publication_title": "Integrating single-cell RNA and T cell/B cell receptor sequencing with mass cytometry reveals dynamic trajectories of human peripheral immune cells from birth to old age",
+      "publication_citation": "Wang Y et al. Nature Immunology. 2025. doi:10.1038/s41590-024-02059-6.",
       "conversion": {
         "source": "input_data/wang25/scRNA-seqProcessedLabelledObject.rds",
         "test_source": "test_data/scRNA-seqProcessedLabelledObject.rds",

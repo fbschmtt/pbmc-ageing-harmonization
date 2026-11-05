@@ -57,7 +57,7 @@ export function AtlasWorkflow() {
       <div className="workflow-intro">
         <div>
           <p className="eyebrow">From studies to insights</p>
-          <h2 id="workflow-heading">How the atlas comes together</h2>
+          <h2 id="workflow-heading">How the data come together</h2>
         </div>
         <p>Follow the data from individual blood samples to the views below.</p>
       </div>

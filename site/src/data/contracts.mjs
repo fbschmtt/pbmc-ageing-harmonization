@@ -19,10 +19,14 @@
 /** @typedef {{ release: string; source: string; sourceUrl: string; sourceSha256: string; genes: Record<string, GeneMetadata> }} GeneMetadataIndex */
 /** @typedef {{ id: string; label: string; path: string }} SingleCellType */
 /** @typedef {{ schemaVersion: number; cellTypes: SingleCellType[] }} SingleCellIndex */
+/** @typedef {{ study: string; age: number; predictedAge: number; nCellTypes?: number }} ClockPrediction */
+/** @typedef {{ id: string; name: string; description: string; training: { metrics: { n: number; mae: number; rmse: number; r2: number | null }; predictions: ClockPrediction[] }; heldOut: { metrics: { n: number; mae: number; rmse: number; r2: number | null }; predictions: ClockPrediction[] } }} ClockMethod */
+/** @typedef {{ id: string; label: string; scope?: 'cell_type' | 'cross_cell_type'; methods: ClockMethod[] }} ClockCellType */
+/** @typedef {{ schemaVersion: number; releaseId?: string; cellTypes: ClockCellType[] }} ClockIndex */
 /** @typedef {{ gene: string; effect: number; padj: number | null }} ClusterMarker */
 /** @typedef {{ cluster: string; image: string; fits: { study: string | null; samples: number; meanFraction: number; slopePpPerDecade: number | null }[] }} ClusterFractionDetail */
-/** @typedef {{ schemaVersion: number; cellType: string; nCells: number; nClusters: number; integration: string; image: string; fractionImage?: string | null; fractionNote?: string | null; fractionHasStudyTrends?: boolean; fractionIncludesZeros?: boolean; fractionDetails?: ClusterFractionDetail[] | null; groups: { cluster: string; higher?: ClusterMarker[]; lower?: ClusterMarker[]; markers?: { gene: string; score: number; padj: number | null }[] }[] }} SingleCell */
-/** @typedef {{ de: DifferentialRelease; trajectory: Atlas; trajectoryMap: TrajectoryMap; composition: FractionIndex; preview: Preview; pathways: { pathwaySets: PathwaySet[] }; metadata: GeneMetadataIndex; singleCell: SingleCell; singleCellIndex: SingleCellIndex; referenceExpression: ReferenceExpression }} Assets */
+/** @typedef {{ schemaVersion: number; cellType: string; nCells: number; nClusters: number; integration: string; image: string; ageDeImage?: string | null; fractionNote?: string | null; fractionHasStudyTrends?: boolean; fractionIncludesZeros?: boolean; fractionDetails?: ClusterFractionDetail[] | null; groups: { cluster: string; higher?: ClusterMarker[]; lower?: ClusterMarker[]; markers?: { gene: string; score: number; padj: number | null }[] }[] }} SingleCell */
+/** @typedef {{ de: DifferentialRelease; trajectory: Atlas; trajectoryMap: TrajectoryMap; composition: FractionIndex; preview: Preview; pathways: { pathwaySets: PathwaySet[] }; metadata: GeneMetadataIndex; singleCell: SingleCell; singleCellIndex: SingleCellIndex; referenceExpression: ReferenceExpression; clock: ClockIndex }} Assets */
 
 // Shared runtime contract for published JSON and browser loaders.
 const obj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x)
@@ -125,10 +129,19 @@ const geneMetadata = (x) =>
   obj(x.goTerms) &&
   ['biologicalProcesses', 'molecularFunctions', 'cellularComponents'].every((k) => arr(x.goTerms[k], term))
 const validators = {
+  clock: (x) => base(x) && arr(x.cellTypes, (cellType) => obj(cellType) && str(cellType.id) && str(cellType.label) &&
+    (cellType.scope === undefined || ['cell_type', 'cross_cell_type'].includes(cellType.scope)) &&
+    arr(cellType.methods, (method) => obj(method) && str(method.id) && str(method.name) && str(method.description) &&
+      ['training', 'heldOut'].every((split) => obj(method[split]) && obj(method[split].metrics) &&
+        count(method[split].metrics.n) && num(method[split].metrics.mae) && num(method[split].metrics.rmse) &&
+        nullableNumber(method[split].metrics.r2) && arr(method[split].predictions, (point) => obj(point) &&
+          str(point.study) && num(point.age) && num(point.predictedAge) &&
+          (point.nCellTypes === undefined || count(point.nCellTypes)))))),
   singleCellIndex: (x) => base(x) && arr(x.cellTypes, (c) => obj(c) && str(c.id) && str(c.label) && str(c.path)),
   singleCell: (x) => base(x) && str(x.cellType) && count(x.nCells) && count(x.nClusters) &&
     str(x.integration) && str(x.image) && x.image.startsWith('iVBORw0KGgo') &&
-    (x.fractionImage === undefined || x.fractionImage === null || (str(x.fractionImage) && x.fractionImage.startsWith('iVBORw0KGgo'))) &&
+    (x.ageDeImage === undefined || x.ageDeImage === null ||
+      (str(x.ageDeImage) && x.ageDeImage.startsWith('iVBORw0KGgo'))) &&
     (x.fractionNote === undefined || x.fractionNote === null || typeof x.fractionNote === 'string') &&
     (x.fractionHasStudyTrends === undefined || typeof x.fractionHasStudyTrends === 'boolean') &&
     (x.fractionIncludesZeros === undefined || typeof x.fractionIncludesZeros === 'boolean') &&

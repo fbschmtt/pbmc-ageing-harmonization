@@ -172,8 +172,6 @@ export function ProfilesPage({
             <GeneTypePairCard
               record={selected}
               actions={contextualActions}
-              metadata={geneMetadata?.genes[selected.gene]}
-              metadataRelease={geneMetadata?.release}
             />
           ) : (
             <div className="empty-scatter">Select a point for additional information.</div>

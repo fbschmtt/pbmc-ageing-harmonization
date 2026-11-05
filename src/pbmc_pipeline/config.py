@@ -404,18 +404,17 @@ def validate_configuration(
         raise ConfigurationError("integration_benchmark.methods must be a non-empty list")
     names = [method.get("name") for method in methods if isinstance(method, dict)]
     if len(names) != len(methods) or len(set(names)) != len(names) or not all(
-        isinstance(name, str) and name for name in names
+        isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name)
+        for name in names
     ):
-        raise ConfigurationError("integration_benchmark.methods must have unique non-empty names")
+        raise ConfigurationError(
+            "integration_benchmark.methods must have unique filesystem-safe names"
+        )
     if not all(isinstance(method, dict) for method in methods):
         raise ConfigurationError("integration_benchmark.methods entries must be objects")
-    if methods[0].get("method") != "harmony":
-        raise ConfigurationError("integration_benchmark.methods must start with the Harmony method")
-    harmony_methods = 0
     for method in methods:
         method_type = method.get("method")
         if method_type == "harmony":
-            harmony_methods += 1
             if method.get("batch_key") != "study":
                 raise ConfigurationError(
                     "integration_benchmark Harmony methods must use batch_key 'study'"
@@ -453,8 +452,6 @@ def validate_configuration(
             raise ConfigurationError(
                 "integration_benchmark method must be harmony, none, scanorama, or bbknn"
             )
-    if harmony_methods != 1:
-        raise ConfigurationError("integration_benchmark.methods must contain exactly one Harmony method")
     cell_type_analysis = pipeline.get("cell_type_analysis", {})
     if cell_type_analysis:
         if not isinstance(cell_type_analysis.get("analysis_version"), int) or cell_type_analysis["analysis_version"] < 1:

@@ -240,7 +240,7 @@ export function Umap({
       ref={containerRef}
       className="umap umap-deck"
       role="img"
-      aria-label={`Cross-type trajectory map with ${records.length.toLocaleString()} points, ${matchingRecords.length.toLocaleString()} matching the focus. Drag to pan and scroll to zoom.`}
+      aria-label={`Age-bin trajectories map with ${records.length.toLocaleString()} points, ${matchingRecords.length.toLocaleString()} matching the focus. Drag to pan and scroll to zoom.`}
     >
       <DeckGL
         views={view}

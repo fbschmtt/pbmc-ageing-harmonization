@@ -1,0 +1,130 @@
+.clock-page {
+  max-width: 1480px;
+}
+.clock-intro,
+.clock-explanation {
+  max-width: 850px;
+  color: var(--atlas-muted);
+  line-height: 1.6;
+}
+.clock-type-select {
+  display: grid;
+  gap: 7px;
+  width: min(100%, 360px);
+  margin: 22px 0 12px;
+  color: var(--atlas-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.clock-type-select select {
+  width: 100%;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-control);
+  padding: 10px 12px;
+  color: var(--atlas-text);
+  background: var(--atlas-surface);
+  font: inherit;
+}
+.clock-method-card {
+  margin: 24px 0;
+  padding: 24px;
+}
+.clock-method-card header .eyebrow {
+  margin-bottom: 8px;
+}
+.clock-method-card h2 {
+  margin-bottom: 6px;
+  font-size: 25px;
+}
+.clock-method-card header > p:last-child {
+  max-width: 900px;
+  margin: 0;
+  color: var(--atlas-muted);
+  line-height: 1.5;
+}
+.clock-plots {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+  margin-top: 22px;
+}
+.clock-plot {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-inset);
+  background: var(--atlas-surface-soft);
+}
+.clock-plot h3 {
+  margin: 0 0 4px;
+  color: var(--atlas-text);
+  font-size: 15px;
+  font-weight: 600;
+}
+.clock-metrics {
+  margin: 7px 0 0;
+  color: var(--atlas-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.clock-metrics span {
+  padding: 0 3px;
+  color: var(--atlas-teal-light);
+}
+.clock-plot svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  background: transparent;
+}
+.clock-grid {
+  stroke: var(--atlas-border);
+  stroke-width: 1;
+  opacity: 0.8;
+}
+.clock-reference {
+  stroke: var(--atlas-teal-light);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 5;
+}
+.clock-tick,
+.clock-axis {
+  fill: var(--atlas-muted);
+  font-family: var(--atlas-font-sans);
+  font-size: 11px;
+}
+.clock-axis {
+  font-size: 12px;
+}
+.clock-dot {
+  stroke: var(--atlas-surface);
+  stroke-width: 0.7;
+  opacity: 0.82;
+}
+.clock-study-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 15px;
+  margin-top: 4px;
+  color: var(--atlas-muted);
+  font-size: 11px;
+}
+.clock-study-key span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.clock-study-key i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+@media (max-width: 850px) {
+  .clock-plots {
+    grid-template-columns: 1fr;
+  }
+  .clock-method-card {
+    padding: 16px;
+  }
+}

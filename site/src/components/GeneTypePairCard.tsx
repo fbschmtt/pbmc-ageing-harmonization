@@ -1,6 +1,8 @@
 import type { TrajectoryRecord } from '../data/atlas'
-import type { GeneMetadata } from '../data/geneMetadata'
+import { formatCpm } from '../theme/format'
 import { TrajectoryChart } from './TrajectoryChart'
+import { useEffect, useState } from 'react'
+import { loadCombinedAgeEffect } from '../data/differential'
 import './geneTypePairCard.css'
 
 export type GeneTypePairActions = {
@@ -16,14 +18,27 @@ function formatP(value: number) {
 export function GeneTypePairCard({
   record,
   actions,
-  metadata,
-  metadataRelease,
 }: {
   record: TrajectoryRecord
   actions: GeneTypePairActions
-  metadata?: GeneMetadata
-  metadataRelease?: string
 }) {
+  const [combinedAgeEffect, setCombinedAgeEffect] = useState<number | null>(null)
+  const [ageEffectLoaded, setAgeEffectLoaded] = useState(false)
+  useEffect(() => {
+    let active = true
+    setAgeEffectLoaded(false)
+    loadCombinedAgeEffect(record.cellType, record.gene)
+      .then((value) => {
+        if (active) setCombinedAgeEffect(value)
+      })
+      .catch(() => {
+        if (active) setCombinedAgeEffect(null)
+      })
+      .finally(() => {
+        if (active) setAgeEffectLoaded(true)
+      })
+    return () => { active = false }
+  }, [record.cellType, record.gene])
   return (
     <article className="pair-card">
       <p className="eyebrow">Gene–celltype pair</p>
@@ -57,12 +72,9 @@ export function GeneTypePairCard({
       </div>
       <dl>
         <div>
-          <dt>Reference expression (20–30, study-balanced CPM)</dt>
+          <dt>Reference expression (20–30)</dt>
           <dd>
-            {record.referenceExpression != null ? `${record.referenceExpression.toFixed(2)} CPM` : 'Unavailable'}
-            {record.referenceExpressionStudies != null && record.referenceExpressionSamples != null && (
-              <> · {record.referenceExpressionSamples} samples, {record.referenceExpressionStudies} studies</>
-            )}
+            {record.referenceExpression != null ? formatCpm(record.referenceExpression) : 'Unavailable'}
           </dd>
         </div>
         <div>
@@ -70,8 +82,12 @@ export function GeneTypePairCard({
           <dd>{formatP(record.adjustedPValue)}</dd>
         </div>
         <div>
-          <dt>Maximum change</dt>
-          <dd>{record.valueAtMaxAbsChange.toFixed(2)}</dd>
+          <dt>Combined linear age effect per decade</dt>
+          <dd>
+            {ageEffectLoaded && combinedAgeEffect !== null
+              ? `${combinedAgeEffect * 10 > 0 ? '+' : ''}${(combinedAgeEffect * 10).toFixed(3)} log₂ fold change`
+              : ageEffectLoaded ? 'Unavailable' : 'Loading…'}
+          </dd>
         </div>
         <div>
           <dt>Shape cluster</dt>
@@ -82,28 +98,6 @@ export function GeneTypePairCard({
           <dd>{record.meanCellsPerDonor?.toFixed(1) ?? 'Unavailable'}</dd>
         </div>
       </dl>
-      <div
-        className="pair-card-annotations"
-        aria-label={`Gene annotations from ${metadataRelease ?? 'PANTHER'}`}
-      >
-        <div>
-          <span>Protein class</span>
-          <p title={metadata?.proteinClasses.map((proteinClass) => proteinClass.label).join('; ')}>
-            {metadata?.proteinClasses.length
-              ? metadata.proteinClasses.map((proteinClass) => proteinClass.label).join('; ')
-              : 'Missing'}
-          </p>
-        </div>
-        <div>
-          <span>PANTHER family</span>
-          <p title={metadata?.families.map((family) => family.label).join('; ')}>
-            {metadata?.families.length
-              ? metadata.families.map((family) => family.label).join('; ')
-              : 'Missing'}
-          </p>
-        </div>
-        <small>Annotation: {metadataRelease ?? 'PANTHER metadata unavailable'}</small>
-      </div>
       {(actions.onOpenGene || actions.onOpenCellType || actions.onOpenTrajectory) && (
         <div className="pair-card-actions">
           {actions.onOpenGene && (
@@ -113,12 +107,12 @@ export function GeneTypePairCard({
           )}
           {actions.onOpenCellType && (
             <button className="text-button" onClick={() => actions.onOpenCellType?.(record)}>
-              View celltype profile →
+              View differential expression →
             </button>
           )}
           {actions.onOpenTrajectory && (
             <button className="text-button" onClick={() => actions.onOpenTrajectory?.(record)}>
-              Open cross-type trajectory map →
+              Open age-bin trajectory map →
             </button>
           )}
         </div>

@@ -33,20 +33,25 @@ export function VolcanoExplorer({
       <aside className="volcano-explorer-controls">
         {controls}
         {geneSet && (
-          <GeneSetInput
-            className="volcano-explorer-gene-set"
-            label="Highlight genes"
-            value={geneSet.value}
-            onChange={geneSet.onChange}
-            onClear={() => geneSet.onChange('')}
-            helper="This gene set is shared across the atlas."
-            pathwaySets={geneSet.pathwaySets}
-            activePathway={geneSet.activePathway}
-            onSelectPathway={geneSet.onSelectPathway}
-          />
+          <details className="volcano-explorer-gene-set">
+            <summary>
+              Gene sets{geneSet.value.trim() ? <span> · active</span> : null}
+            </summary>
+            <GeneSetInput
+              label="Highlight genes"
+              value={geneSet.value}
+              onChange={geneSet.onChange}
+              onClear={() => geneSet.onChange('')}
+              helper="This gene set is shared across the atlas."
+              pathwaySets={geneSet.pathwaySets}
+              activePathway={geneSet.activePathway}
+              onSelectPathway={geneSet.onSelectPathway}
+            />
+          </details>
         )}
       </aside>
       <div className="volcano-explorer-main">
+        <p className="eyebrow">Visualise</p>
         <h2>{title}</h2>
         <div className="volcano-explorer-description">{description}</div>
         <div className="volcano-explorer-legend">{legend}</div>

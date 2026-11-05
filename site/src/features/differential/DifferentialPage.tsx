@@ -17,6 +17,7 @@ import { choosePoint } from '../../data/pointSelection'
 import { parseGeneSet } from '../../data/geneSet'
 import type { PathwaySet } from '../../data/pathways'
 import { visualColors } from '../../theme/visualEncoding'
+import { formatCpm } from '../../theme/format'
 import { defaultModelId, groupModels, modelLabel } from './modelSelection'
 import { filterGenes, hasPlottableEstimate, initialCell, visibleGenes } from './differentialView'
 import { studySupportColor } from './studySupportScale'
@@ -37,6 +38,8 @@ export function DifferentialPage({
   activePathway,
   preferredGene,
   onSelectGene,
+  onOpenGene,
+  onOpenTrajectory,
   preferredCellType,
   onSelectCellType,
   preferredModelId,
@@ -51,6 +54,8 @@ export function DifferentialPage({
   activePathway: PathwaySet | null
   preferredGene: string | null
   onSelectGene: (gene: string | null, cellType?: string) => void
+  onOpenGene: (gene: string, cellType: string) => void
+  onOpenTrajectory: (gene: string, cellType: string) => void
   preferredCellType: string | null
   onSelectCellType: (cellType: string) => void
   preferredModelId: string | null
@@ -91,6 +96,7 @@ export function DifferentialPage({
   const cell = release?.cellTypes.find((item) => item.id === cellId)
   const modelId = preferredModelId ?? (cell ? defaultModelId(cell.models) : '')
   const modelMetadata = cell?.models.find((item) => item.id === modelId)
+  const ageEffectScale = modelMetadata?.covariate === 'age' && modelMetadata.contrast === 'per year' ? 10 : 1
   const recordsAsset = modelMetadata?.recordsAsset
   useEffect(() => {
     if (!cell?.referenceExpressionAsset) {
@@ -247,6 +253,10 @@ export function DifferentialPage({
     (maximum, record) => Math.max(maximum, record.studySupport?.tested ?? 0),
     Math.max(1, Object.keys(model?.studies ?? {}).length),
   )
+  const combinedDownload =
+    model && (model.model === 'merged' || model.model === 'combined') && model.downloadAsset
+      ? model.downloadAsset
+      : null
   const selectCell = (id: string) => {
     const next = release.cellTypes.find((item) => item.id === id)!
     setCellId(id)
@@ -264,12 +274,6 @@ export function DifferentialPage({
         <div className="de-warning" role="status">
           {cell.warning || 'Test-only results are not biological evidence.'}
         </div>
-      )}
-      {release.cellTypes.some((item) => item.models.some((entry) => !entry.recordsAsset)) && (
-        <p role="status">
-          This older export contains all models in one download. Re-export the site data to load models only
-          when selected.
-        </p>
       )}
       {recordsAsset && !loadedRecords[recordsAsset] && (
         <p role="status">
@@ -290,7 +294,7 @@ export function DifferentialPage({
       <VolcanoExplorer
         controls={
           <>
-            <p className="eyebrow">Model selection</p>{' '}
+            <p className="eyebrow">Explore data</p>
             <ChoiceMenu
               label="Cell type"
               value={cellId}
@@ -307,7 +311,7 @@ export function DifferentialPage({
               onChange={selectCell}
             />
             <ChoiceMenu
-              label="Model and contrast"
+              label="Analysis"
               value={modelId}
               displayValue={
                 modelId && !model
@@ -320,6 +324,28 @@ export function DifferentialPage({
               }))}
               onChange={onSelectModel}
             />
+            <div className="de-combined-download">
+              {combinedDownload ? (
+                <a
+                  className="de-download-button"
+                  href={`${import.meta.env.BASE_URL}data/${combinedDownload}?release=${encodeURIComponent(release.releaseId || '')}`}
+                  download={`${cell.id}-${model?.covariate}-combined.csv`}
+                >
+                  Download DEG results
+                </a>
+              ) : (
+                <button className="de-download-button" type="button" disabled>
+                  Download DEG results
+                </button>
+              )}
+              <p>
+                {combinedDownload
+                  ? `Combined ${model?.covariate} results for ${cell.label}.`
+                  : model && (model.model === 'merged' || model.model === 'combined')
+                    ? 'A download is not available for this result in the current release.'
+                    : 'Downloads are available for combined models only.'}
+              </p>
+            </div>
             {modelId && !model && (
               <p role="status">
                 The selected model is unavailable for {cell.label}. Select another model or choose a cell type
@@ -327,7 +353,7 @@ export function DifferentialPage({
               </p>
             )}
             <label>
-              Find a gene
+              Search genes
               <input
                 type="search"
                 value={search}
@@ -372,11 +398,14 @@ export function DifferentialPage({
                 Showing adjusted p &lt; 0.05 and explicitly requested genes. Enter a complete gene symbol to
                 retrieve other results.
               </p>
-              <p>Point color counts studies with adjusted p &lt; 0.05 for the same contrast, regardless of effect direction. Each gene's tooltip gives significant and tested study counts.</p>
+              <p>
+                Point color counts studies with adjusted p &lt; 0.05 for the same contrast, regardless of
+                direction. Each gene’s tooltip gives significant and tested study counts.
+              </p>
               {geneSet.size > 0 && (
                 <p>
-                  Outlined: {highlightedCount.toLocaleString()} genes in{' '}
-                  {activePathway?.label || 'the shared gene set'} with plottable estimates.
+                  Outlined: {highlightedCount.toLocaleString()} genes in {activePathway?.label || 'the shared gene set'}
+                  {' '}with plottable estimates.
                 </p>
               )}
             </>
@@ -386,11 +415,14 @@ export function DifferentialPage({
         }
         legend={
           <>
-            {Array.from({ length: supportMaximum + 1 }, (_, count) => <span key={count}>
-              <i style={{ backgroundColor: studySupportColor(count, supportMaximum) }} />
-              {count}{count === supportMaximum ? ' studies' : ''}
-            </span>)}
-            <span><i style={{ backgroundColor: missingSupportColor }} /> Unavailable</span>
+            <span className="de-support-legend" aria-label="Number of studies with a significant result">
+              <span className="de-support-label">Studies with significant results</span>
+              {Array.from({ length: supportMaximum + 1 }, (_, count) => <span className="de-support-step" key={count}>
+                <i style={{ backgroundColor: studySupportColor(count, supportMaximum) }} />
+                {count}
+              </span>)}
+            </span>
+            <span><i className="de-support-unavailable" style={{ backgroundColor: missingSupportColor }} /> Not available</span>
             <span>
               <i className="volcano-legend-pathway" /> Gene set
             </span>
@@ -400,19 +432,23 @@ export function DifferentialPage({
           </>
         }
         plot={
-          model ? (
+          model && recordsAsset && !loadedRecords[recordsAsset] ? (
+            <p className="de-plot-loading" role="status">
+              {modelFailure ? 'The selected model results could not be loaded.' : 'Loading selected model results…'}
+            </p>
+          ) : model ? (
             <VolcanoPlot
               records={points}
               selected={selected}
               onSelect={(record) => onSelectGene(record.gene, cell.label)}
               id={(record) => record.gene}
-              effect={(record) => record.effect}
+              effect={(record) => record.effect * ageEffectScale}
               adjustedP={(record) => record.padj}
               highlighted={(record) => geneSet.has(record.gene.toUpperCase())}
               title={(record) =>
-                `${record.gene}: effect ${fmt(record.effect)}, adjusted p ${fmt(record.padj)}; ${supportLabel(record.studySupport)}`
+                `${record.gene}: effect ${fmt(record.effect * ageEffectScale)}${ageEffectScale === 10 ? ' log₂ fold change per decade' : ''}, adjusted p ${fmt(record.padj)}; ${supportLabel(record.studySupport)}`
               }
-              xLabel="Effect estimate (log₂ fold change)"
+              xLabel={ageEffectScale === 10 ? 'Age effect (log₂ fold change per decade)' : 'Effect estimate (log₂ fold change)'}
               threshold={0.05}
               ariaLabel="Volcano plot of effect versus negative log ten adjusted p-value. Search for a gene to select it with a keyboard."
               appearance={(record, isSelected) => ({
@@ -422,7 +458,11 @@ export function DifferentialPage({
                   : geneSet.has(record.gene.toUpperCase())
                     ? visualColors.geneSetOutline
                     : 'none',
-                strokeWidth: isSelected ? 2.5 : geneSet.has(record.gene.toUpperCase()) ? 1.5 : 0,
+                strokeWidth: isSelected
+                  ? 2.5
+                  : geneSet.has(record.gene.toUpperCase())
+                    ? 1.5
+                    : 0,
                 radius: isSelected ? 7.5 : geneSet.has(record.gene.toUpperCase()) ? 6 : 4,
                 opacity:
                   !isSelected && search && !record.gene.toUpperCase().includes(search.trim().toUpperCase())
@@ -446,34 +486,41 @@ export function DifferentialPage({
               )}
               {selected ? (
                 <>
-                  <h2>{selected.gene}</h2>
-                  <GeneAgePreview
-                    gene={selected.gene}
-                    cellType={cell.label}
-                    asset={cell.trajectoryAsset || null}
-                  />
+                  <h2>
+                    <button className="de-gene-link" onClick={() => onOpenGene(selected.gene, cell.label)}>
+                      {selected.gene}
+                    </button>
+                  </h2>
+                  {model.covariate === 'age' && cell.trajectoryAsset && (
+                    <GeneAgePreview
+                      gene={selected.gene}
+                      cellType={cell.label}
+                      asset={cell.trajectoryAsset}
+                    />
+                  )}
                   <p className="eyebrow">Selected model estimate</p>
                   <dl className="de-statistics">
-                    <dt>Log₂ fold change</dt>
-                    <dd>{fmt(selected.effect)}</dd>
+                    <dt>{ageEffectScale === 10 ? 'Log₂ fold change per decade' : 'Log₂ fold change'}</dt>
+                    <dd>{fmt(selected.effect * ageEffectScale)}</dd>
                     <dt>Adjusted p-value</dt>
                     <dd>{fmt(selected.padj)}</dd>
                     <dt>Study support</dt>
                     <dd>{supportLabel(selected.studySupport)}</dd>
-                    <dt>Standard error</dt>
-                    <dd>{fmt(selected.se)}</dd>
-                    <dt>Reference-bin expression ({referenceExpression?.referenceBin ?? '20–30'})</dt>
+                    <dt>{ageEffectScale === 10 ? 'Standard error per decade' : 'Standard error'}</dt>
+                    <dd>{fmt(selected.se === null ? null : selected.se * ageEffectScale)}</dd>
+                    <dt>Reference-bin expression (CPM)</dt>
                     <dd>
                       {referenceExpression?.genes[selected.gene]
-                        ? `${new Intl.NumberFormat('en', { maximumSignificantDigits: 4 }).format(referenceExpression.genes[selected.gene].cpm)} CPM · ${referenceExpression.genes[selected.gene].samples} samples, ${referenceExpression.genes[selected.gene].studies} studies`
+                        ? formatCpm(referenceExpression.genes[selected.gene].cpm)
                         : 'Unavailable'}
                     </dd>
                   </dl>
-                  <p>
-                    {referenceExpression?.method ||
-                      'Study-balanced mean of per-study mean log1p(CPM), back-transformed with expm1.'}{' '}
-                    CPM is normalized expression, not an absolute molecule count.
-                  </p>
+                  <button
+                    className="text-button"
+                    onClick={() => onOpenTrajectory(selected.gene, cell.label)}
+                  >
+                    View in age-bin trajectories →
+                  </button>
                 </>
               ) : (
                 <p>Select a point or search for a gene to inspect its estimate.</p>
@@ -489,24 +536,11 @@ export function DifferentialPage({
                 <dd>
                   {Object.entries(model.studies)
                     .map(([name, count]) => `${name} (n=${count})`)
-                    .join(', ') ||
-                    model.study ||
-                    'Not recorded'}
+                    .join(', ') || model.study || 'Not recorded'}
                 </dd>
                 <dt>Contrast</dt>
                 <dd>{model.contrast || model.covariate}</dd>
               </dl>
-              {model.downloadAsset && model.model !== 'per_study' && (
-                <p className="de-model-download">
-                  <a
-                    href={`${import.meta.env.BASE_URL}data/${model.downloadAsset}?release=${encodeURIComponent(release.releaseId || '')}`}
-                    download={`${cell.id}-${model.model}-${model.covariate}.csv`}
-                  >
-                    Download complete combined-model results (CSV)
-                  </a>
-                  <span>Includes all tested genes, including nonsignificant results.</span>
-                </p>
-              )}
             </div>
           ) : (
             <p>Select a model to see its details.</p>

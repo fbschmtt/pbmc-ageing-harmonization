@@ -1,24 +1,34 @@
 import { useEffect, useState } from 'react'
 import { loadReleaseManifest, type ReleaseManifest } from '../../data/release'
-import { DatasetContext, ModellingContext, SourcePermissions } from './ReleaseContext'
+import { DatasetContext, ModellingContext } from './ReleaseContext'
 import type { Page } from '../../app/navigation'
 import { AgeModelGuide } from './AgeModelGuide'
 
-const copy: Record<Extract<Page, 'datasets' | 'modelling'>, { title: string; body: string }> = {
+const copy: Record<Extract<Page, 'datasets' | 'modelling' | 'about'>, { title: string; body: string }> = {
   datasets: {
     title: 'Datasets',
-    body: 'The atlas brings together human peripheral blood studies with different cohorts, technologies and available metadata.',
+    body: 'Explore the human blood studies behind the atlas and the research teams whose work makes these comparisons possible.',
   },
   modelling: {
     title: 'Models and interpretation',
     body: 'The analyses compare gene expression and cell-type fractions across samples, with attention to differences between studies and the information available for each model.',
   },
+  about: {
+    title: 'About Blood Ageing Explorer',
+    body: 'Blood Ageing Explorer brings together published single-cell studies of human peripheral blood to make age-related patterns across immune cell types easier to explore.',
+  },
 }
 
-export function InformationalPage({ page }: { page: Extract<Page, 'datasets' | 'modelling' | 'download'> }) {
+export function InformationalPage({
+  page,
+  onNavigate,
+}: {
+  page: Extract<Page, 'datasets' | 'modelling' | 'about'>
+  onNavigate?: (page: Page) => void
+}) {
   const [release, setRelease] = useState<ReleaseManifest | null>(null)
   useEffect(() => {
-    if (page === 'download') return
+    if (page === 'about') return
     loadReleaseManifest()
       .then(setRelease)
       .catch(() => setRelease(null))
@@ -26,14 +36,6 @@ export function InformationalPage({ page }: { page: Extract<Page, 'datasets' | '
   const reports = release?.assets.filter((asset) => asset.kind === 'report') ?? []
   const reportIndex = release?.assets.find((asset) => asset.kind === 'report_index')
   const warnings = [...new Set(reports.map((report) => report.warning).filter(Boolean))]
-  if (page === 'download')
-    return (
-      <section className="content-page">
-        <p className="eyebrow">Download</p>
-        <h1>Downloads</h1>
-        <p>Downloads will be available in a future release.</p>
-      </section>
-    )
   const content = copy[page]
   return (
     <section className="content-page information-page">
@@ -42,9 +44,8 @@ export function InformationalPage({ page }: { page: Extract<Page, 'datasets' | '
       <p>{content.body}</p>
       {page === 'datasets' && (
         <p>
-          Cell types are harmonized using the Allen Institute for Immunology (AIFI) reference. The studies
-          represented in a model depend on sample and metadata availability; see the model details for its
-          coverage.
+          This atlas builds on the work of the teams who collected and shared these cohorts. Browse the
+          publications below to see each study’s contribution and source paper.
         </p>
       )}
       {page === 'modelling' && (
@@ -59,6 +60,15 @@ export function InformationalPage({ page }: { page: Extract<Page, 'datasets' | '
             Age-bin models compare supported age groups with ages 20–30. The trajectory views show only genes
             selected for clustering, not all tested genes. Associations do not establish causation.
           </p>
+          <h2>Cell states and age-associated expression</h2>
+          <p>
+            One question is whether age-associated differential expression mostly reflects shifts in cell states
+            or more independent changes in individual genes—in other words, how coordinated those changes are.
+            The <a href="#singleCell" onClick={(event) => {
+              event.preventDefault()
+              onNavigate?.('singleCell')
+            }}>Cell states view</a> lets you explore local clusters and age-associated genes within each cell type.
+          </p>
           <AgeModelGuide />
           <h2>Cell composition</h2>
           <p>
@@ -67,12 +77,22 @@ export function InformationalPage({ page }: { page: Extract<Page, 'datasets' | '
           </p>
         </>
       )}
-      {page === 'datasets' && (
-        <p>
-          <a href={`${import.meta.env.BASE_URL}data/release.json`}>View the release manifest</a>
-        </p>
-      )}
       {page === 'datasets' && release && <DatasetContext release={release} />}
+      {page === 'about' && (
+        <section className="information-section">
+          <h2>Purpose</h2>
+          <p>
+            The explorer presents summary analyses of published human peripheral blood datasets. It is
+            intended for browsing and generating research questions; observed associations are not causal
+            conclusions or clinical guidance.
+          </p>
+          <h2>Studies and methods</h2>
+          <p>
+            Study sources and publication records are listed on the Datasets page. The Modelling page
+            describes how expression and cell-composition results are estimated and how to interpret them.
+          </p>
+        </section>
+      )}
       {page === 'modelling' && (
         <section className="information-section">
           <h2>Detailed model diagnostics</h2>
@@ -80,7 +100,7 @@ export function InformationalPage({ page }: { page: Extract<Page, 'datasets' | '
             <>
               <p>
                 Browse the included differential-expression and cross-cell-type reports in the report index.
-                Some companion downloads linked inside reports are not included in this site.
+                The reports include detailed model results and diagnostic plots.
               </p>
               {warnings.map((warning) => (
                 <p key={warning} role="status">
@@ -97,7 +117,7 @@ export function InformationalPage({ page }: { page: Extract<Page, 'datasets' | '
                 </a>
               </p>
             </>
-          ) : reports.length ? (
+          ) : release?.assets.some((asset) => asset.kind === 'report') ? (
             <p>The report index is unavailable for this release.</p>
           ) : (
             <p>No detailed reports are included in this release.</p>
@@ -106,12 +126,8 @@ export function InformationalPage({ page }: { page: Extract<Page, 'datasets' | '
       )}
       {page === 'modelling' && (
         <section className="information-metadata" aria-label="Release details">
-          <h2>Release details</h2>
+          <h2>Analysis details</h2>
           {release && <ModellingContext release={release} />}
-          <p>
-            <a href={`${import.meta.env.BASE_URL}data/release.json`}>View the release manifest</a>
-          </p>
-          {release && <SourcePermissions release={release} />}
         </section>
       )}
     </section>

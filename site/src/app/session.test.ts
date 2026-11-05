@@ -131,7 +131,7 @@ describe('atlasSessionReducer', () => {
     expect(cellTypeState.cellTypeProfile).toMatchObject({ cellType: 'Micro', selectedId: null })
   })
 
-  it('opens a requested trajectory with a clean search and view', () => {
+  it('opens a requested trajectory with a clean search while preserving the UMAP view', () => {
     const state = atlasSessionReducer(
       {
         ...initialAtlasSession,
@@ -146,7 +146,7 @@ describe('atlasSessionReducer', () => {
     expect(state.trajectory).toEqual({
       query: '',
       selectedId: 'HK1-Astro',
-      umapViewState: null,
+      umapViewState: { target: [1, 2, 0], zoom: 3 },
       umapResetVersion: 0,
     })
   })

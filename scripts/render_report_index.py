@@ -70,6 +70,7 @@ def render_report_index(outdir: Path) -> Path:
     trajectory_dir = analysis_dir / "combined" / "trajectory"
     trajectory_report = trajectory_dir / "report.html"
     per_type_root = analysis_dir / "per_type"
+    cross_type_clock_report = per_type_root / "age_clock_cross_type" / "report.html"
     cell_type_manifest = per_type_root / "cell_type_manifest.json"
     if cell_type_manifest.is_file():
         document = _read_json(cell_type_manifest)
@@ -134,6 +135,10 @@ def render_report_index(outdir: Path) -> Path:
     if trajectory_report.is_file():
         merged_analysis_links.append(
             link(trajectory_report, "Cross-cell-type DE & trajectory analysis")
+        )
+    if cross_type_clock_report.is_file():
+        merged_analysis_links.append(
+            link(cross_type_clock_report, "Cross-cell-type transcriptomic clocks")
         )
     if merged_analysis_links:
         merged_analysis_content = "<ul>" + "".join(

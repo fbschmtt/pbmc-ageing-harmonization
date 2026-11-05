@@ -24,6 +24,7 @@ from sklearn.model_selection import ParameterGrid
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+from pbmc_pipeline.age_clock_cross_type import aggregate_cross_type_clocks
 from pbmc_pipeline.age_clock_features import (
     WithinSampleRankTransformer,
     within_study_gene_zscore,
@@ -42,6 +43,40 @@ class ClockEligibilityError(ValueError):
 
 class ClockFitFailuresError(RuntimeError):
     """One or more all-cell-type fits failed after other types completed."""
+
+
+def _previous_clock_predictions_match(
+    output_type_dir: Path, previous_methods: dict[str, dict], fitted_methods: list[dict],
+) -> bool:
+    """Check that prior method outputs still describe the current pseudobulks."""
+    for item in fitted_methods:
+        current_frames = {
+            "cv_oof_predictions.csv": item["cv_oof_predictions"],
+            "external_predictions.csv": item["predictions"],
+        }
+        for filename, current in current_frames.items():
+            if current.empty:
+                continue
+            for method_id in previous_methods:
+                path = output_type_dir / method_id / filename
+                if not path.is_file():
+                    continue
+                prior = pd.read_csv(path, index_col=0)
+                common = current.index.intersection(prior.index)
+                if not len(common) or not {"study", "age"}.issubset(prior.columns):
+                    return False
+                current_study = current.loc[common, "study"].astype(str).to_numpy()
+                prior_study = prior.loc[common, "study"].astype(str).to_numpy()
+                try:
+                    current_age = pd.to_numeric(current.loc[common, "age"]).to_numpy(float)
+                    prior_age = pd.to_numeric(prior.loc[common, "age"]).to_numpy(float)
+                except (TypeError, ValueError):
+                    return False
+                if not np.array_equal(current_study, prior_study) or not np.allclose(
+                    current_age, prior_age, rtol=0, atol=1e-8
+                ):
+                    return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -1509,6 +1544,15 @@ def publish_age_clock_fit(fit: ClockFit, output_dir: Path) -> dict:
                 item["method"]: item for item in previous.get("methods", [])
                 if item.get("method") not in newly_fitted_methods
             }
+            if previous_methods and not _previous_clock_predictions_match(
+                output_type_dir, previous_methods, fit.fitted_methods
+            ):
+                LOGGER.warning(
+                    "Discarding previously fitted clock methods because their saved predictions "
+                    "do not match the current pseudobulk sample metadata. Refit all desired methods "
+                    "against the current input to compare or ensemble them."
+                )
+                previous_methods = {}
             current_methods = {item["method"]: item for item in manifest["methods"]}
             merged_methods = {**previous_methods, **current_methods}
             manifest["methods"] = list(merged_methods.values())
@@ -1701,6 +1745,9 @@ def train_all_age_clocks(
         summary["successful_cell_types"].append(cell_type)
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    summary["cross_cell_type_ensemble"] = aggregate_cross_type_clocks(
+        output_dir, cell_types=summary["successful_cell_types"]
+    )
     summary_path = output_dir / "age_clock_all_types_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2) + "\n")
     if summary["failed_cell_types"]:

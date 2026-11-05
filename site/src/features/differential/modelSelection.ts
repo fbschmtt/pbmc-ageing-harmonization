@@ -42,5 +42,8 @@ export function modelLabel(
       : model.model === 'developmental'
         ? 'Developmental'
         : 'Combined'
-  return `${group} · ${covariate}${model.contrast ? ` (${model.contrast})` : ''}`
+  const contrast = model.covariate === 'age' && model.contrast === 'per year'
+    ? 'per decade'
+    : model.contrast
+  return `${group} · ${covariate}${contrast ? ` (${contrast})` : ''}`
 }

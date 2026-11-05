@@ -51,6 +51,31 @@ test('release validates and inventories a snapshot; failure preserves previous r
       'gene,log2FoldChange,padj,pvalue,lfcSE,baseMean,contrast\nGENE1,0.1,0.01,0.001,0.02,5,per year\nGENE2,0.2,0.5,0.4,0.03,7,per year\n',
     )
     await writeFile(join(type, 'report.html'), '<html><body>DE diagnostics</body></html>')
+    const clockDir = join(input, 'monocyte/ageing_clock')
+    const clockMethods = [
+      { method: 'elastic_net', method_name: 'Elastic net', method_description: 'Baseline expression model.' },
+      { method: 'rank_elastic_net', method_name: 'Rank elastic net', method_description: 'Rank transformed expression.' },
+      { method: 'age_aware_study_offset_elastic_net', method_name: 'Age-aware study-offset elastic net', method_description: 'Age-aware study adjustment.' },
+    ]
+    await mkdir(clockDir, { recursive: true })
+    await writeFile(join(clockDir, 'age_clock.json'), JSON.stringify({ kind: 'cell_type_transcriptomic_age_clock', methods: clockMethods }))
+    for (const method of clockMethods) {
+      const methodDir = join(clockDir, method.method)
+      await mkdir(methodDir, { recursive: true })
+      const rows = 'pseudobulk_id,study,age,predicted_age,sample\nprivate-id,Study A,40,42,private-sample\n'
+      await writeFile(join(methodDir, 'cv_oof_predictions.csv'), rows)
+      await writeFile(join(methodDir, 'external_predictions.csv'), rows.replace('Study A', 'Study B'))
+    }
+    const crossClock = join(input, 'age_clock_cross_type')
+    await mkdir(join(crossClock, 'elastic_net'), { recursive: true })
+    await writeFile(join(crossClock, 'summary.json'), JSON.stringify({ methods: [{
+      id: 'elastic_net', name: 'Elastic net',
+      training: { predictions_file: 'elastic_net/training_predictions.csv', cell_types: ['T cell', 'B cell'] },
+      held_out: { predictions_file: 'elastic_net/held_out_predictions.csv' },
+    }] }))
+    const meanRows = 'donor_key,study,age,predicted_age,n_cell_types\nprivate-id,Study A,40,40,2\n'
+    await writeFile(join(crossClock, 'elastic_net/training_predictions.csv'), meanRows)
+    await writeFile(join(crossClock, 'elastic_net/held_out_predictions.csv'), meanRows.replace('Study A', 'Study B'))
     const release = await createRelease(input, target, options)
     assert.equal(release.exporterRevision, 'contract-test-exporter-revision')
     assert.equal(release.inventory[0].models[1].status, 'skipped')
@@ -62,6 +87,18 @@ test('release validates and inventories a snapshot; failure preserves previous r
     )
     assert.equal(report.warning, 'Synthetic data')
     assert.equal(release.inventory[0].models[1].reason, 'insufficient samples')
+    const clockAsset = release.assets.find((asset) => asset.kind === 'clock')
+    assert.ok(clockAsset)
+    const clocks = JSON.parse(await readFile(join(target, clockAsset.path), 'utf8'))
+    assert.deepEqual(clocks.cellTypes[0].methods.map((method) => method.id), [
+      'elastic_net', 'age_aware_study_offset_elastic_net',
+    ])
+    assert.equal(clocks.cellTypes[1].id, 'cross-cell-type-mean')
+    assert.equal(clocks.cellTypes[1].scope, 'cross_cell_type')
+    assert.equal(clocks.cellTypes[1].methods[0].training.predictions[0].nCellTypes, 2)
+    assert.equal(clocks.cellTypes[0].methods[0].training.predictions[0].age, 40)
+    assert.equal(JSON.stringify(clocks).includes('private-id'), false)
+    assert.equal(JSON.stringify(clocks).includes('private-sample'), false)
     const de = await readFile(join(target, 'de-index.json'), 'utf8')
     assert.equal(JSON.parse(de).releaseId, release.releaseId)
     assert.equal(release.assets.find((a) => a.path === 'de-index.json').sha256, sha(de))

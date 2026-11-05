@@ -2,7 +2,6 @@ import { lazy, Suspense, useEffect, useMemo } from 'react'
 import { GeneTypePairCard, type GeneTypePairActions } from '../../components/GeneTypePairCard'
 import { GeneSetInput } from '../../components/GeneSetInput'
 import type { TrajectoryMap, TrajectoryPoint, TrajectoryRecord } from '../../data/atlas'
-import type { GeneMetadataIndex } from '../../data/geneMetadata'
 import { choosePoint } from '../../data/pointSelection'
 import { parseGeneSet } from '../../data/geneSet'
 import type { PathwaySet } from '../../data/pathways'
@@ -25,6 +24,7 @@ type ExplorerProps = {
   state: ExplorerState
   onStateChange: (state: ExplorerState) => void
   preferredGene: string | null
+  preferredCellType: string | null
   onSelectGene: (gene: string, cellType?: string) => void
   actions: GeneTypePairActions
   highlightGenes: string
@@ -32,7 +32,6 @@ type ExplorerProps = {
   pathwaySets: PathwaySet[]
   activePathway: PathwaySet | null
   onSelectPathway: (pathway: PathwaySet) => void
-  geneMetadata: GeneMetadataIndex | null
 }
 export function Explorer({
   atlas,
@@ -41,6 +40,7 @@ export function Explorer({
   state,
   onStateChange,
   preferredGene,
+  preferredCellType,
   onSelectGene,
   actions,
   highlightGenes,
@@ -48,7 +48,6 @@ export function Explorer({
   pathwaySets,
   activePathway,
   onSelectPathway,
-  geneMetadata,
 }: ExplorerProps) {
   const updateState = (update: Partial<ExplorerState>) => onStateChange({ ...state, ...update })
   const regexResult = useMemo(() => compileFocusQuery(state.query), [state.query])
@@ -61,7 +60,7 @@ export function Explorer({
     choosePoint(
       filtered,
       (record) => record.adjustedPValue,
-      (record) => record.gene === preferredGene,
+      (record) => record.gene === preferredGene && record.cellType === preferredCellType,
     )
   const highlightedGenes = useMemo(() => parseGeneSet(highlightGenes), [highlightGenes])
   const selectedDetail = details.find((record) => record.id === selectedInView?.id)
@@ -74,6 +73,7 @@ export function Explorer({
   )
   return (
     <section className="explorer">
+      <h1 className="explorer-heading">Age-bin trajectories</h1>
       <div className="explorer-layout">
         <aside className="filters">
           <label>
@@ -163,8 +163,6 @@ export function Explorer({
             <GeneTypePairCard
               record={selectedDetail}
               actions={{ ...actions, onOpenTrajectory: undefined }}
-              metadata={geneMetadata?.genes[selectedDetail.gene]}
-              metadataRelease={geneMetadata?.release}
             />
           ) : selectedInView ? (
             <p role="status">Loading details for {selectedInView.gene}…</p>

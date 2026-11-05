@@ -106,6 +106,19 @@ export async function releaseContext(input, de, studiesPath, assets = []) {
     assets.filter((asset) => asset.kind === 'report' && asset.study).map((asset) => asset.study),
   )
   for (const name of harmonizedNames) names.add(name)
+  const singleCellProvenancePath = resolve(
+    input,
+    '..',
+    '..',
+    'harmonization',
+    'provenance',
+    'single_cell_merged.json',
+  )
+  let singleCell = null
+  if (await exists(singleCellProvenancePath))
+    singleCell = JSON.parse(await readFile(singleCellProvenancePath, 'utf8'))
+  const subjectsByStudy = singleCell?.subjects_by_study
+  const observationsByStudy = singleCell?.observations_by_study
   let references = {},
     sourceSha256 = null
   if (await exists(studiesPath)) {
@@ -121,6 +134,10 @@ export async function releaseContext(input, de, studiesPath, assets = []) {
       inModels: modelNames.has(id),
       harmonizationAvailable: harmonizedNames.has(id),
       publicationDoi: typeof entry?.publication_doi === 'string' ? entry.publication_doi : null,
+      publicationTitle: typeof entry?.publication_title === 'string' ? entry.publication_title : null,
+      publicationCitation: typeof entry?.publication_citation === 'string' ? entry.publication_citation : null,
+      donors: Number.isSafeInteger(subjectsByStudy?.[id]) ? subjectsByStudy[id] : null,
+      cells: Number.isSafeInteger(observationsByStudy?.[id]) ? observationsByStudy[id] : null,
       annotation: typeof p.celltypes === 'string' ? p.celltypes : null,
       technology: typeof p.technology === 'string' ? p.technology : null,
       inclusion: typeof p.model_inclusion === 'string' ? p.model_inclusion : null,
@@ -128,6 +145,23 @@ export async function releaseContext(input, de, studiesPath, assets = []) {
       licence: null,
     }
   })
+  let singleCellSummary = null
+  if (singleCell) {
+    if (
+      Number.isSafeInteger(singleCell.n_observations) &&
+      singleCell.n_observations >= 0 &&
+      subjectsByStudy &&
+      typeof subjectsByStudy === 'object' &&
+      !Array.isArray(subjectsByStudy) &&
+      Object.values(subjectsByStudy).every((count) => Number.isSafeInteger(count) && count >= 0)
+    ) {
+      singleCellSummary = {
+        studies: Object.keys(subjectsByStudy).length,
+        donors: Object.values(subjectsByStudy).reduce((total, count) => total + count, 0),
+        cells: singleCell.n_observations,
+      }
+    }
+  }
   const trajectory = resolve(input, '..', 'combined', 'trajectory', 'analysis_metadata.json')
   let ageSupport = null
   if (await exists(trajectory)) {
@@ -148,6 +182,7 @@ export async function releaseContext(input, de, studiesPath, assets = []) {
   }
   return {
     studies,
+    singleCellSummary,
     studyReference: {
       sha256: sourceSha256,
       note: 'Reference metadata comes from the exporter checkout study configuration, not a verified analysis-time snapshot. Licences require review.',

@@ -22,7 +22,14 @@ from IPython.display import HTML, Markdown, display
 from pbmc_pipeline.report_theme import render_report_header
 
 sns.set_theme(style="whitegrid")
-plt.rcParams.update({"figure.dpi": 110, "savefig.dpi": 110})
+plt.rcParams.update({
+    "figure.dpi": 110,
+    "savefig.dpi": 110,
+    "figure.facecolor": "none",
+    "axes.facecolor": "none",
+    "savefig.transparent": True,
+    "grid.color": "#d9e2d8",
+})
 from pbmc_pipeline.cell_type import add_unintegrated_umap
 from pbmc_pipeline.config import read_json
 from pbmc_pipeline.reporting import sample_cluster_fractions
@@ -174,6 +181,69 @@ def plot_umap_split_by_study(adata):
     display_collapsible_figure(figure, "Show local UMAP split by study")
 
 
+def plot_age_de_gene_expression(adata, output_dir):
+    """Show the strongest merged age-DE genes on the local UMAP, if available."""
+    result_path = output_dir.parent / "differential_expression" / "merged.csv"
+    if not result_path.is_file() or "X_umap" not in adata.obsm:
+        display(Markdown("_Merged age differential-expression results are unavailable._"))
+        return
+
+    results = pd.read_csv(result_path)
+    required = {"gene", "log2FoldChange", "padj"}
+    if not required <= set(results.columns):
+        display(Markdown("_Merged age differential-expression results are incomplete._"))
+        return
+    results["log2FoldChange"] = pd.to_numeric(results["log2FoldChange"], errors="coerce")
+    results["padj"] = pd.to_numeric(results["padj"], errors="coerce")
+    results = results.loc[
+        results["gene"].astype(str).isin(adata.var_names)
+        & results["padj"].lt(0.05)
+        & np.isfinite(results["log2FoldChange"])
+        & np.isfinite(results["padj"])
+    ].copy()
+    results["gene"] = results["gene"].astype(str)
+    higher = results.loc[results["log2FoldChange"] > 0].sort_values(
+        ["padj", "gene"], kind="stable"
+    ).head(5)
+    lower = results.loc[results["log2FoldChange"] < 0].sort_values(
+        ["padj", "gene"], kind="stable"
+    ).head(4)
+    selected = pd.concat([higher, lower], ignore_index=True)
+    if selected.empty:
+        display(Markdown("_No FDR-significant merged age-DE genes are present in this cell type._"))
+        return
+
+    genes = selected["gene"].tolist()
+    counts = adata[:, genes].X
+    expression = counts.toarray() if hasattr(counts, "toarray") else np.asarray(counts)
+    totals = np.asarray(adata.X.sum(axis=1)).reshape(-1)
+    scale = np.divide(10_000, totals, out=np.zeros_like(totals, dtype=float), where=totals > 0)
+    expression = np.log1p(expression * scale[:, None])
+    coordinates = np.asarray(adata.obsm["X_umap"])
+    figure, axes = plt.subplots(3, 3, figsize=(12, 11), squeeze=False)
+    for axis, (_, record), values in zip(axes.flat, selected.iterrows(), expression.T):
+        order = np.argsort(values, kind="stable")
+        scatter = axis.scatter(
+            coordinates[order, 0], coordinates[order, 1], c=values[order],
+            s=max(1.5, 35_000 / max(adata.n_obs, 1)), cmap="viridis",
+            linewidths=0, rasterized=True,
+        )
+        axis.set_title(
+            f"{record['gene']}  ·  {'↑' if record['log2FoldChange'] > 0 else '↓'}", fontsize=10,
+        )
+        axis.set_aspect("equal", adjustable="datalim")
+        axis.set_xticks([])
+        axis.set_yticks([])
+        axis.set_xlabel("UMAP 1", fontsize=8)
+        axis.set_ylabel("UMAP 2", fontsize=8)
+        figure.colorbar(scatter, ax=axis, fraction=0.046, pad=0.02, label="log₁₊ normalized expression")
+    for axis in axes.flat[len(selected):]:
+        axis.remove()
+    figure.suptitle("Most significant age-associated genes", fontsize=16)
+    figure.tight_layout(rect=(0, 0, 1, 0.97))
+    display_collapsible_figure(figure, "Age-DE gene expression on UMAP", open_by_default=True)
+
+
 def plot_hvg_selection(adata):
     """Show the conventional normalized mean-dispersion HVG ranking."""
     required = {
@@ -291,7 +361,8 @@ def plot_cluster_fractions(data, *, palette):
         for study in studies
     ]
     handles.append(plt.Line2D([], [], color="#1f1f1f", linewidth=2.6, label="Pooled"))
-    figure.legend(handles=handles, title="Study / trend", loc="upper center", ncol=min(4, len(handles)))
+    figure.legend(handles=handles, title="Study / trend", loc="upper center",
+                  ncol=min(4, len(handles)), frameon=False)
     figure.suptitle("Cluster fractions: linear trends (study-unadjusted)", y=0.98)
     figure.tight_layout(rect=(0, 0, 1, 0.91))
     display_collapsible_figure(figure, "Show cluster-composition curves")
@@ -307,10 +378,12 @@ def plot_cluster_fractions(data, *, palette):
             for study in present_studies
         ]
         detail_handles.append(plt.Line2D([], [], color="#1f1f1f", linewidth=2.6, label="Pooled"))
-        axis.legend(handles=detail_handles, title="Study / trend", fontsize=8)
+        axis.legend(handles=detail_handles, title="Study / trend", fontsize=8, frameon=False)
         detail_figure.tight_layout()
         image_buffer = BytesIO()
-        detail_figure.savefig(image_buffer, format="png", dpi=150, bbox_inches="tight")
+        detail_figure.savefig(
+            image_buffer, format="png", dpi=150, bbox_inches="tight", transparent=True,
+        )
         plt.close(detail_figure)
         fits = [cluster_fraction_fit_summary(subset, None)]
         fits.extend(cluster_fraction_fit_summary(subset.loc[subset["study"] == study], study)
@@ -607,6 +680,19 @@ if report["status"] == "complete":
         colors.append("aifi_l3_majority")
     for color in colors:
         plot_umap(adata, color=color, marker_area_scale=4.0)
+
+# %% [markdown]
+# ### Age-DE Gene Expression
+#
+# The panels show log-normalized expression for the most significant genes in
+# the merged pseudobulk age model. Up to five positive and four negative
+# effects are shown. Cells are drawn from low to high expression so expressing
+# cells remain visible. The model's age association is sample-level; these
+# per-cell overlays are descriptive and do not imply cell-level significance.
+
+# %%
+if report["status"] == "complete":
+    plot_age_de_gene_expression(adata, output_dir)
 
 # %% [markdown]
 # <a id="cluster-markers"></a>

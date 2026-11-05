@@ -1,4 +1,5 @@
 import { loadAgePreview, type Bin, type Preview } from '../../data/agePreview'
+import { visualColors } from '../../theme/visualEncoding'
 import { useEffect, useState } from 'react'
 
 export function GeneAgePreview({
@@ -50,10 +51,10 @@ export function GeneAgePreview({
   const y = (value: number) => top + ((extent - value) / (2 * extent)) * (bottom - top)
   return (
     <div className="de-trajectory-preview">
-      <p className="eyebrow">Combined age-bin model</p>
+      <h3>Expression across age</h3>
       <p>
-        Log₂ fold change relative to {loaded.data.referenceBin || 'the reference bin'}. This is a separate fit
-        from the selected DE contrast.
+        Age-bin fit relative to {loaded.data.referenceBin || 'the reference bin'}. This is separate from the
+        continuous-age analysis selected in the plot.
       </p>
       <svg
         viewBox={`0 0 ${width} 160`}
@@ -83,7 +84,7 @@ export function GeneAgePreview({
               x2={x(starts[index + 1])}
               y1={y(previous.effect)}
               y2={y(current.effect)}
-              stroke="#27786f"
+              stroke={visualColors.brain}
               strokeWidth="2"
             />
           )
@@ -94,7 +95,7 @@ export function GeneAgePreview({
             cx={x(Number(item.bin.split('-')[0]))}
             cy={y(item.effect)}
             r="3"
-            fill="#27786f"
+            fill={visualColors.brain}
           >
             <title>
               {item.bin}: {item.effect.toFixed(3)} log₂ fold change

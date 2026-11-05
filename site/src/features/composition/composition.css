@@ -11,7 +11,7 @@
 .composition-intro {
   max-width: 680px;
   margin: 0;
-  color: #62706b;
+  color: var(--atlas-muted);
   font-size: 13px;
   line-height: 1.55;
 }
@@ -19,14 +19,14 @@
   display: flex;
   flex: none;
   border: 1px solid #bfcac3;
-  border-radius: 4px;
+  border-radius: var(--atlas-radius-control);
   overflow: hidden;
 }
 .composition-mode button {
   padding: 9px 12px;
   border: 0;
-  background: #fffefa;
-  color: #52645f;
+  background: var(--atlas-surface);
+  color: var(--atlas-muted);
   font-size: 12px;
   font-weight: 700;
 }
@@ -34,23 +34,25 @@
   border-left: 1px solid #bfcac3;
 }
 .composition-mode button.active {
-  background: #1e4a43;
-  color: #fffefa;
+  background: var(--atlas-teal);
+  color: var(--atlas-surface);
 }
 .composition-layout {
   display: grid;
   grid-template-columns: 230px minmax(0, 1fr);
   min-height: 560px;
-  border: 1px solid #d6ddd6;
-  background: #fffefa;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-card);
+  background: var(--atlas-surface);
+  overflow: hidden;
 }
 .composition-controls {
   display: grid;
   align-content: start;
   gap: 20px;
   padding: 22px;
-  border-right: 1px solid #d6ddd6;
-  background: #f3f4ed;
+  border-right: 1px solid var(--atlas-border);
+  background: var(--atlas-surface-soft);
 }
 .composition-controls label {
   display: grid;
@@ -62,10 +64,10 @@
 .composition-controls select {
   width: 100%;
   padding: 9px;
-  border: 1px solid #cbd5ce;
-  border-radius: 3px;
-  background: #fffefa;
-  color: #203733;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-control);
+  background: var(--atlas-surface);
+  color: var(--atlas-text);
   font-size: 12px;
 }
 .composition-controls p {
@@ -119,7 +121,7 @@
   top: 0;
   z-index: 1;
   background: #eef1eb;
-  color: #52645f;
+  color: var(--atlas-muted);
   font-weight: 700;
   text-align: center;
 }
@@ -134,7 +136,7 @@
 .composition-heatmap td {
   min-width: 76px;
   color: #243b37;
-  font-family: 'DM Mono', monospace;
+  font-family: var(--atlas-font-mono);
   font-size: 9px;
   text-align: right;
 }
@@ -149,7 +151,7 @@
   display: block;
   width: 100%;
   min-width: 720px;
-  background: #fffefa;
+  background: transparent;
 }
 .composition-age-profile-wrap {
   overflow-x: auto;
@@ -159,7 +161,7 @@
   display: block;
   width: 100%;
   min-width: 720px;
-  background: #fffefa;
+  background: transparent;
 }
 .age-profile-zero {
   stroke: #9ba7a1;
@@ -177,7 +179,7 @@
   stroke-width: 1.4;
 }
 .age-profile-point {
-  fill: #fffefa;
+  fill: var(--atlas-surface);
   stroke: var(--atlas-brain);
   stroke-width: 2.2;
 }
@@ -235,7 +237,7 @@
   .composition-controls {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     border-right: 0;
-    border-bottom: 1px solid #d6ddd6;
+    border-bottom: 1px solid var(--atlas-border);
   }
 }
 @media (max-width: 520px) {
@@ -270,13 +272,11 @@
 }
 .pipeline-composition th,
 .pipeline-composition td {
-  border-bottom: 1px solid #d9ddd4;
+  border-bottom: 1px solid var(--atlas-border);
   padding: 12px;
 }
 
 .fraction-chart-panel {
-  background: white;
-  border: 1px solid #d9ddd4;
   padding: 24px;
   margin: 24px 0;
 }
@@ -285,7 +285,7 @@
   font-size: 28px;
 }
 .fraction-chart-panel p {
-  color: #65736f;
+  color: var(--atlas-muted);
   line-height: 1.6;
 }
 .fraction-chart-scroll {
@@ -295,10 +295,11 @@
   display: block;
   width: 100%;
   min-width: 620px;
+  background: transparent;
 }
 .fraction-chart-text {
   font:
-    12px Manrope,
+    12px var(--atlas-font-sans),
     sans-serif;
   fill: #4d625a;
 }
@@ -326,39 +327,8 @@
   margin: 0 auto;
   padding: 24px max(4vw, 34px) 60px;
 }
-.fraction-baseline {
-  max-width: 740px;
-  padding: 18px 22px;
-  background: #edf3ea;
-  border-left: 3px solid #568578;
-}
-.fraction-baseline .eyebrow {
-  display: block;
-  margin-bottom: 8px;
-}
-.fraction-baseline strong {
-  font-size: 26px;
-  font-weight: 600;
-  color: #1e4a43;
-}
-.fraction-baseline p {
-  margin: 6px 0 0;
-  font-size: 12px;
-  line-height: 1.6;
-  color: #526b60;
-}
 @media (max-width: 600px) {
   .content-page.pipeline-composition {
     padding: 24px 20px 60px;
   }
-}
-
-.baseline-plot-scroll {
-  overflow-x: auto;
-  margin-top: 12px;
-}
-.baseline-plot-scroll svg {
-  display: block;
-  width: 100%;
-  min-width: 560px;
 }

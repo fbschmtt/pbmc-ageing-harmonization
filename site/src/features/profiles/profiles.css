@@ -5,19 +5,19 @@
   grid-template-columns: 220px minmax(0, 1fr) 315px;
   gap: 0;
   min-height: 560px;
-  border: 1px solid #d6ddd6;
-  background: #fffefa;
+  border: 1px solid var(--atlas-border);
+  background: var(--atlas-surface);
 }
 .profile-controls,
 .profile-detail {
   padding: 22px;
-  background: #f3f4ed;
+  background: var(--atlas-surface-soft);
 }
 .profile-controls {
-  border-right: 1px solid #d6ddd6;
+  border-right: 1px solid var(--atlas-border);
 }
 .profile-detail {
-  border-left: 1px solid #d6ddd6;
+  border-left: 1px solid var(--atlas-border);
 }
 .profile-controls label {
   display: grid;
@@ -28,11 +28,11 @@
 }
 .profile-controls select {
   width: 100%;
-  border: 1px solid #cbd5ce;
-  border-radius: 3px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-control);
   padding: 10px;
-  background: #fffefa;
-  color: #203733;
+  background: var(--atlas-surface);
+  color: var(--atlas-text);
   font-size: 13px;
 }
 .profile-controls .highlight-genes {
@@ -41,7 +41,7 @@
 .gene-function-summary {
   margin-top: 20px;
   padding-top: 18px;
-  border-top: 1px solid #d6ddd6;
+  border-top: 1px solid var(--atlas-border);
 }
 .gene-function-summary dl {
   display: grid;
@@ -56,12 +56,12 @@
   color: #50655f;
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  text-transform: none;
 }
 .gene-function-summary dd {
   margin: 0;
-  color: #203733;
+  color: var(--atlas-text);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -115,10 +115,10 @@
   .profile-controls,
   .profile-detail {
     border: 0;
-    border-bottom: 1px solid #d6ddd6;
+    border-bottom: 1px solid var(--atlas-border);
   }
   .profile-detail {
-    border-top: 1px solid #d6ddd6;
+    border-top: 1px solid var(--atlas-border);
   }
   .profiles-layout .profile-scatter svg {
     height: auto;
@@ -140,7 +140,7 @@
 .profiles-intro > p:not(.eyebrow) {
   max-width: 75ch;
   margin: 0;
-  color: #65736f;
+  color: var(--atlas-muted);
   line-height: 1.5;
   font-size: 13px;
 }

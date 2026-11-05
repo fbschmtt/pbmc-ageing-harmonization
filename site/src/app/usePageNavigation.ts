@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { navigation, type Page } from './navigation'
+import { isPage, type Page } from './navigation'
 
 function pageFromHash(): Page {
   const page = window.location.hash.slice(1) as Page
-  return navigation.some((item) => item.id === page) ? page : 'overview'
+  return isPage(page) ? page : 'overview'
 }
 
 export function usePageNavigation() {

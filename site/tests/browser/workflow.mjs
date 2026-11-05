@@ -8,10 +8,18 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
 import { chromium } from '@playwright/test'
 import { createRelease } from '../../scripts/release.mjs'
+import { installOfflineRoutes } from './network.mjs'
 
 const site = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const input = resolve(process.env.SITE_TEST_INPUT || join(site, '../output/test/analysis/per_type'))
 const runRoot = resolve(input, '../..')
+
+async function choosePageFromGroup(page, parent, child) {
+  const menu = page.locator('.site-nav .nav-menu').filter({ hasText: parent })
+  await menu.locator('summary').click()
+  // The submenu button's accessible name includes its descriptive second line.
+  await menu.locator('.nav-menu-panel button').filter({ hasText: child }).click()
+}
 
 test(
   'workflow outputs produce a browsable atlas with harmonization and DE',
@@ -86,12 +94,24 @@ test(
         executablePath: process.env.SITE_BROWSER_EXECUTABLE || undefined,
       })
       const page = await browser.newPage()
-      await page.goto(`http://127.0.0.1:${server.address().port}/`)
+      const appUrl = `http://127.0.0.1:${server.address().port}/`
+      await installOfflineRoutes(page, appUrl)
+      await page.goto(appUrl)
       await page.getByRole('button', { name: 'Datasets', exact: true }).click()
-      for (const study of run.selected_studies)
-        await page
-          .getByRole('heading', { name: study, exact: true })
-          .waitFor({ state: 'visible', timeout: 10000 })
+      for (const study of run.selected_studies) {
+        const index = release.context.studies.findIndex((item) => item.id === study)
+        assert.notEqual(index, -1, `Missing dataset card: ${study}`)
+        const link = page.locator(`.study-index a[href="#study-section-${index}"]`)
+        await link.waitFor({ state: 'visible', timeout: 10000 })
+        assert.equal((await link.textContent()).trim(), study)
+        const card = page.locator(`#study-section-${index}`)
+        await card.waitFor({ state: 'visible', timeout: 10000 })
+        await card.locator('h3').waitFor({ state: 'visible', timeout: 10000 })
+        assert.equal(
+          (await card.locator('h3').textContent()).trim(),
+          release.context.studies[index].publicationTitle || study,
+        )
+      }
       for (const figure of figures) {
         const displayed = page.locator(`img[src$="${figure.path}"]`)
         await displayed.scrollIntoViewIfNeeded()
@@ -102,10 +122,10 @@ test(
           figure.path,
         )
       }
-      await page.getByRole('button', { name: 'Differential expression', exact: true }).click()
+      await choosePageFromGroup(page, 'Differential expression', 'By cell type')
       await page.locator('.de-warning').waitFor({ state: 'visible', timeout: 10000 })
       await page.locator('.de-statistics').waitFor({ state: 'visible', timeout: 10000 })
-      await page.getByRole('button', { name: 'Single-cell', exact: true }).click()
+      await page.getByRole('button', { name: 'Cell states', exact: true }).click()
       await page.getByRole('img', { name: /^UMAP of / }).waitFor({ state: 'visible', timeout: 10000 })
       assert.ok(await page.locator('.single-cell-stats strong').count() >= 2)
     } finally {

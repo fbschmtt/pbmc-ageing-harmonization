@@ -21,6 +21,8 @@
         "input": {"type": "string", "minLength": 1},
         "test_input": {"type": "string", "minLength": 1},
         "publication_doi": {"type": "string", "pattern": "^10\\.[^/]+/.+$"},
+        "publication_title": {"type": "string", "minLength": 1},
+        "publication_citation": {"type": "string", "minLength": 1},
         "counts_source": {"type": "string", "pattern": "^(X|raw|layer:.+)$"},
         "features": {
           "type": "object",

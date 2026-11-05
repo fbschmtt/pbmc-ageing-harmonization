@@ -2,6 +2,9 @@
   "study_id": {
     "input": "input_data/replace_me/replace_me.h5ad",
     "test_input": "replace_me.h5ad",
+    "publication_doi": "10.xxxx/replace-me",
+    "publication_title": "Full title of the study paper",
+    "publication_citation": "Author et al. Journal. Year;volume(issue):pages.",
     "counts_source": "X",
     "features": {"duplicate_policy": "error"},
     "preparation": {

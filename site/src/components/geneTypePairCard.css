@@ -16,7 +16,7 @@
   user-select: text;
 }
 .pair-card-cell-link {
-  color: #1e6659;
+  color: var(--atlas-teal);
   font-weight: 700;
   text-decoration: underline;
   text-decoration-color: #a7c7bb;
@@ -24,43 +24,10 @@
 }
 .pair-card-title-link:hover,
 .pair-card-cell-link:hover {
-  color: #1e6659;
+  color: var(--atlas-teal);
 }
 .pair-card-actions {
   display: grid;
   gap: 2px;
   margin-top: 12px;
-}
-.pair-card-annotations {
-  display: grid;
-  gap: 8px;
-  margin: 14px 0;
-  padding: 10px 12px;
-  border-left: 3px solid #a7c7bb;
-  background: #f4f8f6;
-  min-height: 148px;
-}
-.pair-card-annotations div {
-  display: grid;
-  gap: 2px;
-}
-.pair-card-annotations span {
-  color: #52605c;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-.pair-card-annotations p {
-  display: -webkit-box;
-  height: 2.7em;
-  overflow: hidden;
-  margin: 0;
-  line-height: 1.35;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-.pair-card-annotations small {
-  color: #68736f;
-  font-size: 0.72rem;
 }

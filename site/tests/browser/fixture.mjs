@@ -11,6 +11,21 @@ const write = async (path, content) => {
 // Deliberately different values make a wrong model, gene or denominator observable.
 export async function makeFixture(root) {
   const input = join(root, 'analysis/per_type')
+  const writeClock = async (slug, label, externalStudy) => {
+    const clockDir = join(input, slug, 'ageing_clock')
+    const methods = [
+      { method: 'elastic_net', method_name: 'Elastic net', method_description: 'Baseline expression model.' },
+      { method: 'age_aware_study_offset_elastic_net', method_name: 'Age-aware study-offset elastic net', method_description: 'Age-aware study adjustment.' },
+    ]
+    await write(join(clockDir, 'age_clock.json'), JSON.stringify({ kind: 'cell_type_transcriptomic_age_clock', cell_type: label, methods }))
+    for (const method of methods) {
+      const methodDir = join(clockDir, method.method)
+      const training = 'pseudobulk_id,study,age,predicted_age\nsample-a,Study A,40,42\nsample-b,Study A,60,58\n'
+      const external = `pseudobulk_id,study,age,predicted_age\nsample-c,${externalStudy},35,39\nsample-d,${externalStudy},70,66\n`
+      await write(join(methodDir, 'cv_oof_predictions.csv'), training)
+      await write(join(methodDir, 'external_predictions.csv'), external)
+    }
+  }
   const analysis = join(input, 'cd14-monocyte/analysis')
   await write(join(analysis, 'report.json'), JSON.stringify({ status: 'complete', cell_type: 'CD14 monocyte', n_cells: 42, n_clusters: 2, embedding: { integration: { method: 'harmony' } } }))
   await write(join(analysis, 'markers.tsv'), 'names\tscores\tlogfoldchanges\tpvals_adj\tgroup\nTESTMARKER\t3.2\t2.4\t0.01\t0\nOTHER\t-2\t-1.5\t0.1\t0\nSECOND\t3\t1\t0.01\t1\n')
@@ -28,6 +43,15 @@ export async function makeFixture(root) {
     { cell_type: 'code', source: ['# study-specific linear trends'], outputs: [] },
   ] }))
   const dir = join(input, 'cd14-monocyte/differential_expression')
+  await writeClock('cd14-monocyte', 'CD14 monocyte', 'Study B')
+  const crossClock = join(input, 'age_clock_cross_type')
+  await write(join(crossClock, 'summary.json'), JSON.stringify({ methods: [{
+    id: 'elastic_net', name: 'Elastic net',
+    training: { predictions_file: 'elastic_net/training_predictions.csv', cell_types: ['CD14 monocyte', 'Naive CD4 T cell'] },
+    held_out: { predictions_file: 'elastic_net/held_out_predictions.csv' },
+  }] }))
+  await write(join(crossClock, 'elastic_net/training_predictions.csv'), 'donor_key,study,age,predicted_age,n_cell_types\na,Study A,40,41,2\nb,Study A,60,59,2\n')
+  await write(join(crossClock, 'elastic_net/held_out_predictions.csv'), 'donor_key,study,age,predicted_age,n_cell_types\nc,Study B,35,37,2\nd,Study B,70,68,2\n')
   const trajectory = join(root, 'analysis/combined/trajectory')
   const pathwayDirectory = join(root, 'pathways')
   await mkdir(pathwayDirectory, { recursive: true })
@@ -110,6 +134,7 @@ export async function makeFixture(root) {
     ['naive-cd4-t-cell', 'Naive CD4 T cell', true],
     ['cd16-monocyte', 'CD16 monocyte', false],
   ]) {
+    if (slug === 'naive-cd4-t-cell') await writeClock(slug, label, 'Study C')
     const other = join(input, slug, 'differential_expression')
     await write(
       join(other, 'run_metadata.json'),

@@ -8,22 +8,22 @@
   gap: 9px;
 }
 .gene-set-input strong {
-  color: #1e6659;
+  color: var(--atlas-teal);
   font:
-    500 10px 'DM Mono',
+    500 10px var(--atlas-font-mono),
     monospace;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  text-transform: none;
 }
 .gene-set-input textarea {
   width: 100%;
   min-height: 92px;
   resize: vertical;
-  border: 1px solid #cbd5ce;
-  border-radius: 3px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-control);
   padding: 10px;
-  background: #fffefa;
-  color: #203733;
+  background: var(--atlas-surface);
+  color: var(--atlas-text);
   font: 13px inherit;
   line-height: 1.4;
 }
@@ -54,19 +54,19 @@
   gap: 6px;
 }
 .gene-set-presets button {
-  border: 1px solid #cbd5ce;
-  border-radius: 3px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-control);
   padding: 5px 7px;
-  background: #f3f4ed;
+  background: var(--atlas-surface-soft);
   color: #66736d;
   font:
-    10px Manrope,
+    10px var(--atlas-font-sans),
     sans-serif;
   cursor: pointer;
 }
 .gene-set-presets.inline button.active {
   background: #dfeae0;
-  color: #1e4a43;
+  color: var(--atlas-teal);
   font-weight: 700;
 }
 .gene-set-menu {
@@ -81,8 +81,8 @@
   text-align: left;
 }
 .gene-set-menu-chevron {
-  color: #1e6659;
-  font: 16px/10px serif;
+  color: var(--atlas-teal);
+  font: 16px/10px var(--atlas-font-sans);
   transition: transform 0.14s ease;
 }
 .gene-set-menu-trigger[aria-expanded='true'] .gene-set-menu-chevron {
@@ -101,10 +101,10 @@
   max-height: 280px;
   padding: 7px;
   overflow: auto;
-  border: 1px solid #cbd5ce;
-  border-radius: 3px;
-  background: #fffefa;
-  box-shadow: 0 7px 18px #2037331c;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-control);
+  background: var(--atlas-surface);
+  box-shadow: 0 7px 18px color-mix(in srgb, var(--atlas-text) 11%, transparent);
   opacity: 0;
   pointer-events: none;
   transform: translateX(-6px);
@@ -122,7 +122,7 @@
 }
 .gene-set-preset-options button[aria-pressed='true'] {
   background: #dfeae0;
-  color: #1e4a43;
+  color: var(--atlas-teal);
   font-weight: 700;
 }
 @media (max-width: 900px) {

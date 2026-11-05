@@ -5,7 +5,7 @@ one harmonized H5AD per study, per-study sample × AIFI-L2 pseudobulks, and a
 cross-study pseudobulk matrix. The standard Make workflow also creates a
 raw-count cross-study single-cell merge, which can be disabled when not needed. A separate, opt-in integration
 benchmark compares unintegrated PCA, Harmony, and BBKNN representations and
-their method-specific cell graphs.
+their method-specific cell graphs, then publishes only labels and UMAPs.
 
 Study-specific inputs and adapter dependencies live in `config/studies.json`;
 the tracked `config/studies.schema.json` and
@@ -80,8 +80,9 @@ for three representative types from the real merge plus per-type DE reports
 from the synthetic fixture. Set `VERIFY_CELL_TYPES` to change this subset.
 Running `make run-cell-type-analysis-test` directly without `CELL_TYPES` still
 analyses all types. The
-benchmark artifact retains cell labels, UMAP coordinates, and neighbour graphs
-without raw counts. Use
+benchmark artifact retains cell labels and UMAP coordinates without raw counts,
+PCA matrices, or neighbour graphs. Graph overlap is calculated during
+aggregation and recorded in the report sidecar. Use
 `STUDIES=<list>` to select a different core-test set. Existing fixtures are preserved; use
 `TEST_DATA_OVERWRITE=true` only to refresh them.
 
@@ -125,7 +126,7 @@ flowchart TD
     mergedpb --> profiles
     mergedpb --> clocks["Optional age clocks"]
     harmonize -->|"optional merge"| cells["Merged raw-count single cells"]
-    cells --> benchmark["Optional integration benchmark<br/>embeddings, graphs and labels"]
+    cells --> benchmark["Optional integration benchmark<br/>UMAPs, labels and graph metrics"]
     cells --> split["Split by per-study AIFI-L2 label"]
     split --> analysis["Per-type single-cell analysis and reports"]
     dereports --> site["Optional static atlas export"]
@@ -176,6 +177,14 @@ to the repository root. Both registry documents must satisfy their tracked JSON
 Schemas as well as the pipeline's cross-reference checks. Declare supplementary files in
 `preparation.dependencies` so Nextflow stages them and configuration changes are
 tracked in task identity.
+
+Each study requires a `publication_doi`. When available, also provide
+`publication_title` with the paper's full title and `publication_citation` with
+its formal reference (authors, journal or preprint server, year, and available
+volume, issue, and page details). These optional fields appear with the DOI in
+the site's study cards; they credit the source authors and help readers identify
+the underlying study. Keep the DOI as the canonical identifier even when title
+or citation metadata is unavailable.
 
 An adapter receives the expression object's `.obs` table and must return the
 canonical metadata fields, with exactly one row for each retained cell. Use
@@ -405,9 +414,10 @@ that benchmark and do not provide a full-data embedding if the configured cap
 is exceeded.
 The merged artifact retains per-study labels in `aifi_l2_majority` for all
 downstream grouping and splitting. Run `make run-integration-benchmark` after
-the core workflow to create a diagnostic H5AD with unintegrated PCA, Harmony,
-and BBKNN representations, their neighbor graphs, and CellTypist labels
-majority-voted on each graph. Scanorama is temporarily disabled in the active
+the core workflow to create a diagnostic H5AD with UMAPs and CellTypist labels
+majority-voted on each method's graph. Per-method checkpoint files retain the
+graphs in Nextflow's work cache for sparse edge-overlap calculations; the final
+H5AD omits the graphs and PCA matrices. Scanorama is temporarily disabled in the active
 benchmark configuration because its correction step can require large dense
 temporary arrays. By default, the benchmark processes the
 full merged H5AD unless it exceeds `integration_benchmark.max_cells`, currently
@@ -420,6 +430,16 @@ selected rows are materialized. The published artifact does not duplicate the
 merged expression matrix. Graph edge overlap and per-study versus benchmark
 AIFI-L2 label concordance are diagnostic comparisons, not acceptance
 thresholds.
+The benchmark runs each configured method as its own sequential Nextflow task.
+Its checkpoint H5AD remains in Nextflow's work cache for `-resume`, while the
+small status JSON is published under
+`harmonization/integration_benchmark/methods/` as soon as the task completes.
+`-resume` reuses completed method tasks after an interruption. The final
+artifact and report combine successful methods; ordinary method errors are
+recorded and do not prevent later methods from running. A partial report lists
+failed or interrupted methods, and no HTML report is rendered if every method
+fails. Add an implementation in `METHOD_ADAPTERS` and its configuration
+validation in `pbmc_pipeline.config` when introducing another method.
 Timestamped benchmark stage progress is captured in the Nextflow task log
 (`.command.out` and `.command.err` in that task's `work/` directory), like
 other process output. The terminal shows Nextflow task progress. Set
@@ -1224,7 +1244,22 @@ and the target then exits nonzero.
 Defaults to holding out `nehar_belaid26,perez22`; these relatively small studies retain as
 much training data as possible while spanning a broad validation age range. Override with
 any comma-separated list via `AGE_CLOCK_EXTERNAL_STUDIES=study_a,study_b`. Per-method
-reports and a merged comparison go to `analysis/per_type/<slug>/ageing_clock/`.
+reports and a merged comparison go to `analysis/per_type/<slug>/ageing_clock/`. The
+all-cell-type run also writes an exploratory cross-cell-type clock analysis to
+`analysis/per_type/age_clock_cross_type/`. For each clock method shared across at least two
+cell types, it averages the per-type predictions for each donor and compares the combined
+performance with its component clocks on matched donors. It also records pairwise
+correlations between per-type prediction residuals for training and held-out donors in
+`residual_correlations.csv`, and renders a report at
+`analysis/per_type/age_clock_cross_type/report.html`. Donors need predictions from at least
+two cell types, with matching study and age metadata. These results assess whether combining
+cell-type-specific expression improves age prediction; they do not combine different clock
+methods. The site export also derives the matched-donor mean from available per-type
+predictions when an older analysis output does not yet contain the aggregate summary and
+the component clocks share the same input, configuration, and study splits.
+To build the aggregate and diagnostics from already fitted per-type clocks without
+refitting them, run `make aggregate-age-clocks`; then run `make site-export` to publish
+the selector option and report.
 
 Smoke-test with `make run-age-clock-synthetic-test` and check that expected output files
 exist with `make check-age-clock-synthetic-test`; both are included in `make run-all-test`
@@ -1246,29 +1281,38 @@ The main views are:
   per-study results have adjusted p < 0.05, regardless of direction; the gene
   details also show how many studies had an adjusted p-value. Missing study
   results are not treated as nonsignificant, and per-study adjustments may differ.
-  The menu groups combined,
-  developmental and individual-study fits. Select a point or search for a gene
-  to see model details and, when available, its separate combined age-bin fit.
+  **By cell type** compares genes within a type; **By gene** compares one gene
+  across types. The model menu groups combined, developmental and individual-study
+  fits. Select a point or search for a gene to see model details and, when
+  available, its separate combined age-bin fit. Combined model results can be
+  downloaded as DEG tables; other model downloads are not provided.
 - **Composition:** explore the per-study fraction-model forest plot, adjusted
   age-bin changes, and reference fractions. The age plot offers parent-compartment
   and retained-PBMC denominators; the forest plot uses the L1 parent.
-- **Single-cell:** inspect the local cluster UMAP, positive and negative cluster
-  markers, and available sample-level cluster-fraction plots for cell types with completed single-cell reports. This exploratory
-  view uses the published report figure and marker table; it does not export
-  per-cell coordinates. Re-export after rendering the reports to include it.
-- **Age-bin trajectories:** explore retained results by gene or cell type,
-  compare profile shapes in the cross-type trajectory map, or view a gene × cell
-  type matrix for the selected gene set. The profile plots show the signed
-  largest age-bin change against the adjusted omnibus age-bin p-value.
+- **Cell States:** inspect the local cluster UMAP, positive and negative cluster
+  markers, and available sample-level cluster-fraction plots for cell types with
+  completed single-cell reports. When merged age-DE results are available, a
+  3 × 3 UMAP image shows up to five positive and four negative FDR-significant
+  age genes. The expression image sits beside the cluster-fraction plot and
+  exports only the rendered PNG, not per-cell expression values. This exploratory
+  view does not export per-cell coordinates. Re-export after rendering the
+  reports to include it.
+- **More age analysis:** includes **Age-bin trajectories**, for retained gene
+  profiles and their cross-type map, and **Transcriptomic clocks**, which
+  compares baseline and advanced clock methods by cell type and shows the
+  donor-matched mean prediction across cell types when available.
 - **Pathways:** choose a predefined pathway or enter a custom gene set. The
-  shared set highlights matching genes in the DE and cell-type plots and the
-  trajectory map; the matrix displays its retained trajectory results.
+  selected genes are shown in a matrix colored by the combined linear-age model
+  effect (log2 fold change per decade) for each cell type. The shared gene set
+  also highlights genes in the DE and cell-type views.
 - **Datasets:** inspect available per-study QC, including the standalone
-  transparent AIFI L2 UMAP and the study-label comparison, with a link to the
-  full harmonization report.
+  transparent AIFI L2 UMAP and the study-label comparison, publication titles
+  and citations, donor and cell counts, and links to available study reports.
+- **Modelling** describes the analysis models and links to the Cell States view;
+  **About** gives background on the project.
 
 Selecting a gene in a plot carries it to the other views where a matching result
-is available. Selecting a cell type in differential expression, composition, single-cell or the cell-type
+is available. Selecting a cell type in differential expression, composition, Cell States or the cell-type
 trajectory view carries it to the other views when that type has data there. Model and composition
 denominator choices remain selected when changing cell type or switching views;
 if the chosen model is unavailable for a type, the view says so until another

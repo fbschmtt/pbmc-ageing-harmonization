@@ -44,30 +44,36 @@ export async function exportSingleCell(input, stage) {
     if (!image) continue
     const encoded = Array.isArray(image) ? image.join('') : image
     if (!Buffer.from(encoded, 'base64').subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) continue
+    const ageDeHeading = cells.findIndex((cell) => cell.cell_type === 'markdown' &&
+      (Array.isArray(cell.source) ? cell.source.join('') : cell.source || '').includes('### Age-DE Gene Expression'))
+    const ageDeOutputs = ageDeHeading < 0 ? [] : cells[ageDeHeading + 1]?.outputs || []
+    let ageDeImage = null
+    for (const output of ageDeOutputs) {
+      const pngOutput = output.data?.['image/png']
+      const htmlOutput = output.data?.['text/html']
+      if (pngOutput) ageDeImage = Array.isArray(pngOutput) ? pngOutput.join('') : pngOutput
+      else if (htmlOutput) {
+        const html = Array.isArray(htmlOutput) ? htmlOutput.join('') : htmlOutput
+        ageDeImage = html.match(/src="data:image\/png;base64,([A-Za-z0-9+/=]+)"/)?.[1] || null
+      }
+      if (ageDeImage && Buffer.from(ageDeImage, 'base64').subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) break
+      ageDeImage = null
+    }
     const fractionCell = cells.find((cell) => (Array.isArray(cell.source) ? cell.source.join('') : cell.source || '')
       .includes('cluster_fractions = sample_cluster_fractions('))
     const fractionHasStudyTrends = cells.some((cell) => (Array.isArray(cell.source) ? cell.source.join('') : cell.source || '')
       .includes('# study-specific linear trends'))
     const fractionIncludesZeros = cells.some((cell) => (Array.isArray(cell.source) ? cell.source.join('') : cell.source || '')
       .includes('# cluster-fraction zeros included'))
-    let fractionImage = null
     let fractionNote = null
     let fractionDetails = null
     for (const output of fractionCell?.outputs || []) {
       const details = output.data?.['application/vnd.pbmc.cluster-fractions+json']
       if (details && Array.isArray(details.clusters)) fractionDetails = details.clusters
-      const html = output.data?.['text/html']
-      const text = Array.isArray(html) ? html.join('') : html || ''
-      if (text.includes('Show cluster-composition curves')) {
-        const match = text.match(/src=["']data:image\/png;base64,([A-Za-z0-9+/=\s]+)["']/)
-        if (match) fractionImage = match[1].replace(/\s/g, '')
-      }
       const markdown = output.data?.['text/markdown']
       const message = Array.isArray(markdown) ? markdown.join('') : markdown || ''
       if (message.includes('excluded from cluster fractions')) fractionNote = message.replace(/^_|_$/g, '')
     }
-    // New reports provide one image per cluster; keep the combined figure only for older reports.
-    if (fractionDetails !== null) fractionImage = null
     const lines = markerText.trim().split(/\r?\n/)
     const headers = lines.shift().split('\t')
     const column = (name) => headers.indexOf(name)
@@ -87,14 +93,14 @@ export async function exportSingleCell(input, stage) {
     }
     const groups = [...clusters].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
       .map(([cluster, markers]) => ({ cluster,
-        higher: markers.filter((item) => item.effect > 0).sort((a, b) => b.effect - a.effect).slice(0, 8),
-        lower: markers.filter((item) => item.effect < 0).sort((a, b) => a.effect - b.effect).slice(0, 8),
+        higher: markers.filter((item) => item.effect > 0).sort((a, b) => b.effect - a.effect).slice(0, 10),
+        lower: markers.filter((item) => item.effect < 0).sort((a, b) => a.effect - b.effect).slice(0, 10),
       }))
     const path = `single-cell/${entry.name}.json`
     await mkdir(join(stage, 'single-cell'), { recursive: true })
     await writeFile(join(stage, path), JSON.stringify({ schemaVersion: 1, cellType: report.cell_type,
       nCells: report.n_cells, nClusters: report.n_clusters, integration: report.embedding?.integration?.method || 'none',
-      image: encoded, fractionImage, fractionNote, fractionHasStudyTrends, fractionIncludesZeros, fractionDetails, groups }))
+      image: encoded, ageDeImage, fractionNote, fractionHasStudyTrends, fractionIncludesZeros, fractionDetails, groups }))
     cellTypes.push({ id: entry.name, label: report.cell_type, path })
   }
   if (cellTypes.length) await writeFile(join(stage, 'single-cell-index.json'), JSON.stringify({ schemaVersion: 1, cellTypes }))

@@ -3,10 +3,10 @@
 }
 .filters .map-reset {
   margin-top: 10px;
-  border: 1px solid #cbd5ce;
-  border-radius: 3px;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-control);
   padding: 7px 10px;
-  background: #fffefa;
+  background: var(--atlas-surface);
   color: #39554f;
   font-size: 12px;
   font-weight: 700;
@@ -83,14 +83,14 @@
 .umap-tooltip {
   max-width: 260px;
   padding: 7px 9px !important;
-  border: 1px solid #d6ddd6;
-  border-radius: 3px;
-  background: #fffefa !important;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-control);
+  background: var(--atlas-surface) !important;
   color: #294640 !important;
   font:
-    11px 'DM Mono',
+    11px var(--atlas-font-mono),
     monospace !important;
-  box-shadow: 0 3px 14px #2037331a;
+  box-shadow: 0 3px 14px color-mix(in srgb, var(--atlas-text) 10%, transparent);
 }
 .map-panel .legend {
   z-index: 2;
@@ -117,4 +117,10 @@
   .atlas-main.is-trajectory-page .map-panel .umap {
     min-height: 400px;
   }
+}
+.explorer-heading {
+  margin: 0 0 14px;
+  color: var(--atlas-text);
+  font-family: var(--atlas-font-serif);
+  font-size: clamp(1.5rem, 2.5vw, 2rem);
 }

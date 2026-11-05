@@ -1,18 +1,41 @@
 .pathways-page {
   padding: 24px max(4vw, 34px) 60px;
 }
+.pathways-heading,
 .pathways-workspace {
-  margin: 18px auto 0;
+  max-width: 1440px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.pathways-heading {
+  margin-bottom: 24px;
+}
+.pathways-heading h1,
+.pathways-matrix-heading h2 {
+  margin: 0;
+}
+.pathways-heading > p:last-child,
+.pathways-matrix-heading p {
+  max-width: 800px;
+  color: var(--atlas-muted);
+  line-height: 1.6;
+}
+.pathways-heading > p:last-child {
+  margin: 8px 0 0;
+}
+.pathways-workspace {
+  margin-top: 18px;
 }
 .pathways-input-row {
   display: flex;
   align-items: stretch;
-  gap: 42px;
+  gap: 28px;
   margin: 0 0 24px;
 }
 .pathways-controls {
-  width: min(500px, 100%);
-  flex: 0 1 500px;
+  width: min(560px, 100%);
+  flex: 0 1 560px;
+  padding: 22px;
 }
 .pathways-controls .gene-set-input textarea {
   min-height: 112px;
@@ -30,15 +53,15 @@
   border: 0;
   padding: 3px 0;
   background: transparent;
-  color: #596963;
+  color: var(--atlas-muted);
   font:
-    600 11px Manrope,
+    600 11px var(--atlas-font-sans),
     sans-serif;
   cursor: pointer;
 }
 .pathway-attribution-trigger:hover,
 .pathway-attribution-trigger:focus-visible {
-  color: #1e6659;
+  color: var(--atlas-teal);
 }
 .pathway-attribution-panel {
   position: absolute;
@@ -47,24 +70,24 @@
   left: 0;
   width: min(430px, calc(100vw - 48px));
   padding: 14px 16px;
-  border: 1px solid #cbd5ce;
-  border-radius: 3px;
-  background: #fffefa;
-  box-shadow: 0 9px 24px #20373324;
-  color: #596963;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-control);
+  background: var(--atlas-surface);
+  box-shadow: 0 9px 24px color-mix(in srgb, var(--atlas-text) 14%, transparent);
+  color: var(--atlas-muted);
   font:
-    11px/1.55 Manrope,
+    11px/1.55 var(--atlas-font-sans),
     sans-serif;
 }
 .pathway-attribution-panel strong {
-  color: #203733;
+  color: var(--atlas-text);
   font-size: 12px;
 }
 .pathway-attribution-panel p {
   margin: 7px 0 0;
 }
 .pathway-attribution-panel a {
-  color: #1e6659;
+  color: var(--atlas-teal);
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
 }
@@ -72,14 +95,14 @@
   display: block;
   margin-top: 3px;
   color: #76817b;
-  font-family: 'DM Mono', monospace;
+  font-family: var(--atlas-font-mono);
   overflow-wrap: anywhere;
 }
 .empty-pathways {
   display: grid;
   place-items: center;
   min-height: 220px;
-  border: 1px solid #d6ddd6;
+  border: 1px solid var(--atlas-border);
   background: #f4f1e9;
   color: #6d7872;
   text-align: center;
@@ -93,22 +116,34 @@
   margin-left: auto;
   color: #68736a;
   font:
-    11px 'DM Mono',
+    11px var(--atlas-font-mono),
     monospace;
 }
 .heatmap-scale-title {
   margin: 0 0 7px;
-  color: #596963;
+  color: var(--atlas-muted);
   font:
-    600 11px Manrope,
+    600 11px var(--atlas-font-sans),
     sans-serif;
 }
 .pathway-no-matches {
   margin: 0 0 18px;
   color: #68736a;
   font:
-    12px/1.5 Manrope,
+    12px/1.5 var(--atlas-font-sans),
     sans-serif;
+}
+.pathway-count {
+  margin: 10px 0 0;
+  color: var(--atlas-muted);
+  font-size: 12px;
+}
+.pathways-matrix-heading {
+  margin: 30px 0 14px;
+}
+.pathways-matrix-heading p {
+  margin: 6px 0 0;
+  font-size: 14px;
 }
 .heatmap-scale-ramp {
   position: relative;
@@ -128,33 +163,33 @@
   align-items: center;
   gap: 7px;
   margin-top: auto;
-  color: #596963;
+  color: var(--atlas-muted);
   font:
-    12px Manrope,
+    12px var(--atlas-font-sans),
     sans-serif;
 }
 .pathway-filter input {
   width: auto;
   margin: 0;
-  accent-color: #1e6659;
+  accent-color: var(--atlas-teal);
 }
 .heatmap-scroll {
   width: 100%;
   overflow-x: auto;
-  border: 1px solid #d6ddd6;
-  background: #fffefa;
+  background: var(--atlas-surface-raised);
 }
 .heatmap {
   display: grid;
   width: max-content;
+  background: transparent;
 }
 .heatmap-corner,
 .heatmap-column-label,
 .heatmap-row-label {
-  background: #f3f4ed;
+  background: var(--atlas-surface-soft);
   color: #50655f;
   font:
-    500 10px 'DM Mono',
+    500 10px var(--atlas-font-mono),
     monospace;
 }
 .heatmap-column-label,
@@ -167,7 +202,7 @@
 .heatmap-column-label:hover,
 .heatmap-row-label:hover {
   background: #e2eae1;
-  color: #1e4a43;
+  color: var(--atlas-teal);
 }
 .heatmap-corner,
 .heatmap-row-label {
@@ -175,14 +210,14 @@
   left: 0;
   z-index: 2;
   padding: 8px;
-  border-right: 1px solid #d6ddd6;
+  border-right: 1px solid var(--atlas-border);
 }
 .heatmap-column-label {
   display: flex;
   align-items: flex-end;
   justify-content: flex-start;
   padding: 7px 8px;
-  border-bottom: 1px solid #d6ddd6;
+  border-bottom: 1px solid var(--atlas-border);
   border-right: 1px solid #e1e5df;
 }
 .heatmap-column-label span {
@@ -194,8 +229,8 @@
   border-bottom: 1px solid #e1e5df;
 }
 .heatmap-cell {
-  border-right: 1px solid #fffefa;
-  border-bottom: 1px solid #fffefa;
+  border-right: 1px solid var(--atlas-surface);
+  border-bottom: 1px solid var(--atlas-surface);
 }
 .sr-only {
   position: absolute;
@@ -221,30 +256,4 @@
     width: 100%;
     flex: 0 1 auto;
   }
-}
-
-.pathway-selector {
-  max-width: 1200px;
-}
-.pathway-selector .pathway-intro {
-  max-width: 700px;
-  color: #62706b;
-  line-height: 1.65;
-  font-size: 15px;
-  margin: 22px 0;
-}
-.pathway-selector-card {
-  max-width: 720px;
-  padding: 26px;
-  margin-top: 30px;
-  border: 1px solid #d6ddd6;
-  background: #fffefa;
-}
-.pathway-selector-card textarea {
-  min-height: 160px;
-}
-.pathway-selector-card .pathway-count {
-  margin: 20px 0 0;
-  color: #62706b;
-  font-size: 12px;
 }

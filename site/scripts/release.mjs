@@ -15,6 +15,7 @@ import { stampAssets } from './release-assets.mjs'
 import { verifyRelease } from './verify-release.mjs'
 import { pantherFilename, pantherRelease, pantherSha256 } from './panther-release.mjs'
 import { exportSingleCell } from './export-single-cell.mjs'
+import { exportClocks } from './export-clocks.mjs'
 import { addStudySupport } from './export-study-support.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -297,6 +298,7 @@ export async function createRelease(inputPath, targetPath, options = {}) {
     await writeFile(dePath, JSON.stringify(catalogue))
     await timed('preparing study support counts', () => addStudySupport(stage))
     await timed('preparing single-cell summaries', () => exportSingleCell(input, stage))
+    await timed('preparing transcriptomic clock results', () => exportClocks(input, stage, catalogue))
     const assets = await timed('validating and stamping generated assets', () =>
       stampAssets(stage, id, (processed, total, valid) =>
         progress(`Validated ${processed}/${total} generated files (${valid} published assets)`),
@@ -340,6 +342,7 @@ export async function createRelease(inputPath, targetPath, options = {}) {
           ...(await studyReportNames(input)).map((path) => path.replace(/report\.html$/, 'executed.ipynb')),
           ...de.cellTypes.map((cell) => `${cell.id}/differential_expression/report.html`),
           '../combined/trajectory/report.html',
+          'age_clock_cross_type/report.html',
         ]
         const snapshot = []
         for (const name of names) {
@@ -395,6 +398,7 @@ export async function createRelease(inputPath, targetPath, options = {}) {
         trajectory: assets.some((a) => a.kind === 'trajectory'),
         composition: assets.some((a) => a.kind === 'composition'),
         geneMetadata: assets.some((a) => a.kind === 'metadata'),
+        clocks: assets.some((a) => a.kind === 'clock'),
         pathways: assets.some((a) => a.kind === 'pathways'),
         reports: assets.some((a) => a.kind === 'report'),
       },

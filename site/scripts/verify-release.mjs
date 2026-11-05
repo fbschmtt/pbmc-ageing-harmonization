@@ -141,6 +141,15 @@ export async function verifyRelease(directory) {
   }
   if (!seen.has('de-index.json')) throw new Error('Missing DE asset')
   const de = parsed.get('de-index.json')
+  const clocks = parsed.get('clock-data.json')
+  if (clocks) {
+    const clockAsset = manifest.assets.find((asset) => asset.path === 'clock-data.json')
+    if (clockAsset?.kind !== 'clock' || clocks.cellTypes.some((cell) =>
+      cell.scope === 'cross_cell_type'
+        ? cell.id !== 'cross-cell-type-mean'
+        : !de.cellTypes.some((item) => item.id === cell.id && item.label === cell.label)))
+      throw new Error('Clock results reference an unknown cell type')
+  }
   const labels = new Set(),
     ids = new Set()
   for (const cell of de.cellTypes) {

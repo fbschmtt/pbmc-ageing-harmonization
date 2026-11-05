@@ -1,53 +1,71 @@
 .volcano-explorer {
   display: grid;
   grid-template-columns: minmax(190px, 220px) minmax(0, 1fr) minmax(240px, 315px);
-  border: 1px solid #d6ddd6;
-  background: #fffefa;
   min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-card);
+  background: var(--atlas-surface);
 }
 .volcano-explorer-controls,
 .volcano-explorer-detail {
   min-width: 0;
   padding: 22px;
-  background: #f3f4ed;
+  background: var(--atlas-surface-soft);
   overflow-wrap: anywhere;
 }
 .volcano-explorer-controls {
-  border-right: 1px solid #d6ddd6;
+  border-right: 1px solid var(--atlas-border);
 }
 .volcano-explorer-detail {
-  border-left: 1px solid #d6ddd6;
+  border-left: 1px solid var(--atlas-border);
+  background: var(--atlas-surface-raised);
 }
 .volcano-explorer-controls label {
   display: grid;
   gap: 8px;
   margin-bottom: 16px;
-  color: #50655f;
-  font-size: 12px;
-  font-weight: 700;
+  color: var(--atlas-text);
+  font-size: 13px;
+  font-weight: 600;
 }
 .volcano-explorer-controls select,
 .volcano-explorer-controls input {
   width: 100%;
   min-width: 0;
   padding: 10px;
-  border: 1px solid #cbd5ce;
-  border-radius: 3px;
-  background: #fffefa;
-  color: #203733;
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-inset);
+  background: var(--atlas-surface);
+  color: var(--atlas-text);
   font: inherit;
 }
 .volcano-explorer-controls p:not(.eyebrow),
 .volcano-explorer-description {
-  color: #586b63;
-  font-size: 12px;
+  color: var(--atlas-muted);
+  font-size: 13px;
   line-height: 1.5;
 }
 .volcano-explorer-gene-set {
-  margin-top: 20px;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--atlas-border);
+  color: var(--atlas-teal);
+  font-size: 13px;
+  font-weight: 600;
+}
+.volcano-explorer-gene-set summary,
+.de-method-note summary,
+.de-model-context summary {
+  cursor: pointer;
+  color: var(--atlas-teal);
+}
+.volcano-explorer-gene-set summary span {
+  color: var(--atlas-muted);
+  font-weight: 400;
 }
 .volcano-explorer-gene-set label {
-  margin-bottom: 0;
+  margin: 12px 0 0;
 }
 .volcano-explorer-main {
   min-width: 0;
@@ -55,7 +73,9 @@
 }
 .volcano-explorer-main h2 {
   margin: 0 0 5px;
+  color: var(--atlas-text);
   font-size: 20px;
+  font-weight: 600;
 }
 .volcano-explorer-description p {
   margin: 5px 0;
@@ -65,8 +85,8 @@
   flex-wrap: wrap;
   gap: 14px;
   margin-top: 8px;
+  color: var(--atlas-text);
   font-size: 12px;
-  color: #52655e;
 }
 .volcano-explorer-legend span {
   display: inline-flex;
@@ -81,44 +101,73 @@
   border-radius: 50%;
 }
 .volcano-legend-significant {
-  background: #cc765b;
+  background: var(--atlas-coral);
 }
 .volcano-legend-other {
-  background: #98b6aa;
+  background: var(--atlas-teal-light);
 }
 .volcano-legend-blood {
   background: var(--atlas-blood, #d98c63);
 }
 .volcano-legend-brain {
-  background: var(--atlas-brain, #256b6e);
+  background: var(--atlas-brain, #176b67);
 }
 .volcano-legend-pathway {
-  background: #98b6aa;
-  border: 2px solid #164f52;
+  background: var(--atlas-teal-light);
+  border: 2px solid var(--atlas-teal);
 }
 .volcano-legend-selected {
-  background: #98b6aa;
-  border: 2px solid #b5453c;
+  background: var(--atlas-teal-light);
+  border: 2px solid var(--atlas-coral);
 }
 .volcano-explorer .pair-card h2,
 .volcano-explorer .pair-card-title-link {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
-@media (max-width: 900px) {
-  .volcano-explorer {
-    grid-template-columns: 1fr;
-  }
-  .volcano-explorer-controls,
-  .volcano-explorer-detail {
-    border: 0;
-  }
-  .volcano-explorer-controls {
-    border-bottom: 1px solid #d6ddd6;
-  }
-  .volcano-explorer-detail {
-    border-top: 1px solid #d6ddd6;
-  }
+.de-subtitle {
+  margin: 0;
+  color: var(--atlas-text);
+  font-size: 14px;
+  font-weight: 500;
+}
+.de-method-note {
+  margin-top: 7px;
+  color: var(--atlas-muted);
+  font-size: 12px;
+}
+.de-method-note summary {
+  display: inline-block;
+  font-weight: 600;
+}
+.de-method-note p {
+  max-width: 760px;
+  margin: 8px 0 0;
+}
+.volcano-explorer-main .de-plot-loading {
+  display: grid;
+  min-height: 460px;
+  place-items: center;
+  border: 1px dashed var(--atlas-border);
+  border-radius: var(--atlas-radius-inset);
+  color: var(--atlas-muted);
+  background: var(--atlas-surface-soft);
+}
+.volcano-explorer-legend .de-support-legend {
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.volcano-explorer-legend .de-support-label {
+  margin-right: 3px;
+  color: var(--atlas-muted);
+  font-weight: 400;
+}
+.volcano-explorer-legend .de-support-step {
+  gap: 4px;
+  font-family: var(--atlas-font-mono);
+  font-variant-numeric: tabular-nums;
 }
 .volcano-explorer-main .profile-scatter {
   padding: 0;
@@ -140,10 +189,24 @@
 .volcano-explorer-controls .de-gene-matches select {
   min-width: 0;
 }
-
 @media (min-width: 901px) {
   .volcano-explorer-main .volcano-plot {
     width: min(100%, max(320px, calc(133.333vh - 507px)));
     margin: 0 auto;
+  }
+}
+@media (max-width: 900px) {
+  .volcano-explorer {
+    grid-template-columns: 1fr;
+  }
+  .volcano-explorer-controls,
+  .volcano-explorer-detail {
+    border: 0;
+  }
+  .volcano-explorer-controls {
+    border-bottom: 1px solid var(--atlas-border);
+  }
+  .volcano-explorer-detail {
+    border-top: 1px solid var(--atlas-border);
   }
 }

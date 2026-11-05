@@ -90,7 +90,7 @@ validate-study validate-test validate-full test-data download-inputs download-ge
 	profile-gene profile-top-age-genes check-top-age-profile-prerequisites \
 	profile-top-age-genes-test \
 	run-gene-profile-synthetic-test \
-	run-age-clock run-age-clocks run-age-clock-synthetic-test check-age-clock-synthetic-test check-age-clock-prerequisites \
+	run-age-clock run-age-clocks aggregate-age-clocks run-age-clock-synthetic-test check-age-clock-synthetic-test check-age-clock-prerequisites \
 	run-integration-benchmark run-integration-benchmark-test check-integration-benchmark-prerequisites check-integration-benchmark-test \
 	run-de run-de-test run-de-synthetic-test \
 	render-report-index \
@@ -337,12 +337,16 @@ run-age-clocks: check-age-clock-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Fit
 	@status=0; \
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock --input "$(PSEUDOBULK_INPUT)" --config config/pipeline.json --output-dir "$(AGE_CLOCK_DIR)" --external-studies "$(AGE_CLOCK_EXTERNAL_STUDIES)" --all-cell-types --n-jobs "$(AGE_CLOCK_N_JOBS)" $(AGE_CLOCK_METHOD_ARGS) $(AGE_CLOCK_CALIBRATION_ARGS) || status=$$?; \
 	if find "$(AGE_CLOCK_DIR)" -path '*/ageing_clock/age_clock.json' -type f -print -quit | grep -q .; then \
-		$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock_report --report-root "$(AGE_CLOCK_DIR)" --template reports/age_clock_report.py --comparison-template reports/age_clock_comparison_report.py --project-root /work || exit $$?; \
+		$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock_report --report-root "$(AGE_CLOCK_DIR)" --template reports/age_clock_report.py --comparison-template reports/age_clock_comparison_report.py --cross-type-template reports/age_clock_cross_type_report.py --project-root /work || exit $$?; \
 	else \
 		echo "No eligible age-clock fits were published; skipping age-clock report rendering."; \
 	fi; \
 	python3 scripts/render_report_index.py --outdir "$(OUTDIR)" || exit $$?; \
 	exit $$status
+
+aggregate-age-clocks: $(PYTHON_CONTAINER_PREREQS) ## Aggregate existing per-type clock predictions and render cross-type diagnostics without refitting
+	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python -m pbmc_pipeline.age_clock_cross_type --output-dir "$(AGE_CLOCK_DIR)" --report-template reports/age_clock_cross_type_report.py --project-root /work
+	python3 scripts/render_report_index.py --outdir "$(OUTDIR)"
 
 check-synthetic-de-results: $(PYTHON_CONTAINER_PREREQS) ## Check completed synthetic DE fits and planted age markers
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/check_synthetic_de.py results --outdir output/test

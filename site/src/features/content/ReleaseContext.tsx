@@ -10,62 +10,53 @@ function Doi({ value }: { value: string | null }) {
 }
 
 export function DatasetContext({ release }: { release: ReleaseManifest }) {
-  const { context, analysis, provenance } = release
+  const { context } = release
   return (
     <>
-      <h2>Analysis and provenance</h2>
-      <dl>
-        <dt>Analysis generated</dt>
-        <dd>{analysis?.timestamp || 'Not recorded'}</dd>
-        <dt>Method</dt>
-        <dd>
-          {analysis?.method
-            ? `${analysis.method}${analysis.methodVersion ? ` ${analysis.methodVersion}` : ''}`
-            : 'Not recorded'}
-        </dd>
-        <dt>Cell-type annotation</dt>
-        <dd>{analysis?.splitBy || 'Not recorded'}</dd>
-        <dt>Analysis configuration SHA-256</dt>
-        <dd>{analysis?.configurationSha256 || 'Not recorded'}</dd>
-        <dt>Model metadata comparison</dt>
-        <dd>
-          {provenance?.status || 'Not checked'}.{' '}
-          {provenance?.note || 'This release does not contain a metadata comparison.'}
-        </dd>
-      </dl>
-      <p>
-        The export date and ID identify this site export. They do not identify the analysis run. Source files
-        are fingerprinted in the manifest, but existing reports and tables do not record enough lineage to
-        prove they came from the same analysis.
-      </p>
-      <h2>Studies in this release</h2>
       {context?.studies.length ? (
         <>
-          <p>
-            Study identifiers come from this release. Citation and annotation details are from the study
-            configuration.
-          </p>
-          <ul>
-            {context.studies.map((study) => (
-              <li key={study.id}>
-                <h3>{study.id}</h3>
-                {study.inModels !== undefined && (
-                  <p>
-                    {study.harmonizationAvailable
-                      ? 'Harmonization diagnostics available.'
-                      : 'No harmonization diagnostics in this release.'}{' '}
-                    {study.inModels
-                      ? 'Represented in exported DE models.'
-                      : 'Not represented in exported DE models.'}
-                  </p>
+          <section className="study-index" aria-labelledby="study-index-heading">
+            <h2 id="study-index-heading">Studies in this release</h2>
+            <ul>
+              {context.studies.map((study, index) => (
+                <li key={study.id}>
+                  <a
+                    href={`#study-section-${index}`}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      document.getElementById(`study-section-${index}`)?.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start',
+                      })
+                    }}
+                  >
+                    {study.id}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </section>
+          <div className="dataset-studies">
+            {context.studies.map((study, index) => (
+              <section id={`study-section-${index}`} key={study.id} className="dataset-study">
+                <p className="eyebrow">Study</p>
+                <h3>{study.publicationTitle || study.id}</h3>
+                {study.publicationCitation && <p className="study-citation">{study.publicationCitation}</p>}
+                {study.publicationDoi && <p className="study-doi"><Doi value={study.publicationDoi} /></p>}
+                {!study.publicationTitle && !study.publicationDoi && (
+                  <p>Publication details have not been provided for this study.</p>
                 )}
-                <p>
-                  <Doi value={study.publicationDoi} />
+                <p className="study-counts">
+                  {study.donors != null || study.cells != null ? (
+                    <>
+                      In this release: {study.donors != null && `${study.donors.toLocaleString()} donors`}
+                      {study.donors != null && study.cells != null && ' · '}
+                      {study.cells != null && `${study.cells.toLocaleString()} cells`}
+                    </>
+                  ) : (
+                    'Donor and cell counts are not available for this study in this release.'
+                  )}
                 </p>
-                {study.annotation && <p>Cell types: {study.annotation}</p>}
-                {study.technology && <p>Technology: {study.technology}</p>}
-                {study.inclusion && <p>Model inclusion: {study.inclusion}</p>}
-                {study.siteComments && <p>{study.siteComments}</p>}
                 <StudyFigures release={release} study={study.id} />
                 {release.assets
                   .filter((asset) => asset.kind === 'report' && asset.study === study.id)
@@ -80,12 +71,12 @@ export function DatasetContext({ release }: { release: ReleaseManifest }) {
                       </a>
                     </p>
                   ))}
-              </li>
+              </section>
             ))}
-          </ul>
+          </div>
         </>
       ) : (
-        <p>No study identifiers were recorded in the exported models.</p>
+        <p>No study identifiers were recorded for this release.</p>
       )}
     </>
   )
@@ -120,64 +111,23 @@ export function ModellingContext({ release }: { release: ReleaseManifest }) {
   const inclusion = release.analysis?.sampleInclusion
   return (
     <>
-      <p>
-        {release.analysis?.method
-          ? `DE method: ${release.analysis.method}${release.analysis.methodVersion ? ` ${release.analysis.methodVersion}` : ''}.`
-          : 'DE method metadata is unavailable.'}
-      </p>
+      {release.analysis?.method && (
+        <p>
+          DE method: {release.analysis.method}
+          {release.analysis.methodVersion ? ` ${release.analysis.methodVersion}` : ''}.
+        </p>
+      )}
       {inclusion && (
         <p>
-          Configured DE inclusion:{' '}
-          {inclusion.minimum_age_years_inclusive != null
-            ? `age ≥${inclusion.minimum_age_years_inclusive}`
-            : 'minimum age not recorded'}
-          ;{' '}
+          {inclusion.minimum_age_years_inclusive != null &&
+            `Samples younger than ${inclusion.minimum_age_years_inclusive} years are excluded. `}
           {inclusion.minimum_cells_filter_enabled === false
-            ? 'minimum-cell filter disabled'
+            ? 'No minimum cell count is applied to pseudobulk samples.'
             : inclusion.minimum_cells_per_pseudobulk_inclusive != null
-              ? `minimum ${inclusion.minimum_cells_per_pseudobulk_inclusive} cells per pseudobulk`
-              : 'minimum-cell setting not recorded'}
-          . Model-specific sample counts and designs are available in differential expression.
+              ? `Pseudobulk samples require at least ${inclusion.minimum_cells_per_pseudobulk_inclusive} cells.`
+              : null}
         </p>
       )}
-    </>
-  )
-}
-
-export function SourcePermissions({ release }: { release: ReleaseManifest }) {
-  return (
-    <>
-      <h2>Source and report permissions</h2>
-      <p>
-        Study licences are not recorded in this release. Review the terms and attribution requirements for
-        each source before distribution.
-      </p>
-      {release.pathwaySources?.length ? (
-        <p>
-          Pathway source files: {release.pathwaySources.map((source) => source.path).join(', ')}. Their
-          fingerprints are in the manifest; licence and attribution review is still required.
-        </p>
-      ) : (
-        <p>No pathway source files were recorded.</p>
-      )}
-      {release.pathwaySources?.length ? (
-        <p>
-          For sources from MSigDB, review the{' '}
-          <a
-            href="https://www.gsea-msigdb.org/gsea/msigdb_license_terms.jsp"
-            target="_blank"
-            rel="noreferrer"
-          >
-            MSigDB licence and source-specific conditions
-          </a>
-          .
-        </p>
-      ) : null}
-      <p>
-        Included HTML reports may contain sample-level identifiers and diagnostic plots. Their companion
-        downloads are not included in this export. Review report contents and sharing permissions for the
-        intended audience.
-      </p>
     </>
   )
 }

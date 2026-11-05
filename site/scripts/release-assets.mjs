@@ -26,6 +26,8 @@ const kindOf = (name) =>
               ? 'metadata'
               : name === 'pathway-index.json'
                 ? 'pathways'
+                  : name === 'clock-data.json'
+                    ? 'clock'
                 : name === 'pipeline-trajectory-preview.svg'
                   ? 'trajectory_preview'
                   : name.startsWith('reference-expression/') && name.endsWith('.json')

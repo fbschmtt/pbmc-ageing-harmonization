@@ -31,7 +31,44 @@ from pbmc_pipeline.age_clock import (
     train_age_clocks,
     train_all_age_clocks,
 )
+from pbmc_pipeline.age_clock_cross_type import aggregate_cross_type_clocks
 from pbmc_pipeline.age_clock_features import within_study_gene_zscore
+
+
+def test_cross_type_clock_mean_matches_donors_and_reports_residual_correlations(tmp_path):
+    output = tmp_path / "per_type"
+    methods = [{"method": "elastic_net", "method_name": "Elastic net"}]
+    for cell_type, predictions in ((
+        ("T cell", [(42, 38), (58, 62)]),
+        ("B cell", [(38, 42), (62, 58)]),
+    )):
+        clock = output / cell_type / "ageing_clock"
+        (clock / "elastic_net").mkdir(parents=True)
+        (clock / "age_clock.json").write_text(json.dumps({
+            "cell_type": cell_type,
+            "methods": methods,
+        }))
+        training = pd.DataFrame({
+            "sample_id": ["donor-1", "donor-2"],
+            "study": ["study-a", "study-a"],
+            "age": [40, 60],
+            "predicted_age": [predictions[0][0], predictions[1][0]],
+        }, index=["sample-1", "sample-2"])
+        held_out = training.copy()
+        held_out["study"] = "study-b"
+        held_out["predicted_age"] = [predictions[0][1], predictions[1][1]]
+        training.to_csv(clock / "elastic_net/cv_oof_predictions.csv", index_label="pseudobulk_id")
+        held_out.to_csv(clock / "elastic_net/external_predictions.csv", index_label="pseudobulk_id")
+
+    summary = aggregate_cross_type_clocks(output)
+    assert len(summary["methods"]) == 1
+    training_path = output / "age_clock_cross_type/elastic_net/training_predictions.csv"
+    combined = pd.read_csv(training_path)
+    assert combined["predicted_age"].tolist() == [40.0, 60.0]
+    assert combined["n_cell_types"].tolist() == [2, 2]
+    correlations = pd.read_csv(output / "age_clock_cross_type/residual_correlations.csv")
+    assert set(correlations["split"]) == {"training", "held_out"}
+    assert correlations["pearson_r"].tolist() == pytest.approx([-1.0, -1.0])
 
 
 class PseudobulkVar:
@@ -161,6 +198,32 @@ def test_focused_fit_preserves_compatible_prior_methods(clock_input, tmp_path):
     ]
     assert second["newly_fitted_methods"] == ["study_zscore_elastic_net"]
     assert second["reused_prior_methods"] == ["elastic_net"]
+
+
+def test_focused_fit_discards_prior_methods_with_mismatched_sample_metadata(
+    clock_input, tmp_path, caplog,
+):
+    output_dir = tmp_path / "clock"
+    _train_fixture(clock_input, output_dir, method_names=["elastic_net"], cv=False)
+    prediction_path = (
+        output_dir / "cd14-monocyte/ageing_clock/elastic_net/external_predictions.csv"
+    )
+    predictions = pd.read_csv(prediction_path, index_col=0)
+    predictions.iloc[0, predictions.columns.get_loc("age")] += 1
+    predictions.to_csv(prediction_path)
+
+    manifest = _train_fixture(
+        clock_input,
+        output_dir,
+        method_names=["study_zscore_elastic_net"],
+        cv=False,
+    )
+
+    assert [method["method"] for method in manifest["methods"]] == [
+        "study_zscore_elastic_net",
+    ]
+    assert manifest["reused_prior_methods"] == []
+    assert "Discarding previously fitted clock methods" in caplog.text
 
 
 def test_rank_clock_uses_sample_weighting_and_rank_pipeline():

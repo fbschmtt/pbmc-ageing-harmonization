@@ -8,9 +8,8 @@
 }
 .volcano-plot svg text {
   font:
-    12px Manrope,
-    sans-serif;
-  fill: #4d625a;
+    12px var(--atlas-font-sans);
+  fill: var(--atlas-muted);
 }
 .volcano-plot circle {
   cursor: pointer;
@@ -23,6 +22,6 @@
   stroke-dasharray: 4 5;
 }
 .volcano-threshold {
-  stroke: #c5795d;
+  stroke: var(--atlas-coral);
   stroke-dasharray: 4 5;
 }

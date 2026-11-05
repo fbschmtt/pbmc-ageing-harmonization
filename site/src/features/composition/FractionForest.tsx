@@ -28,10 +28,7 @@ export function FractionForest({
 }) {
   if (!coefficients.length)
     return (
-      <p>
-        No estimable coefficient export is available for this cell type. Rerender its DE report and export the
-        site data.
-      </p>
+        <p>No coefficient estimates are available for this cell type.</p>
     )
   const studies = [...new Set([...coefficients, ...diagnostics].map((item) => item.study))].sort()
   const hasDiagnostics = diagnostics.some(
@@ -61,7 +58,7 @@ export function FractionForest({
   const x = (value: number) => left + ((value / extent + 1) / 2) * (right - left)
   const rowY = (index: number) => top + index * 65 + 20
   return (
-    <div className="fraction-chart-panel">
+    <div className="fraction-chart-panel atlas-card atlas-card-soft">
       <div className="fraction-chart-heading">
         <div>
           <p className="eyebrow">Study-specific models</p>

@@ -14,7 +14,7 @@ function mixHex(foreground: string, background: string, foregroundWeight: number
 }
 
 const palette = {
-  canvas: '#f8f7f2',
+  canvas: '#f4f0e6',
   brain: '#256b6e',
   blood: '#d98c63',
 } as const

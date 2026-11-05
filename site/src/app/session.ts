@@ -46,6 +46,7 @@ export type AtlasSessionAction =
   | { type: 'openProfile'; tab: ProfileTab; record: TrajectoryRecord; selectPair: boolean }
   | { type: 'setTrajectory'; state: ExplorerState }
   | { type: 'openTrajectory'; record: TrajectoryRecord }
+  | { type: 'focusTrajectoryPair'; gene: string; cellType: string }
 
 export function atlasSessionReducer(state: AtlasSessionState, action: AtlasSessionAction): AtlasSessionState {
   switch (action.type) {
@@ -124,11 +125,19 @@ export function atlasSessionReducer(state: AtlasSessionState, action: AtlasSessi
       return {
         ...state,
         trajectory: {
+          ...state.trajectory,
           query: '',
           selectedId: action.record.id,
-          umapViewState: null,
-          umapResetVersion: 0,
         },
+      }
+    case 'focusTrajectoryPair':
+      return {
+        ...state,
+        selectedGene: action.gene,
+        selectedCellType: action.cellType,
+        geneProfile: { ...state.geneProfile, gene: action.gene, cellType: action.cellType, selectedId: null },
+        cellTypeProfile: { ...state.cellTypeProfile, gene: action.gene, cellType: action.cellType, selectedId: null },
+        trajectory: { ...state.trajectory, query: '', selectedId: null },
       }
   }
 }

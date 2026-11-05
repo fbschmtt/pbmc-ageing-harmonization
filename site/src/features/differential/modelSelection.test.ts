@@ -44,9 +44,9 @@ describe('differential expression model selection', () => {
     expect(defaultModelId([studyAge])).toBe('')
     expect(groupModels([studyAge])[0].models).toEqual([studyAge])
   })
-  it('uses consistent capitalization without changing study IDs or contrasts', () => {
-    expect(modelLabel(combinedAge)).toBe('Combined · Age (per year)')
+  it('uses decade units for continuous-age effect estimates', () => {
+    expect(modelLabel(combinedAge)).toBe('Combined · Age (per decade)')
     expect(modelLabel(developmental)).toBe('Developmental · Adult age')
-    expect(modelLabel(studyAge)).toBe('study_a · Age (per year)')
+    expect(modelLabel(studyAge)).toBe('study_a · Age (per decade)')
   })
 })

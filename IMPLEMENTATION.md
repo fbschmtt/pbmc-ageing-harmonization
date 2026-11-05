@@ -26,7 +26,7 @@ sample × AIFI-L2 pseudobulk per study
 outer-gene merged pseudobulk ─┐
                               ├─ one combined merge QC report
 optional: all harmonized cells → raw joined single-cell H5AD
-                                      ├─ integration benchmark → method embeddings, graphs, labels, report
+                                      ├─ integration benchmark → method labels/UMAPs, graph metrics, report
                                       └─ cell-type split → per-type analysis and reports
 
 The core merge writes no global normalization, embedding, graph, or prediction.
@@ -74,11 +74,15 @@ The core merge writes no global normalization, embedding, graph, or prediction.
   It then fans out separate per-type analysis and report-rendering tasks.
 - `modules/cell_type_analysis.nf`: the split, analysis, and report-rendering processes.
 - `integration_benchmark.nf` and `modules/integration_benchmark.nf`: the
-  optional global-integration task and its report-rendering task, both reading
-  an existing raw merged single-cell H5AD.
+  optional global-integration workflow. It runs each configured method in a
+  separate sequential task, then aggregates successful outputs and renders a
+  report from the existing raw merged single-cell H5AD.
 - `src/pbmc_pipeline/integration_benchmark.py` and
   `reports/integration_benchmark_report.py`: benchmark fitting and its
   reader-facing notebook source.
+- `src/pbmc_pipeline/age_clock_cross_type.py`: combines same-method
+  cell-type clock predictions for donors shared across types and reports
+  prediction metrics and pairwise residual correlations.
 - `reports/cell_type_report.py`: Jupytext source for the per-type notebook, rendering visualizations from the completed type-specific analysis artifact.
 - `reports/differential_expression_report.py`: standalone Jupytext source for
   the per-type pseudobulk DE report. Rendering executes abundance models,
@@ -155,9 +159,12 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/harmonization/harmonization_qc/<study>/report.html`
 - `<outdir>/harmonization/harmonization_qc/merged/report.html` (one report for both merge branches)
 - `<outdir>/harmonization/integration_benchmark/integration_benchmark.h5ad` (optional thin
-  diagnostic artifact with labels, method embeddings, and neighbor graphs)
+  diagnostic artifact with labels and method UMAP coordinates; PCA matrices and
+  neighbor graphs are not included)
 - `<outdir>/harmonization/integration_benchmark/integration_benchmark.json` (optional method
   and input provenance)
+- `<outdir>/harmonization/integration_benchmark/methods/method_<name>.json` (optional
+  per-method completion status)
 - `<outdir>/harmonization/integration_benchmark/{executed.ipynb,report.html}` (optional
   benchmark report)
 - `<outdir>/analysis/per_type/<cell-type-slug>/split.h5ad` (reusable raw-count split)
@@ -165,6 +172,8 @@ For `--outdir <outdir>`, the normal outputs are:
 - `<outdir>/index.html` (links to harmonization QC, integration benchmark, combined cross-type analysis, and available per-type residual, DE, and age-clock reports)
 - `<outdir>/analysis/per_type/<cell-type-slug>/ageing_clock/` (optional clock models, metadata, and reports)
 - `<outdir>/analysis/per_type/age_clock_all_types_summary.json` (optional all-type clock run summary)
+- `<outdir>/analysis/per_type/age_clock_cross_type/` (optional donor-matched mean-clock
+  predictions, component and combined metrics, pairwise residual correlations, and report)
 - `<outdir>/analysis/per_type/cell_type_manifest.json` (optional downstream provenance and completeness contract)
 - `<outdir>/analysis/combined/differential_expression/*.csv` (combined cross-cell-type DE results and manifest)
 - `<outdir>/analysis/per_type/<cell-type-slug>/differential_expression/...csv` (per-study and per-type combined covariate results)
@@ -245,11 +254,12 @@ Every method's graph supplies both CellTypist majority voting
 and its UMAP. The integration report compares graph edge overlap with
 unintegrated PCA and AIFI-L2 label concordance without applying acceptance
 thresholds. The published benchmark H5AD contains metadata, diagnostic
-labels, method embeddings, and neighbor graphs, but no expression matrix. Its
+labels, and method UMAP coordinates, but no expression matrix, PCA matrices,
+or neighbor graphs. Per-method checkpoint H5ADs retain graph data in the
+Nextflow work cache so aggregation can calculate sparse edge overlap. Its
 `benchmark_*_aifi_l2_majority` columns are diagnostic; the retained per-study
-`obs['aifi_l2_majority']` remains the downstream label. The notebook separates
-embedding integration from type calling and reports graph edge overlap and
-AIFI-L2 concordance.
+`obs['aifi_l2_majority']` remains the downstream label. The notebook reports
+graph edge overlap and AIFI-L2 concordance.
 The benchmark emits timestamped stage progress to the task's captured stdout
 and stderr files in its Nextflow `work/` directory. Production and test
 targets use the standard Python image. Use
@@ -342,7 +352,15 @@ collector writes the shared manifest under
 `analysis/combined/differential_expression/`, and the cross-type report is
 under `analysis/combined/trajectory/`. The single cell analysis report does
 not require DE results, while `run-de` renders a separate DE report for each
-cell type from the pseudobulk outputs.
+cell type from the pseudobulk outputs. When the per-type merged age result is
+available beside the single-cell report, the notebook adds a 3 × 3 UMAP panel
+for up to five positive and four negative age-DE genes. It selects FDR-significant
+genes (adjusted p < 0.05) by adjusted p-value, overlays per-cell log-normalized
+expression, and draws low-expression cells before high-expression cells. The
+overlay is descriptive; significance comes from the merged sample-level
+pseudobulk model. The site release exports the rendered PNG only, without
+per-cell expression values. The single-cell page places this image alongside
+the sample-level cluster-fraction plot.
 
 Each study is fitted once with its maximal available design: age and sex plus
 each optional covariate with at least two observed values, plus `study_site`
