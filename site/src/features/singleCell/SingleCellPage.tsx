@@ -43,7 +43,6 @@ export function SingleCellPage({ preferredCellType, onSelectCellType }: {
     <section className="single-cell-page">
       <p className="eyebrow">Explore the cells</p>
       <h1>Cell states</h1>
-      <p className="single-cell-lead">Explore the local embedding and clusters within each annotated cell type.</p>
       {loading && <p role="status">Loading single-cell analyses…</p>}
       {!loading && !index && <p>Single-cell summaries are unavailable in this release.</p>}
       {index && selected && <>
@@ -61,23 +60,19 @@ export function SingleCellPage({ preferredCellType, onSelectCellType }: {
         {error && <p role="status">The selected single-cell summary could not be loaded.</p>}
         {!error && !data && <p role="status">Loading {selected.label}…</p>}
         {data && <div className="single-cell-layout">
-          <section className="single-cell-section atlas-card" aria-label="UMAP views">
-            <div className="single-cell-section-grid single-cell-umap-grid">
-              <article className="single-cell-panel single-cell-figure">
-                <p className="eyebrow">Local embedding</p><h2>Clusters in context</h2>
-                <p>Each point is a cell; colors and labels show local Leiden clusters.</p>
-                <img src={`data:image/png;base64,${data.image}`} alt={`UMAP of ${data.cellType}, colored by local cluster`} />
-              </article>
-              <article className="single-cell-panel single-cell-age-de">
-                <p className="eyebrow">Age-associated expression</p><h2>Age-DE genes on UMAP</h2>
-                {data.ageDeImage ? <img src={`data:image/png;base64,${data.ageDeImage}`}
-                  alt={`Expression of up to nine significant age-associated genes on the ${data.cellType} UMAP`} /> : null}
-              </article>
-            </div>
+          <section className="single-cell-section single-cell-column atlas-card" aria-label="Cell expression views">
+            <article className="single-cell-panel single-cell-figure">
+              <p className="eyebrow">Local embedding</p><h2>Clusters in context</h2>
+              <img src={`data:image/png;base64,${data.image}`} alt={`UMAP of ${data.cellType}, colored by local cluster`} />
+            </article>
+            <article className="single-cell-panel single-cell-age-de">
+              <p className="eyebrow">Age-associated expression</p><h2>Age-DE genes on UMAP</h2>
+              {data.ageDeImage ? <img src={`data:image/png;base64,${data.ageDeImage}`}
+                alt={`Expression of up to nine significant age-associated genes on the ${data.cellType} UMAP`} /> : null}
+            </article>
           </section>
-          <section className="single-cell-section atlas-card" aria-label="Cluster patterns">
-            <div className="single-cell-section-grid single-cell-detail-grid">
-              <article className="single-cell-panel">
+          <section className="single-cell-section single-cell-column atlas-card" aria-label="Cluster patterns">
+              <article className="single-cell-panel single-cell-markers">
                 <p className="eyebrow">Cluster markers</p><h2>Genes distinguishing clusters</h2>
                 <p>Genes with the largest positive and negative log₂ fold changes compared with other clusters in this cell type.</p>
                 {selectedCluster ? <>
@@ -122,7 +117,6 @@ export function SingleCellPage({ preferredCellType, onSelectCellType }: {
                   <p className="single-cell-empty">No cluster-fraction plot is available for this type. Samples must meet the report's minimum cell-count requirement.</p>}
                 {data.fractionNote && <p className="single-cell-caption">{data.fractionNote}</p>}
               </article>
-            </div>
           </section>
         </div>}
       </>}

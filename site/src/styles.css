@@ -811,14 +811,6 @@ footer .release {
   color: #526961;
   font-size: 13px;
 }
-.trajectory-notice {
-  padding: 12px max(4vw, 34px);
-  background: #f5eddb;
-  color: #594b31;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
 .composition-source {
   padding: 14px max(4vw, 34px);
   background: #f0f3ed;

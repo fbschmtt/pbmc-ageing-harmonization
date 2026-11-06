@@ -124,3 +124,9 @@
   font-family: var(--atlas-font-serif);
   font-size: clamp(1.5rem, 2.5vw, 2rem);
 }
+.explorer-description {
+  margin: 0 0 18px;
+  color: var(--atlas-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}

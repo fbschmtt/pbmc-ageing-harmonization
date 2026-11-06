@@ -50,10 +50,11 @@ export function VolcanoPlot<T>({
   ])
   const x = (value: number) => left + ((value + xAxis.extent) / (2 * xAxis.extent)) * (right - left)
   const y = (value: number) => bottom - (value / yAxis.maximum) * (bottom - top)
-  const ordered = [...records].sort(
+  const selectedIndex = selected === null ? -1 : records.indexOf(selected)
+  const ordered = records.map((record, index) => ({ record, index })).sort(
     (a, b) =>
-      Number(id(a) === (selected && id(selected))) - Number(id(b) === (selected && id(selected))) ||
-      Number(Boolean(highlighted?.(a))) - Number(Boolean(highlighted?.(b))),
+      Number(a.index === selectedIndex) - Number(b.index === selectedIndex) ||
+      Number(Boolean(highlighted?.(a.record))) - Number(Boolean(highlighted?.(b.record))),
   )
   return (
     <figure className={`volcano-plot ${className}`}>
@@ -92,11 +93,12 @@ export function VolcanoPlot<T>({
         >
           −log₁₀ adjusted p-value
         </text>
-        {ordered.map((record) => {
-          const style = appearance(record, selected !== null && id(record) === id(selected))
+        {ordered.map(({ record, index }) => {
+          const isSelected = index === selectedIndex
+          const style = appearance(record, isSelected)
           return (
             <circle
-              key={id(record)}
+              key={`${id(record)}-${index}`}
               cx={x(effect(record))}
               cy={y(negLog10(adjustedP(record)))}
               r={style.radius ?? 5}

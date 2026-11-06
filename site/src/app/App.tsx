@@ -52,7 +52,6 @@ export function App() {
     dePreviewAssets.find((asset) => asset.path === `de-previews/${selectedPreviewSlug}.svg`)?.path ??
     dePreviewAssets.find((asset) => asset.path === 'de-previews/naive-cd8-t-cell.svg')?.path ??
     dePreviewAssets[0]?.path
-  const trajectoryNotice = page === 'trajectories' ? trajectoryMap : atlas
   const openProfile = (record: TrajectoryRecord, selectPair = true) => {
     dispatch({ type: 'selectGene', gene: record.gene, cellType: record.cellType })
     dispatch({ type: 'openProfile', tab: 'gene', record, selectPair })
@@ -164,11 +163,6 @@ export function App() {
             navigate('trajectories')
           }}
         />
-      )}
-      {['genes', 'trajectories'].includes(page) && trajectoryNotice && (
-        <div className="trajectory-notice">
-          {trajectoryNotice.description}
-        </div>
       )}
       {!atlas && !trajectoryMap && ['genes', 'trajectories'].includes(page) && (
         <section className="content-page">

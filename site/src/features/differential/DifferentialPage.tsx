@@ -64,7 +64,7 @@ export function DifferentialPage({
   onSelectPathway: (pathway: PathwaySet) => void
   onHighlightGenesChange: (value: string) => void
 }) {
-  const entrySelection = useRef({ preferredGene, preferredCellType, preferredModelId, onSelectModel })
+  const entrySelection = useRef({ preferredGene, preferredCellType, preferredModelId, onSelectModel, onSelectCellType })
   const [release, setRelease] = useState<Release | null>(null)
   const [failure, setFailure] = useState<AssetFailureKind | null>(null)
   const [cellId, setCellId] = useState('')
@@ -82,6 +82,7 @@ export function DifferentialPage({
         const { preferredGene: gene, preferredCellType: type } = entrySelection.current
         const first = initialCell(data.cellTypes, gene, type)
         setCellId(first.id)
+        entrySelection.current.onSelectCellType(first.label)
         const defaultId = defaultModelId(first.models)
         if (entrySelection.current.preferredModelId === null && defaultId)
           entrySelection.current.onSelectModel(defaultId)
@@ -448,7 +449,7 @@ export function DifferentialPage({
               title={(record) =>
                 `${record.gene}: effect ${fmt(record.effect * ageEffectScale)}${ageEffectScale === 10 ? ' log₂ fold change per decade' : ''}, adjusted p ${fmt(record.padj)}; ${supportLabel(record.studySupport)}`
               }
-              xLabel={ageEffectScale === 10 ? 'Age effect (log₂ fold change per decade)' : 'Effect estimate (log₂ fold change)'}
+              xLabel={ageEffectScale === 10 ? 'Combined age effect estimates (log₂ fold change per decade)' : 'Effect estimate (log₂ fold change)'}
               threshold={0.05}
               ariaLabel="Volcano plot of effect versus negative log ten adjusted p-value. Search for a gene to select it with a keyboard."
               appearance={(record, isSelected) => ({

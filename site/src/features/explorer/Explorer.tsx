@@ -74,6 +74,9 @@ export function Explorer({
   return (
     <section className="explorer">
       <h1 className="explorer-heading">Age-bin trajectories</h1>
+      <p className="explorer-description">
+        Each point is a cell type × gene pair. We ran UMAP on distances between their age-bin trajectory shapes.
+      </p>
       <div className="explorer-layout">
         <aside className="filters">
           <label>

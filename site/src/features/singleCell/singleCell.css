@@ -1,18 +1,16 @@
 .single-cell-page { max-width: 1500px; margin: auto; padding: 34px max(4vw, 34px) 70px; }
 .single-cell-page h1 { font-size: 34px; }
-.single-cell-lead, .single-cell-panel > p { color: var(--atlas-muted); line-height: 1.6; }
-.single-cell-lead { max-width: 700px; font-size: 17px; }
+.single-cell-panel > p { color: var(--atlas-muted); line-height: 1.6; }
 .single-cell-controls { display: flex; gap: 36px; align-items: end; flex-wrap: wrap; margin: 28px 0 18px; }
 .single-cell-controls .choice-field { width: min(320px, 100%); margin: 0; }
 .single-cell-stats { display: flex; gap: 30px; padding: 0 0 4px; flex-wrap: wrap; }
 .single-cell-stats div { display: grid; gap: 2px; }
 .single-cell-stats strong { color: var(--atlas-teal); font: 500 22px var(--atlas-font-sans); text-transform: capitalize; }
 .single-cell-stats span { color: #71847b; font-size: 12px; }
-.single-cell-layout { display: grid; gap: 20px; }
+.single-cell-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 20px; }
 .single-cell-section { min-width: 0; padding: 18px 22px 22px; }
-.single-cell-section-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: stretch; }
 .single-cell-panel { min-width: 0; padding: 12px 20px; }
-.single-cell-section-grid > .single-cell-panel + .single-cell-panel { border-left: 1px solid #e2eae0; }
+.single-cell-column > .single-cell-panel + .single-cell-panel { border-top: 1px solid #e2eae0; }
 .single-cell-panel .eyebrow { margin-bottom: 8px; }
 .single-cell-panel h2 { margin: 0; font-size: 25px; }
 .single-cell-panel > p { font-size: 14px; }
@@ -40,7 +38,6 @@
 .single-cell-fit-table thead th { color: #62786c; font-size: 12px; }
 .single-cell-fit-placeholder { visibility: hidden; }
 @media (max-width: 800px) {
-  .single-cell-section-grid { grid-template-columns: 1fr; }
-  .single-cell-section-grid > .single-cell-panel + .single-cell-panel { border-left: 0; border-top: 1px solid #e2eae0; }
+  .single-cell-layout { grid-template-columns: 1fr; }
 }
 @media (max-width: 520px) { .single-cell-page { padding-inline: 20px; } .single-cell-section { padding: 16px 10px; } .single-cell-panel { padding: 14px 10px; } }

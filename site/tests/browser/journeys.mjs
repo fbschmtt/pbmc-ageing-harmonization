@@ -68,6 +68,13 @@ const chooseMenu = async (page, label, option) => {
 const assertMenu = async (page, label, value) => {
   assert.equal(await menuTrigger(page, label).getAttribute('aria-label'), `${label}: ${value}`)
 }
+const clickPoint = async (plot, titleText) => {
+  const points = plot.locator('circle')
+  const index = await points.evaluateAll((circles, fragment) =>
+    circles.findIndex((circle) => circle.querySelector('title')?.textContent?.includes(fragment)), titleText)
+  assert.notEqual(index, -1, `No plot point title contains ${titleText}`)
+  await points.nth(index).click()
+}
 
 const group = process.env.SITE_BROWSER_GROUP || 'all'
 const filter = (process.env.SITE_BROWSER_FILTER || '').toLowerCase()
@@ -176,7 +183,9 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         await choosePageFromGroup(page, 'More age analysis', 'Age-bin trajectories')
         await visible(page.locator('.trajectory-map-loading img'))
         resumeTrajectory()
-        await visible(page.locator('.trajectory-notice'))
+        await visible(page.locator('.umap'))
+        await visible(page.getByText('Each point is a cell type × gene pair. We ran UMAP on distances between their age-bin trajectory shapes.'))
+        assert.equal(await page.locator('.trajectory-notice').count(), 0)
       } finally {
         resumeDe()
         resumeTrajectory()
@@ -197,8 +206,8 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         )
         await openApp(page, served.url)
         await choosePageFromGroup(page, 'More age analysis', 'Age-bin trajectories')
-        await visible(page.locator('.trajectory-notice'))
         await visible(page.locator('.umap'))
+        assert.equal(await page.locator('.trajectory-notice').count(), 0)
         assert.equal(await page.getByText('Trajectory data is unavailable.').count(), 0)
       } finally {
         await context.close()
@@ -257,6 +266,14 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         await visible(statistics.nth(0).filter({ hasText: '2.30' }))
         await visible(statistics.nth(1).filter({ hasText: '0.500' }))
         await visible(statistics.nth(4).filter({ hasText: 'Unavailable' }))
+        const plot = page.locator('svg[aria-label^="Volcano plot"]')
+        await clickPoint(plot, 'GENE1: effect')
+        await clickPoint(plot, 'GENE2: effect')
+        await page.waitForFunction(() => {
+          const selected = [...document.querySelectorAll('svg[aria-label^="Volcano plot"] circle')]
+            .filter((circle) => circle.getAttribute('stroke') === '#b5453c')
+          return selected.length === 1 && selected[0].querySelector('title')?.textContent?.startsWith('GENE2:')
+        })
       } finally {
         await context.close()
       }
@@ -269,12 +286,21 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         await openApp(page, served.url)
         await choosePageFromGroup(page, 'Differential expression', 'By gene')
         await visible(page.getByLabel('Gene symbol'))
+        assert.equal(await page.locator('.trajectory-notice').count(), 0)
         await page.getByLabel('Gene symbol').fill('GENE2')
         await page
           .locator('.profile-scatter title')
           .filter({ hasText: 'Naive CD4 T cell' })
           .waitFor({ state: 'attached' })
         assert.equal(await page.locator('.profile-scatter circle').filter({ has: page.locator('title', { hasText: 'Naive CD4 T cell' }) }).getAttribute('fill'), '#597FC6')
+        const profilePlot = page.locator('.profile-scatter')
+        await clickPoint(profilePlot, 'CD14 monocyte')
+        await clickPoint(profilePlot, 'Naive CD4 T cell')
+        await page.waitForFunction(() => {
+          const selected = [...document.querySelectorAll('.profile-scatter circle')]
+            .filter((circle) => circle.getAttribute('stroke') === '#b5453c')
+          return selected.length === 1 && selected[0].querySelector('title')?.textContent?.startsWith('Naive CD4 T cell')
+        })
       } finally {
         await context.close()
       }
@@ -332,6 +358,14 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         await page.getByRole('button', { name: 'Cell states', exact: true }).click()
         await visible(page.getByRole('heading', { name: 'Cell states' }))
         await visible(page.getByRole('img', { name: 'UMAP of CD14 monocyte, colored by local cluster' }))
+        assert.equal(await page.getByText('Explore the local embedding and clusters within each annotated cell type.').count(), 0)
+        assert.equal(await page.getByText('Each point is a cell; colors and labels show local Leiden clusters.').count(), 0)
+        assert.deepEqual(
+          await page.locator('.single-cell-layout > .single-cell-column').evaluateAll((columns) =>
+            columns.map((column) => column.getAttribute('aria-label')),
+          ),
+          ['Cell expression views', 'Cluster patterns'],
+        )
         await visible(page.getByText('TESTMARKER', { exact: true }))
         await visible(page.getByText('OTHER', { exact: true }))
         await visible(page.getByRole('img', { name: /Cluster 0 sample-level fractions across age/ }))
@@ -500,6 +534,15 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       try {
         const page = await context.newPage()
         await openApp(page, served.url)
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
+        await visible(menuTrigger(page, 'Cell type'))
+        const defaultCellType = (await menuTrigger(page, 'Cell type').getAttribute('aria-label')).replace(
+          'Cell type: ',
+          '',
+        )
+        await page.getByRole('button', { name: 'Composition', exact: true }).click()
+        await visible(menuTrigger(page, 'Cell type'))
+        await assertMenu(page, 'Cell type', defaultCellType)
         await choosePageFromGroup(page, 'Differential expression', 'By cell type')
         await visible(menuTrigger(page, 'Cell type'))
         await page.getByLabel('Search genes').fill('GENE2')

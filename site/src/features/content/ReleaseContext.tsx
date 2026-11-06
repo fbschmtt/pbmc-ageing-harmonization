@@ -25,7 +25,7 @@ export function DatasetContext({ release }: { release: ReleaseManifest }) {
                     onClick={(event) => {
                       event.preventDefault()
                       document.getElementById(`study-section-${index}`)?.scrollIntoView({
-                        behavior: 'smooth',
+                        behavior: 'auto',
                         block: 'start',
                       })
                     }}
