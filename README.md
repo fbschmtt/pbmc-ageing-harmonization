@@ -3,9 +3,10 @@
 Configuration-driven processing of PBMC ageing scRNA-seq studies. It produces
 one harmonized H5AD per study, per-study sample × AIFI-L2 pseudobulks, and a
 cross-study pseudobulk matrix. The standard Make workflow also creates a
-raw-count cross-study single-cell merge, which can be disabled when not needed. A separate, opt-in integration
-benchmark compares unintegrated PCA, Harmony, and BBKNN representations and
-their method-specific cell graphs, then publishes only labels and UMAPs.
+raw-count cross-study single-cell merge, which can be disabled when not needed.
+A separate, opt-in integration benchmark compares unintegrated PCA, Harmony,
+and BBKNN representations and their method-specific cell graphs, then publishes
+labels and UMAPs.
 
 Study-specific inputs and adapter dependencies live in `config/studies.json`;
 the tracked `config/studies.schema.json` and
@@ -143,11 +144,6 @@ All immutable local inputs belong under `input_data/`. Generated conversions,
 reports, and harmonized outputs are kept outside it and ignored by Git.
 Pipeline-wide GO enrichment inputs in `input_data/go/` and study-specific
 inputs remain under `input_data/`.
-
-Published outputs are organized under `output/harmonization/` for preparation,
-harmonized data, pseudobulk, merged inputs, QC reports, and integration
-benchmarks. `output/analysis/` contains `combined/`, `per_type/`, and
-`per_gene/` results.
 
 Per-cell preparation artifacts are generated under
 `<outdir>/harmonization/prepared/`; they are reproducible from the expression
@@ -548,22 +544,12 @@ summary/navigation layer, and is the reader-facing analysis artifact; the
 notebook is the audit artifact. The separate [static presentation site](#static-presentation-site)
 uses exported structured results rather than parsing notebook HTML.
 
-#### Automatic table of contents
+#### Report navigation
 
-Cell-type, merge-QC, integration-benchmark, DE, combined trajectory, and gene-profile reports share
-their reader-facing header and styles from
-[`src/pbmc_pipeline/report_theme.py`](src/pbmc_pipeline/report_theme.py). Their
-navigation lists are generated from the final rendered HTML after notebook
-export. The templates provide a TOC placeholder, and
-[`src/pbmc_pipeline/report_toc.py`](src/pbmc_pipeline/report_toc.py) collects
-the rendered H2, H3, and H4 headings in document order, nests them by heading
-level, and replaces the placeholder with linked entries. This also picks up
-headings emitted conditionally or programmatically by notebook cells. When
-editing a report, add or reorder document headings and let the renderer update
-the TOC; do not maintain a separate list of TOC links. Give headings explicit
-IDs when their anchors need to remain stable across heading text changes.
-
-The report runners call these helpers after notebook execution and HTML export.
+Rendered report navigation is generated from the final HTML headings. When
+editing a report, change the headings in the template rather than maintaining a
+separate table of contents. Give a heading an explicit ID when its link must
+remain stable if its text changes.
 
 ## Single cell analysis reports
 
@@ -682,11 +668,13 @@ test merge and reports when that merge is absent. The production equivalent is
 
 Each published type directory under `output/analysis/per_type/` contains its
 raw-count `split.h5ad`, `analysis/analysis.h5ad`, HTML report, executed notebook,
-and report tables. `cell_type_manifest.json` records the exact merged input, configuration,
-reference-model checksums, analysis specification, and the status/checksums of
-every expected type report. Its creation fails if a report directory is missing
-its required deliverables, so a successful workflow cannot silently publish a
-partial report set.
+and report tables. `cell_type_manifest.json` records the exact merged input,
+configuration, reference-model checksums, analysis specification, completed
+type reports, and any failed type and stage. A failed type does not prevent
+other reports from being published: the manifest records partial status and
+the workflow exits with an error. Each type marked complete must have all
+required deliverables. Site export includes only types marked complete, so a
+stale report for a failed type is not presented as part of the current release.
 PC--age correlations in these reports are explicitly descriptive at the cell
 level; use sample/subject-level pseudobulks or mixed models for inference.
 The local neighbour graph, UMAP, and Leiden clustering use Harmony correction
@@ -1106,100 +1094,6 @@ fold bias, and top coefficients before interpreting feature selection. Any
 retained fixture change must preserve the default smoke-test contract, update
 `adata.uns["synthetic_test_data"]`, and have focused unit-test coverage.
 
-After `make run-de-synthetic-test`, run `make profile-top-age-genes-test` to
-render two genes per cell type, ranked by merged age-DE adjusted
-p-value. The outputs are written under
-`output/test/analysis/per_gene/<cell-type>/<gene>/`; this target is also
-included in `make run-all-test` and `make verify`.
-
-`make run-all-test` is the complete ordered Docker test. It runs the core and
-integration benchmark on available downsampled real-data fixtures, then fits
-the separate synthetic pseudobulk DE fixture and checks its results. The
-synthetic age-clock smoke test creates its own synthetic pseudobulk and checks
-that model, prediction, CV, report, and index files exist. Inside
-`run-all-test` and `verify`, this smoke test defaults to the `elastic_net` clock
-with a one-point CV grid to keep routine verification fast. Set
-`VERIFY_AGE_CLOCK_METHODS` and, if needed, `VERIFY_AGE_CLOCK_ALPHAS` and
-`VERIFY_AGE_CLOCK_L1_RATIOS` to broaden that coverage. Running
-`make run-age-clock-synthetic-test` directly still fits all six clocks on the
-full default CV grid; follow it with `make check-age-clock-synthetic-test` to
-check all six. The suite then
-profiles its top two merged age-DE genes per cell type, runs the focused
-synthetic gene-profile smoke test, renders per-type DE and combined
-cross-cell-type reports from that synthetic fixture, and renders single cell
-analysis reports for three representative types from the real merge/splits.
-Set `VERIFY_CELL_TYPES` to change this subset. Running
-`make run-cell-type-analysis-test` directly without `CELL_TYPES` still analyses
-all types.
-`make verify` also runs linting, unit tests, Nextflow lint, documentation checks,
-and both frontend test targets. Frontend verification requires the local site
-dependencies and a browser; see the [site setup](#static-presentation-site).
-The isolated browser journeys use their own synthetic fixture. After the Docker
-workflow completes, `make verify` also runs `make site-test-workflow`, which
-exports `output/test` into a temporary release and checks real-fixture study QC
-and synthetic DE in a browser. Neither test replaces the existing site export.
-`STUDIES=<list>` changes only
-the core test inputs; use `STUDIES=all` for all available fixtures. The synthetic WGCNA fixture exercises the ordinary
-network and report path, but its
-two-module result does not exercise the 25-module figure cap or production-scale
-runtime.
-
-The generated input stays under `output/test/analysis/combined/synthetic_de/`.
-DE outputs and the combined manifest are written under
-`output/test/analysis/combined/differential_expression/`; `run-de-synthetic-test`
-renders per-type DE reports under `output/test/analysis/per_type/<slug>/differential_expression/`.
-The separate single cell analysis reports are rendered from the test single-cell merge by
-`run-cell-type-analysis-test` under each type's `analysis/` directory.
-
-`run-cell-type-analysis` renders the single cell analysis report and requires a
-merged single-cell input. `run-de` uses the pseudobulk merge to render the
-separate per-type DE reports and cross-cell-type analysis report, so those
-reports do not require a single-cell merge.
-
-Run the workflow after creating the pseudobulk merge:
-
-```bash
-make run-de
-```
-
-`make run-de` renders one per-type DE report task for each completed fit,
-alongside the separate combined cross-cell-type analysis report. If a report
-template changes, Nextflow resume reuses completed DE fits and reruns the
-affected downstream report tasks.
-
-To rerender one report from existing fits without rerunning DE models or the
-cross-cell-type report, use its cell-type slug:
-
-```bash
-make render-de-reports CELL_TYPE=memory-b-cell
-```
-
-The render writes updated notebook, HTML, and diagnostic logs under that
-cell type's per-type differential-expression output directory.
-
-By default this reads `output/harmonization/merged/pseudobulk_merged.h5ad`. Override the
-input or output roots with `PSEUDOBULK_INPUT=/path/to/pseudobulk_merged.h5ad`
-or `OUTDIR=/path/to/output`.
-`make run-de-test` requires an existing test pseudobulk merge; create it first
-with `make run-test`. It uses the explicitly labeled test mode described above.
-Use `make run-de-synthetic-test` to exercise successful PyDESeq2 fits with the
-production sample-inclusion filters enabled.
-
-Each study has one maximal DE model: `study_site` when it varies, age, sex,
-log10 total counts, and every optional covariate with at least two observed
-values. All coefficients for that study therefore come from one formula and
-complete-case sample set.
-A missing BMI, CMV, or smoking-status value
-excludes that pseudobulk only from models containing that term; one missing
-value removes one row. Combined models target one covariate at a time, using
-all complete-case samples from studies that recorded it and adjusting for
-study site, age, sex, and log10 total counts. The site term is omitted when one
-site remains. CMV negative/positive values are harmonized to no/yes. Smoking
-status is modeled only as yes/no, with no as the reference group; other labels
-are treated as missing. Categorical result tables name their
-comparison groups, including male versus female, yes CMV versus no CMV, and
-yes versus no smoking status.
-
 ## Age clocks
 
 `make run-age-clock` fits sample-weighted, study-balanced, within-sample rank, within-study
@@ -1269,182 +1163,88 @@ Smoke-test with `make run-age-clock-synthetic-test` and check that expected outp
 exist with `make check-age-clock-synthetic-test`; both are included in `make run-all-test`
 and `make verify`.
 
-## Further reading
-
-See [INPUT_FILES.md](INPUT_FILES.md) for exact external paths and checksums and
-[IMPLEMENTATION.md](IMPLEMENTATION.md) for architecture and output contracts.
-
 ## Static presentation site
 
-The `site/` directory contains the React/Vite frontend. It reads static assets
-exported from the pipeline; it does not run the analysis or require an API.
-The main views are:
+The React/Vite app in `site/` reads a static release created from existing
+workflow outputs. It does not run analysis or require an API.
 
-- **Differential expression:** choose a cell type and model contrast to explore
-  gene-level estimates in a volcano plot. Point colors show how many matching
-  per-study results have adjusted p < 0.05, regardless of direction; the gene
-  details also show how many studies had an adjusted p-value. Missing study
-  results are not treated as nonsignificant, and per-study adjustments may differ.
-  **By cell type** compares genes within a type; **By gene** compares one gene
-  across types. The model menu groups combined, developmental and individual-study
-  fits. Select a point or search for a gene to see model details and, when
-  available, its separate combined age-bin fit. Combined model results can be
-  downloaded as DEG tables; other model downloads are not provided.
-- **Composition:** explore the per-study fraction-model forest plot, adjusted
-  age-bin changes, and reference fractions. The age plot offers parent-compartment
-  and retained-PBMC denominators; the forest plot uses the L1 parent.
-- **Cell States:** inspect the local cluster UMAP, positive and negative cluster
-  markers, and available sample-level cluster-fraction plots for cell types with
-  completed single-cell reports. When merged age-DE results are available, a
-  3 × 3 UMAP image shows up to five positive and four negative FDR-significant
-  age genes. The expression image sits beside the cluster-fraction plot and
-  exports only the rendered PNG, not per-cell expression values. This exploratory
-  view does not export per-cell coordinates. Re-export after rendering the
-  reports to include it.
-- **More age analysis:** includes **Age-bin trajectories**, for retained gene
-  profiles and their cross-type map, and **Transcriptomic clocks**, which
-  compares baseline and advanced clock methods by cell type and shows the
-  donor-matched mean prediction across cell types when available.
-- **Pathways:** choose a predefined pathway or enter a custom gene set. The
-  selected genes are shown in a matrix colored by the combined linear-age model
-  effect (log2 fold change per decade) for each cell type. The shared gene set
-  also highlights genes in the DE and cell-type views.
-- **Datasets:** inspect available per-study QC, including the standalone
-  transparent AIFI L2 UMAP and the study-label comparison, publication titles
-  and citations, donor and cell counts, and links to available study reports.
-- **Modelling** describes the analysis models and links to the Cell States view;
-  **About** gives background on the project.
+The site includes differential-expression, composition, Cell States, age-bin
+trajectory, transcriptomic-clock, pathway, dataset, modelling, overview, and
+about views. Cell-type and gene selections are shared across views when matching
+results exist, and cell-type selectors use the shared type colors. A shared
+gene set can be selected on the Pathways page or edited from a plot; it
+highlights matching genes in the differential-expression and by-cell-type
+trajectory plots. In the volcano plot, gene-set points have a distinct outline
+and are drawn above ordinary points; the selected point is drawn last.
 
-Selecting a gene in a plot carries it to the other views where a matching result
-is available. Selecting a cell type in differential expression, composition, Cell States or the cell-type
-trajectory view carries it to the other views when that type has data there. Model and composition
-denominator choices remain selected when changing cell type or switching views;
-if the chosen model is unavailable for a type, the view says so until another
-model or cell type is selected. A separate shared pathway or gene set can be edited from the
-Pathways page or the relevant plots. These selections last while the page is
-open and reset on reload. Where the selected gene has no plottable DE estimate
-for the current model, the DE view explains that it is showing another result.
-The plots select an initial result to make the detail panel discoverable.
+Volcano-plot color shows the number of studies with a significant result for
+the same contrast, regardless of direction. Zero is gray; missing support is
+shown as unavailable. The viridis scale runs from one to the largest tested-
+study count among the plotted genes. A switch beside reference-bin expression
+colors points by study-balanced expression (log₂ CPM + 1) instead. This mode is
+selected by default when study-support data are unavailable. Its color-bar
+limits span available genes in the selected cell type's reference-expression
+asset. Shared estimate formatting uses two decimals for magnitudes of at least
+one and two significant digits below one; plot axes can use their own tick
+formatting. Downloaded CSV statistics retain their source precision.
 
-The frontend Make targets run in a tracked Docker image with the locked Node
-runtime and npm packages. Docker is required; Node/npm do not need to be
-installed on the production host. Export completed per-cell-type DE results,
-then start the development server:
+Transcriptomic clocks have cell-type and model selectors. Available models are
+listed from baseline to more advanced, the age axes stay fixed across selections,
+and prediction points load only for the selected model. The across-cell-types
+option shows donor-matched mean predictions when available. New or updated
+clock outputs must be exported before they appear in the site.
+
+### Run and refresh the site
+
+The Docker-backed Make targets provide the locked Node environment; a local
+Node installation is optional. Export the available pipeline results, then
+start the live-reload development server:
 
 ```bash
 make site-export
 make serve-frontend
 ```
 
-Open `http://localhost:8000/`; set `SITE_PORT` to use a different port. The
-development server has live reload and reads source changes from the workspace.
-Press Ctrl+C once to stop the server and its container.
-It binds to localhost by default. To allow connections to the host's network
-interfaces, run `make serve-frontend SITE_BIND=0.0.0.0` and use the host's IP
-address and port. Network and firewall rules still apply. This exposes the
-development server and its exported reports to clients that can connect; use
-the static build and an appropriate web host for a production deployment.
-For example, use `make serve-frontend SITE_PORT=8888 SITE_BIND=0.0.0.0` when
-port 8000 is already in use.
-The container keeps its dependencies in the image or a Docker-managed volume;
-it does not install `node_modules` on the host filesystem. `make site-export` defaults to
-`output/analysis/per_type`, and `SITE_INPUT` selects another per-type output
-directory. For example, `make site-export SITE_INPUT=output/test/analysis/per_type`
-uses local test outputs. Synthetic and test-only results are labelled and are
-not biological findings. The server does not run the analysis or export data.
+The server opens at `http://localhost:8000/`. Set `SITE_PORT` to change the
+port. To serve it to other machines on the network, set `SITE_BIND=0.0.0.0`;
+use a static build and a suitable web host for production. The server does not
+run analysis or export results.
 
-For direct local Node development, `make site-install` remains available and
-uses `npm ci --no-bin-links` for filesystems that cannot create symlinks.
-The containerized targets build the image automatically; `make image-site`
-can build it ahead of time. `make image-site-browser` builds the separate
-Chromium test image.
-
-The dataset page's UMAP is extracted from each study's executed QC notebook.
-Older notebooks without the standalone AIFI L2 figure do not produce that
-image. Regenerate the relevant QC reports, then re-export; `make site-export`
-replaces the existing local export. For example, to refresh all available test
-studies and serve their QC alongside the existing test DE results:
+`make site-export` reads `output/analysis/per_type` by default. Set
+`SITE_INPUT` to use another per-type directory, for example:
 
 ```bash
-make run-test STUDIES=all
 make site-export SITE_INPUT=output/test/analysis/per_type
-make serve-frontend
 ```
 
-`make run-test` reruns the core test workflow and updates its selected-study
-manifest; it does not refit the separate synthetic DE models. Use an explicit
-`STUDIES` selection if only a subset is needed. The dataset page lists the
-studies selected by that run and indicates whether each also has exported DE.
+Exporting replaces `site/public/data` after staging and validating a complete
+release. It does not rerun analysis. Changes to analysis outputs, newly rendered
+QC figures, or newly available clocks require another export. `make site-build`
+validates the current export and creates the static site in `site/dist/`; run
+both targets after changing source results before deploying a static build.
+The build expects to be served from the host root. See
+[the data contract](site/DATA_CONTRACT.md) for asset contents, provenance,
+release validation, and publication considerations.
 
-Browser journey tests use a compact synthetic fixture and build in a temporary
-directory; they do not modify the exported site or run harmonization. The
-browser target builds a separate Docker image with the matching Chromium and
-system libraries, then runs the tests without installing Node or a browser on
-the host:
+For test data, run the relevant workflow first and point `SITE_INPUT` at its
+per-type output. `make site-test-workflow` exercises existing `output/test`
+artifacts without replacing the local export. Browser tests build an isolated
+synthetic release and do not change the export. Useful frontend checks are:
 
 ```bash
+make site-test
 make site-test-browser
+make site-test-workflow
 ```
 
-For local Node development, `make site-browser-install` can still install the
-matching browser under `site/.playwright-browsers/`. The browser tests require
-local loopback access for their temporary static server.
+Use `make site-test-browser-navigation` for navigation and visualization
+journeys or `make site-test-browser-release` for release and loading behavior.
+`make verify` includes frontend checks and the workflow-backed site check.
 
-Shared spacing and interaction styles live in `site/src/styles.css`; plot and
-feature-specific styles live alongside their components. Page widths remain
-feature-specific so that reading pages and visualizations can use the space
-they need.
-
-`make site-test` tests the frontend and export contract in the runtime image;
-`make site-test-browser` tests browser journeys in the browser image with an
-isolated synthetic release. Both run as part of `make verify`. For a focused
-check, use `make site-test-unit SITE_TEST_FILE=src/theme/axisScale.test.ts`,
-`make site-test-browser-navigation` for navigation and visualization journeys,
-or `make site-test-browser-release` for release and failure-mode journeys.
-Use `make site-test-browser-focus SITE_BROWSER_FILTER=composition` to run
-journeys whose names contain a case-insensitive substring; a filter with no
-matches fails. Each browser target builds its own isolated synthetic release.
-The runtime and browser images share the dependency stages; changes to frontend
-source reuse the installed Chromium layer until its dependencies change or the
-Docker cache is cleared.
-`make site-test-workflow` tests the existing `output/test`
-workflow artifacts and also runs after the workflow in `make verify`.
-`make site-build`
-validates the exported release and creates a static deployable build in `site/dist/`.
-See the [static atlas data contract](site/DATA_CONTRACT.md) for release identity,
-asset schemas, provenance, omissions and publication checks. Exporting uses
-existing outputs and never reruns harmonization. Serve the contents of that
-directory from a static web host; the default Vite build expects deployment at
-the host root. Re-export and rebuild after updating the analysis results.
-Frontend dependencies and
-cache, generated exports, and the static build are ignored by Git. A fresh
-checkout can show pipeline results after export. Optional gene annotations and
-curated pathway sets are regenerated from available local sources during export
-and remain ignored by Git. Run `make download-gene-set-inputs` before exporting to
-install the pinned example pathway sets; see [static atlas example pathways](INPUT_FILES.md#static-atlas-example-pathways)
-for provenance, the manual mitochondrial example, and publication guidance.
-The header reports the recorded analysis mode and
-site export date; the dataset and modelling pages display available source context and
-provenance limitations. Review the provenance, permissions and licences of all included assets before
-publishing. The structured JSON assets contain gene-level summaries, model context,
-supported trajectory records and aggregate study fraction diagnostics; they do
-not contain individual-level data or raw counts. Available per-type DE and combined trajectory
-HTML reports are also included and linked from the modelling page through a
-report index generated by the same renderer as the workflow index; they can contain
-sample-level identifiers and diagnostics. Linked auxiliary downloads inside those
-reports are not included. The trajectory views contain the subset selected
-for clustering, not all tested genes. Fraction means describe adult model samples
-and use the reported L1 parent as denominator; they are not fitted age effects.
-For the age plot, each study's adjusted baseline averages model predictions in
-the reference age bin across that study's fitted model cohort. This retains
-mean BMI and the observed proportions of included categorical covariates and
-sites. The displayed overall baseline averages these predictions equally across
-studies for the selected denominator, without weighting by sample counts. OLS
-predictions are not constrained to the 0–1 fraction range. The unadjusted mean
-among reference-bin samples remains separately recorded in the analysis output.
-The forest plot uses the existing per-study model coefficients and confidence
-intervals from `fraction_model_coefficients.tsv`. Rerender DE reports with
-`make render-de-reports` if those files are absent.
-
-The current DE export identifies its tissue as PBMC. Other workflow reports
-and analysis outputs remain available in the workflow output directory.
+Generated exports, dependencies, and `site/dist/` are ignored by Git. Optional
+gene annotations and curated pathway sets are rebuilt during export when their
+local source inputs are available; see [INPUT_FILES.md](INPUT_FILES.md) for
+pathway provenance and setup. Review the release manifest and any linked HTML
+reports before publication: structured assets omit raw counts and per-cell
+identifiers, but reports can contain sample-level details. The report links do
+not include their companion downloads.

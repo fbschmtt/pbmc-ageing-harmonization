@@ -20,13 +20,16 @@
 /** @typedef {{ id: string; label: string; path: string }} SingleCellType */
 /** @typedef {{ schemaVersion: number; cellTypes: SingleCellType[] }} SingleCellIndex */
 /** @typedef {{ study: string; age: number; predictedAge: number; nCellTypes?: number }} ClockPrediction */
-/** @typedef {{ id: string; name: string; description: string; training: { metrics: { n: number; mae: number; rmse: number; r2: number | null }; predictions: ClockPrediction[] }; heldOut: { metrics: { n: number; mae: number; rmse: number; r2: number | null }; predictions: ClockPrediction[] } }} ClockMethod */
-/** @typedef {{ id: string; label: string; scope?: 'cell_type' | 'cross_cell_type'; methods: ClockMethod[] }} ClockCellType */
-/** @typedef {{ schemaVersion: number; releaseId?: string; cellTypes: ClockCellType[] }} ClockIndex */
+/** @typedef {{ n: number; mae: number; rmse: number; r2: number | null }} ClockMetrics */
+/** @typedef {{ id: string; name: string; description: string; asset: string; training: { metrics: ClockMetrics }; heldOut: { metrics: ClockMetrics } }} ClockMethodSummary */
+/** @typedef {{ id: string; name: string; description: string; training: { metrics: ClockMetrics; predictions: ClockPrediction[] }; heldOut: { metrics: ClockMetrics; predictions: ClockPrediction[] } }} ClockMethod */
+/** @typedef {{ schemaVersion: number; releaseId?: string; cellTypeId: string; methodId: string; training: { predictions: ClockPrediction[] }; heldOut: { predictions: ClockPrediction[] } }} ClockModelAsset */
+/** @typedef {{ id: string; label: string; scope?: 'cell_type' | 'cross_cell_type'; methods: ClockMethodSummary[] }} ClockCellType */
+/** @typedef {{ schemaVersion: number; releaseId?: string; ageDomain: [number, number]; cellTypes: ClockCellType[] }} ClockIndex */
 /** @typedef {{ gene: string; effect: number; padj: number | null }} ClusterMarker */
 /** @typedef {{ cluster: string; image: string; fits: { study: string | null; samples: number; meanFraction: number; slopePpPerDecade: number | null }[] }} ClusterFractionDetail */
 /** @typedef {{ schemaVersion: number; cellType: string; nCells: number; nClusters: number; integration: string; image: string; ageDeImage?: string | null; ageDeNote?: string | null; fractionNote?: string | null; fractionHasStudyTrends?: boolean; fractionIncludesZeros?: boolean; fractionDetails?: ClusterFractionDetail[] | null; groups: { cluster: string; higher?: ClusterMarker[]; lower?: ClusterMarker[]; markers?: { gene: string; score: number; padj: number | null }[] }[] }} SingleCell */
-/** @typedef {{ de: DifferentialRelease; trajectory: Atlas; trajectoryMap: TrajectoryMap; composition: FractionIndex; preview: Preview; pathways: { pathwaySets: PathwaySet[] }; metadata: GeneMetadataIndex; singleCell: SingleCell; singleCellIndex: SingleCellIndex; referenceExpression: ReferenceExpression; clock: ClockIndex }} Assets */
+/** @typedef {{ de: DifferentialRelease; trajectory: Atlas; trajectoryMap: TrajectoryMap; composition: FractionIndex; preview: Preview; pathways: { pathwaySets: PathwaySet[] }; metadata: GeneMetadataIndex; singleCell: SingleCell; singleCellIndex: SingleCellIndex; referenceExpression: ReferenceExpression; clock: ClockIndex; clockModel: ClockModelAsset }} Assets */
 
 // Shared runtime contract for published JSON and browser loaders.
 const obj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x)
@@ -38,6 +41,9 @@ const count = (x) => Number.isInteger(x) && x >= 0
 const probability = (x) => num(x) && x >= 0 && x <= 1
 const arr = (x, predicate) => Array.isArray(x) && x.every(predicate)
 const base = (x) => obj(x) && x.schemaVersion === 1
+const clockPrediction = (point) => obj(point) && str(point.study) && num(point.age) && num(point.predictedAge) &&
+  (point.nCellTypes === undefined || count(point.nCellTypes))
+const clockMetrics = (value) => obj(value) && count(value.n) && num(value.mae) && num(value.rmse) && nullableNumber(value.r2)
 const gene = (x) =>
   obj(x) &&
   str(x.gene) &&
@@ -129,14 +135,15 @@ const geneMetadata = (x) =>
   obj(x.goTerms) &&
   ['biologicalProcesses', 'molecularFunctions', 'cellularComponents'].every((k) => arr(x.goTerms[k], term))
 const validators = {
-  clock: (x) => base(x) && arr(x.cellTypes, (cellType) => obj(cellType) && str(cellType.id) && str(cellType.label) &&
-    (cellType.scope === undefined || ['cell_type', 'cross_cell_type'].includes(cellType.scope)) &&
-    arr(cellType.methods, (method) => obj(method) && str(method.id) && str(method.name) && str(method.description) &&
-      ['training', 'heldOut'].every((split) => obj(method[split]) && obj(method[split].metrics) &&
-        count(method[split].metrics.n) && num(method[split].metrics.mae) && num(method[split].metrics.rmse) &&
-        nullableNumber(method[split].metrics.r2) && arr(method[split].predictions, (point) => obj(point) &&
-          str(point.study) && num(point.age) && num(point.predictedAge) &&
-          (point.nCellTypes === undefined || count(point.nCellTypes)))))),
+  clock: (x) => base(x) && Array.isArray(x.ageDomain) && x.ageDomain.length === 2 &&
+    x.ageDomain.every(num) && x.ageDomain[0] < x.ageDomain[1] && arr(x.cellTypes, (cellType) =>
+      obj(cellType) && str(cellType.id) && str(cellType.label) &&
+      (cellType.scope === undefined || ['cell_type', 'cross_cell_type'].includes(cellType.scope)) &&
+      arr(cellType.methods, (method) => obj(method) && str(method.id) && str(method.name) &&
+        str(method.description) && str(method.asset) && method.asset.startsWith('clock-models/') &&
+        ['training', 'heldOut'].every((split) => obj(method[split]) && clockMetrics(method[split].metrics)))),
+  clockModel: (x) => base(x) && str(x.cellTypeId) && str(x.methodId) &&
+    ['training', 'heldOut'].every((split) => obj(x[split]) && arr(x[split].predictions, clockPrediction)),
   singleCellIndex: (x) => base(x) && arr(x.cellTypes, (c) => obj(c) && str(c.id) && str(c.label) && str(c.path)),
   singleCell: (x) => base(x) && str(x.cellType) && count(x.nCells) && count(x.nClusters) &&
     str(x.integration) && str(x.image) && x.image.startsWith('iVBORw0KGgo') &&

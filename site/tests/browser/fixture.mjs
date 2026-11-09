@@ -15,13 +15,17 @@ export async function makeFixture(root) {
     const clockDir = join(input, slug, 'ageing_clock')
     const methods = [
       { method: 'elastic_net', method_name: 'Elastic net', method_description: 'Baseline expression model.' },
+      { method: 'equal_study_elastic_net', method_name: 'Equal-study elastic net', method_description: 'Equal study weighting.' },
+      { method: 'rank_elastic_net', method_name: 'Rank elastic net', method_description: 'Rank-transformed expression.' },
+      { method: 'study_zscore_elastic_net', method_name: 'Study z-score elastic net', method_description: 'Study-normalized expression.' },
       { method: 'age_aware_study_offset_elastic_net', method_name: 'Age-aware study-offset elastic net', method_description: 'Age-aware study adjustment.' },
     ]
     await write(join(clockDir, 'age_clock.json'), JSON.stringify({ kind: 'cell_type_transcriptomic_age_clock', cell_type: label, methods }))
     for (const method of methods) {
       const methodDir = join(clockDir, method.method)
-      const training = 'pseudobulk_id,study,age,predicted_age\nsample-a,Study A,40,42\nsample-b,Study A,60,58\n'
-      const external = `pseudobulk_id,study,age,predicted_age\nsample-c,${externalStudy},35,39\nsample-d,${externalStudy},70,66\n`
+      const offset = methods.indexOf(method) * 0.5
+      const training = `pseudobulk_id,study,age,predicted_age\nsample-a,Study A,40,${42 + offset}\nsample-b,Study A,60,${58 - offset}\n`
+      const external = `pseudobulk_id,study,age,predicted_age\nsample-c,${externalStudy},35,${39 + offset}\nsample-d,${externalStudy},70,${66 - offset}\n`
       await write(join(methodDir, 'cv_oof_predictions.csv'), training)
       await write(join(methodDir, 'external_predictions.csv'), external)
     }
@@ -68,17 +72,29 @@ export async function makeFixture(root) {
           status: 'complete',
           design: '~ age + sex',
           n_samples: 12,
-          study_sample_counts: { study_a: 12 },
+          // The combined metadata includes 13 studies, while the fixture only
+          // supplies per-gene support from three studies. The UI scale must use
+          // the tested count carried by each gene, not this metadata key count.
+          study_sample_counts: Object.fromEntries([
+            ['study_a', 12],
+            ['study_b', 12],
+            ['study_c', 12],
+            ...Array.from({ length: 10 }, (_, index) => [`synthetic_${index + 1}`, 12]),
+          ]),
           results_by_covariate: { age: 'merged.csv' },
         },
-        {
+        ...[
+          ['study_a', 'study.csv'],
+          ['study_b', 'study-b.csv'],
+          ['study_c', 'study-c.csv'],
+        ].map(([study, file]) => ({
           model: 'per_study',
-          study: 'study_a',
+          study,
           status: 'complete',
           design: '~ age',
           n_samples: 8,
-          results_by_covariate: { age: 'study.csv' },
-        },
+          results_by_covariate: { age: file },
+        })),
       ],
     }),
   )
@@ -92,7 +108,15 @@ export async function makeFixture(root) {
   )
   await write(
     join(dir, 'study.csv'),
-    'gene,log2FoldChange,padj,pvalue,lfcSE,baseMean,contrast\nGENE1,0.44,0.004,0.001,0.03,9,per decade\nGENE2,-0.21,0.03,0.02,0.05,19,per decade\n',
+    'gene,log2FoldChange,padj,pvalue,lfcSE,baseMean,contrast\nGENE1,0.44,0.004,0.001,0.03,9,per year\nGENE2,-0.21,0.03,0.02,0.05,19,per year\n',
+  )
+  await write(
+    join(dir, 'study-b.csv'),
+    'gene,log2FoldChange,padj,pvalue,lfcSE,baseMean,contrast\nGENE1,0.44,0.004,0.001,0.03,9,per year\nGENE2,-0.21,0.03,0.02,0.05,19,per year\n',
+  )
+  await write(
+    join(dir, 'study-c.csv'),
+    'gene,log2FoldChange,padj,pvalue,lfcSE,baseMean,contrast\nGENE1,0.44,0.004,0.001,0.03,9,per year\nGENE2,-0.21,0.03,0.02,0.05,19,per year\n',
   )
   await write(
     join(dir, 'fraction_model_diagnostics.tsv'),
@@ -171,6 +195,10 @@ export async function makeFixture(root) {
         join(other, 'study.csv'),
         'gene,log2FoldChange,padj,pvalue,lfcSE,baseMean,contrast\nGENE1,0.61,0.004,0.001,0.03,9,per decade\nGENE2,-0.67,0.03,0.02,0.05,19,per decade\n',
       )
+    await write(
+      join(other, 'reference_expression.csv'),
+      `cell_type,gene,reference_bin,n_studies,n_samples,reference_cpm\n${label},GENE1,20-30,1,10,75\n${label},GENE2,20-30,1,10,25\n`,
+    )
     await write(
       join(other, 'merged.csv'),
       'gene,log2FoldChange,padj,pvalue,lfcSE,baseMean,contrast\nGENE1,0.11,0.01,0.001,0.02,10,per year\nGENE2,-0.22,0.02,0.01,0.04,20,per year\n',

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
+import { CellTypeSelector } from '../../components/CellTypeSelector'
 import { ChoiceMenu } from '../../components/ChoiceMenu'
 import { validAsset, type SingleCell, type SingleCellIndex } from '../../data/contracts.mjs'
 import { fetchReleaseAsset } from '../../data/release'
 import { groupCellTypes } from '../../data/cellTypeHierarchy'
-import { cellTypeColor } from '../../theme/cellTypeColors'
+import { formatNumber } from '../../theme/format'
 import './singleCell.css'
 
 export function SingleCellPage({
@@ -68,15 +69,14 @@ export function SingleCellPage({
 
   return (
     <section className="single-cell-page">
+      <h1 className="visually-hidden">Cell states</h1>
       <header className="single-cell-heading">
-        <div>
-          <p className="eyebrow">Explore the cells</p>
-          <h1>Cell states</h1>
-          <p>Explore local expression patterns, cluster markers, and sample-level cluster fractions.</p>
-        </div>
+        <p className="single-cell-intro">
+          Explore local expression patterns, cluster markers, and sample-level cluster fractions.
+        </p>
         {index && selected && (
           <div className="single-cell-controls">
-            <ChoiceMenu
+            <CellTypeSelector
               label="Cell type"
               value={selected.label}
               groups={groupCellTypes(index.cellTypes.map((item) => item.label)).map((group) => ({
@@ -84,7 +84,6 @@ export function SingleCellPage({
                 options: group.cellTypes.map((type) => ({
                   value: type,
                   label: type,
-                  color: cellTypeColor(type),
                 })),
               }))}
               onChange={onSelectCellType}
@@ -154,31 +153,6 @@ export function SingleCellPage({
           <article className="single-cell-panel atlas-card">
             <div className="single-cell-panel-heading">
               <div>
-                <p className="eyebrow">Age-associated expression</p>
-                <h2>Age-DE genes on UMAP</h2>
-              </div>
-            </div>
-            {data.ageDeImage ? (
-              <img
-                className="single-cell-umap single-cell-age-de-image"
-                src={`data:image/png;base64,${data.ageDeImage}`}
-                alt={`Expression of up to nine significant age-associated genes on the ${data.cellType} UMAP`}
-              />
-            ) : (
-              <p className="single-cell-empty">
-                {data.ageDeNote ??
-                  'No age-associated expression map was exported for this cell type. It requires merged age-DE results with significant genes detected in this cell type.'}
-              </p>
-            )}
-            <p className="single-cell-caption">
-              Expression is shown per cell for genes selected by the sample-level pseudobulk age model; it
-              does not imply cell-level significance.
-            </p>
-          </article>
-
-          <article className="single-cell-panel atlas-card">
-            <div className="single-cell-panel-heading">
-              <div>
                 <p className="eyebrow">Cluster markers</p>
                 <h2>Genes distinguishing clusters</h2>
               </div>
@@ -222,7 +196,7 @@ export function SingleCellPage({
                                 <strong title={marker.gene}>{marker.gene}</strong>
                                 <span>
                                   {marker.effect > 0 ? '+' : ''}
-                                  {marker.effect.toFixed(2)}
+                                  {formatNumber(marker.effect)}
                                 </span>
                               </li>
                             ))}
@@ -242,6 +216,31 @@ export function SingleCellPage({
             )}
             <p className="single-cell-caption">
               Markers describe differences within this cell type, not age associations or causal effects.
+            </p>
+          </article>
+
+          <article className="single-cell-panel atlas-card">
+            <div className="single-cell-panel-heading">
+              <div>
+                <p className="eyebrow">Age-associated expression</p>
+                <h2>Age-DE genes on UMAP</h2>
+              </div>
+            </div>
+            {data.ageDeImage ? (
+              <img
+                className="single-cell-umap single-cell-age-de-image"
+                src={`data:image/png;base64,${data.ageDeImage}`}
+                alt={`Expression of up to nine significant age-associated genes on the ${data.cellType} UMAP`}
+              />
+            ) : (
+              <p className="single-cell-empty">
+                {data.ageDeNote ??
+                  'No age-associated expression map was exported for this cell type. It requires merged age-DE results with significant genes detected in this cell type.'}
+              </p>
+            )}
+            <p className="single-cell-caption">
+              Expression is shown per cell for genes selected by the sample-level pseudobulk age model; it
+              does not imply cell-level significance.
             </p>
           </article>
 
@@ -294,7 +293,7 @@ export function SingleCellPage({
                           <td>
                             {fit.slopePpPerDecade == null
                               ? '—'
-                              : `${fit.slopePpPerDecade > 0 ? '+' : ''}${fit.slopePpPerDecade.toFixed(2)}`}
+                              : `${fit.slopePpPerDecade > 0 ? '+' : ''}${formatNumber(fit.slopePpPerDecade)}`}
                           </td>
                         </tr>
                       ))}

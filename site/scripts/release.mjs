@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { copyFile, mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { gzip, gzipSync } from 'node:zlib'
@@ -17,6 +17,7 @@ import { pantherFilename, pantherRelease, pantherSha256 } from './panther-releas
 import { exportSingleCell } from './export-single-cell.mjs'
 import { exportClocks } from './export-clocks.mjs'
 import { addStudySupport } from './export-study-support.mjs'
+import { writeDifferentialDownload } from './export-de-download.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const gzipAsync = promisify(gzip)
@@ -98,7 +99,7 @@ export async function createRelease(inputPath, targetPath, options = {}) {
           const downloadAsset = `de-downloads/${cell.id}/${model.model}-${model.covariate}.csv`
           const downloadPath = join(stage, downloadAsset)
           await mkdir(dirname(downloadPath), { recursive: true })
-          await copyFile(sourceFile, downloadPath)
+          await writeDifferentialDownload(sourceFile, downloadPath)
           model.downloadAsset = downloadAsset
         }
         if (model.model === 'merged' && model.covariate === 'age') {

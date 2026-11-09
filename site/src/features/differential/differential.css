@@ -114,6 +114,21 @@
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
+.de-expression-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  color: var(--atlas-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.de-expression-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--atlas-teal);
+}
 .de-context .eyebrow {
   margin-top: 16px;
 }

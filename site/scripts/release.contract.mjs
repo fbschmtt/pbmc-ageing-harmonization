@@ -90,13 +90,23 @@ test('release validates and inventories a snapshot; failure preserves previous r
     const clockAsset = release.assets.find((asset) => asset.kind === 'clock')
     assert.ok(clockAsset)
     const clocks = JSON.parse(await readFile(join(target, clockAsset.path), 'utf8'))
+    assert.deepEqual(clocks.ageDomain, [40, 50])
     assert.deepEqual(clocks.cellTypes[0].methods.map((method) => method.id), [
-      'elastic_net', 'age_aware_study_offset_elastic_net',
+      'elastic_net', 'rank_elastic_net', 'age_aware_study_offset_elastic_net',
     ])
+    const modelSummary = clocks.cellTypes[0].methods[0]
+    assert.equal(modelSummary.asset, 'clock-models/monocyte/elastic_net.json')
+    const modelAsset = JSON.parse(await readFile(join(target, modelSummary.asset), 'utf8'))
+    assert.equal(modelAsset.cellTypeId, 'monocyte')
+    assert.equal(modelAsset.methodId, 'elastic_net')
+    assert.equal(modelAsset.training.predictions[0].age, 40)
+    assert.equal(JSON.stringify(modelAsset).includes('private-id'), false)
+    assert.equal(release.assets.find((asset) => asset.path === modelSummary.asset).kind, 'clockModel')
     assert.equal(clocks.cellTypes[1].id, 'cross-cell-type-mean')
     assert.equal(clocks.cellTypes[1].scope, 'cross_cell_type')
-    assert.equal(clocks.cellTypes[1].methods[0].training.predictions[0].nCellTypes, 2)
-    assert.equal(clocks.cellTypes[0].methods[0].training.predictions[0].age, 40)
+    assert.equal(clocks.cellTypes[1].methods[0].training.predictions, undefined)
+    const crossModel = JSON.parse(await readFile(join(target, clocks.cellTypes[1].methods[0].asset), 'utf8'))
+    assert.equal(crossModel.training.predictions[0].nCellTypes, 2)
     assert.equal(JSON.stringify(clocks).includes('private-id'), false)
     assert.equal(JSON.stringify(clocks).includes('private-sample'), false)
     const de = await readFile(join(target, 'de-index.json'), 'utf8')
@@ -111,7 +121,13 @@ test('release validates and inventories a snapshot; failure preserves previous r
     assert.deepEqual(model.records, [])
     assert.equal(model.downloadAsset, 'de-downloads/monocyte/merged-age.csv')
     assert.equal(release.assets.find((asset) => asset.path === model.downloadAsset).kind, 'de_download')
-    assert.match(await readFile(join(target, model.downloadAsset), 'utf8'), /GENE2,0\.2,0\.5/)
+    assert.equal(
+      await readFile(join(target, model.downloadAsset), 'utf8'),
+      '# Contrast: per year\n' +
+        'gene,baseMean,log2FoldChange,lfcSE,pvalue,padj\n' +
+        'GENE1,5,0.1,0.02,0.001,0.01\n' +
+        'GENE2,7,0.2,0.03,0.4,0.5\n',
+    )
     const chunk = JSON.parse(await readFile(join(target, model.recordsAsset), 'utf8'))
     assert.deepEqual(
       chunk.cellTypes[0].models[0].records.map((record) => record.gene),

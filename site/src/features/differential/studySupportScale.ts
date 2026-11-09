@@ -1,4 +1,4 @@
-const viridis = [
+export const viridis = [
   '#440154',
   '#482878',
   '#3e4989',
@@ -11,8 +11,13 @@ const viridis = [
   '#fde725',
 ]
 
+export function viridisColor(normalized: number): string {
+  const bounded = Math.max(0, Math.min(1, normalized))
+  return viridis[Math.round(bounded * (viridis.length - 1))]
+}
+
 export function studySupportColor(significant: number, maximum: number): string {
   if (significant <= 0) return '#b9bdbc'
   const normalized = maximum > 1 ? Math.max(0, Math.min(1, (significant - 1) / (maximum - 1))) : 0
-  return viridis[Math.round(normalized * (viridis.length - 1))]
+  return viridisColor(normalized)
 }

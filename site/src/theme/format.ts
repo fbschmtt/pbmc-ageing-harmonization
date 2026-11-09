@@ -1,5 +1,9 @@
-const cpmFormatter = new Intl.NumberFormat('en', { maximumSignificantDigits: 4 })
+export function formatNumber(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  if (value === 0) return '0'
+  return Math.abs(value) >= 1 ? value.toFixed(2) : value.toPrecision(2)
+}
 
 export function formatCpm(value: number): string {
-  return `${cpmFormatter.format(value)} CPM`
+  return `${formatNumber(value)} CPM`
 }

@@ -15,16 +15,15 @@ type Props<T> = {
   xLabel: string
   ariaLabel: string
   threshold?: number
+  aspectRatio?: 'wide' | 'square'
   className?: string
 }
 
 const negLog10 = (value: number) => -Math.log10(Math.max(value, Number.MIN_VALUE))
 const width = 800,
-  height = 600,
   left = 72,
   right = 772,
-  top = 26,
-  bottom = 542
+  top = 26
 
 export function VolcanoPlot<T>({
   records,
@@ -39,6 +38,7 @@ export function VolcanoPlot<T>({
   xLabel,
   ariaLabel,
   threshold,
+  aspectRatio = 'wide',
   className = '',
 }: Props<T>) {
   if (!records.length)
@@ -48,6 +48,8 @@ export function VolcanoPlot<T>({
     ...records.map((record) => negLog10(adjustedP(record))),
     ...(threshold ? [negLog10(threshold)] : []),
   ])
+  const height = aspectRatio === 'square' ? 800 : 600
+  const bottom = aspectRatio === 'square' ? 730 : 542
   const x = (value: number) => left + ((value + xAxis.extent) / (2 * xAxis.extent)) * (right - left)
   const y = (value: number) => bottom - (value / yAxis.maximum) * (bottom - top)
   const selectedIndex = selected === null ? -1 : records.indexOf(selected)
@@ -95,21 +97,38 @@ export function VolcanoPlot<T>({
         </text>
         {ordered.map(({ record, index }) => {
           const isSelected = index === selectedIndex
+          const isHighlighted = Boolean(highlighted?.(record))
           const style = appearance(record, isSelected)
+          const cx = x(effect(record)), cy = y(negLog10(adjustedP(record))), radius = style.radius ?? 5
           return (
-            <circle
-              key={`${id(record)}-${index}`}
-              cx={x(effect(record))}
-              cy={y(negLog10(adjustedP(record)))}
-              r={style.radius ?? 5}
-              fill={style.fill}
-              stroke={style.stroke ?? 'none'}
-              strokeWidth={style.strokeWidth ?? 0}
-              opacity={style.opacity ?? 1}
-              onClick={() => onSelect(record)}
-            >
-              <title>{title(record)}</title>
-            </circle>
+            <g key={`${id(record)}-${index}`}>
+              {isHighlighted && (
+                <circle
+                  cx={cx}
+                  cy={cy}
+                  r={radius + 2.5}
+                  fill="none"
+                  stroke="var(--atlas-surface)"
+                  strokeWidth="2"
+                  pointerEvents="none"
+                  aria-hidden="true"
+                />
+              )}
+              <circle
+                cx={cx}
+                cy={cy}
+                r={radius}
+                fill={style.fill}
+                stroke={style.stroke ?? 'none'}
+                strokeWidth={style.strokeWidth ?? 0}
+                opacity={style.opacity ?? 1}
+                data-highlighted={isHighlighted ? 'true' : undefined}
+                data-selected={isSelected ? 'true' : undefined}
+                onClick={() => onSelect(record)}
+              >
+                <title>{title(record)}</title>
+              </circle>
+            </g>
           )
         })}
       </svg>

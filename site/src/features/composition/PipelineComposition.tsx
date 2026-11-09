@@ -1,10 +1,10 @@
-import { cellTypeColor } from '../../theme/cellTypeColors'
 import { assetFailureKind, type AssetFailureKind } from '../../data/release'
 import { loadFractions, type FractionIndex } from '../../data/fractions'
 import { useEffect, useState } from 'react'
 import { fractionView } from './fractionView'
 import { FractionAgePlot } from './FractionAgePlot'
 import { FractionForest } from './FractionForest'
+import { CellTypeSelector } from '../../components/CellTypeSelector'
 import { ChoiceMenu } from '../../components/ChoiceMenu'
 import { groupCellTypes } from '../../data/cellTypeHierarchy'
 import './composition.css'
@@ -75,12 +75,12 @@ export function PipelineComposition({
           </button>
         </p>
       )}
-      <ChoiceMenu
+      <CellTypeSelector
         label="Cell type"
         value={selectedCellType}
         groups={groupCellTypes(types).map((group) => ({
           label: group.label,
-          options: group.cellTypes.map((type) => ({ value: type, label: type, color: cellTypeColor(type) })),
+          options: group.cellTypes.map((type) => ({ value: type, label: type })),
         }))}
         onChange={(value) => {
           setCellType(value)

@@ -1,5 +1,5 @@
 import type { TrajectoryRecord } from '../data/atlas'
-import { formatCpm } from '../theme/format'
+import { formatCpm, formatNumber } from '../theme/format'
 import { TrajectoryChart } from './TrajectoryChart'
 import { useEffect, useState } from 'react'
 import { loadCombinedAgeEffect } from '../data/differential'
@@ -9,10 +9,6 @@ export type GeneTypePairActions = {
   onOpenGene?: (record: TrajectoryRecord) => void
   onOpenCellType?: (record: TrajectoryRecord) => void
   onOpenTrajectory?: (record: TrajectoryRecord) => void
-}
-
-function formatP(value: number) {
-  return value < 0.001 ? value.toExponential(1) : value.toFixed(3)
 }
 
 export function GeneTypePairCard({
@@ -79,13 +75,13 @@ export function GeneTypePairCard({
         </div>
         <div>
           <dt>Adjusted p-value</dt>
-          <dd>{formatP(record.adjustedPValue)}</dd>
+          <dd>{formatNumber(record.adjustedPValue)}</dd>
         </div>
         <div>
           <dt>Combined linear age effect per decade</dt>
           <dd>
             {ageEffectLoaded && combinedAgeEffect !== null
-              ? `${combinedAgeEffect * 10 > 0 ? '+' : ''}${(combinedAgeEffect * 10).toFixed(3)} log₂ fold change`
+              ? `${combinedAgeEffect * 10 > 0 ? '+' : ''}${formatNumber(combinedAgeEffect * 10)} log₂ fold change`
               : ageEffectLoaded ? 'Unavailable' : 'Loading…'}
           </dd>
         </div>
@@ -95,7 +91,7 @@ export function GeneTypePairCard({
         </div>
         <div>
           <dt>Mean cells per donor</dt>
-          <dd>{record.meanCellsPerDonor?.toFixed(1) ?? 'Unavailable'}</dd>
+          <dd>{formatNumber(record.meanCellsPerDonor)}</dd>
         </div>
       </dl>
       {(actions.onOpenGene || actions.onOpenCellType || actions.onOpenTrajectory) && (

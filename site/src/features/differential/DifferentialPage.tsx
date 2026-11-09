@@ -1,4 +1,3 @@
-import { cellTypeColor } from '../../theme/cellTypeColors'
 import { assetFailureKind, type AssetFailureKind } from '../../data/release'
 import {
   loadDifferential,
@@ -9,6 +8,7 @@ import {
 import { geneBucket } from '../../data/geneBucket.mjs'
 import type { DifferentialRelease as Release, Gene } from '../../data/contracts.mjs'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { CellTypeSelector } from '../../components/CellTypeSelector'
 import { ChoiceMenu } from '../../components/ChoiceMenu'
 import { VolcanoPlot } from '../../components/VolcanoPlot'
 import { VolcanoExplorer } from '../../components/VolcanoExplorer'
@@ -17,14 +17,13 @@ import { choosePoint } from '../../data/pointSelection'
 import { parseGeneSet } from '../../data/geneSet'
 import type { PathwaySet } from '../../data/pathways'
 import { visualColors } from '../../theme/visualEncoding'
-import { formatCpm } from '../../theme/format'
+import { formatCpm, formatNumber } from '../../theme/format'
 import { defaultModelId, groupModels, modelLabel } from './modelSelection'
 import { filterGenes, hasPlottableEstimate, initialCell, visibleGenes } from './differentialView'
-import { studySupportColor } from './studySupportScale'
+import { studySupportColor, viridisColor } from './studySupportScale'
 import { GeneAgePreview } from './GeneAgePreview'
 import './differential.css'
 
-const fmt = (value: number | null | undefined) => (value == null ? '—' : value.toPrecision(3))
 const missingSupportColor = '#b9bdbc'
 const supportColor = (support: Gene['studySupport'], maximum: number) =>
   support ? studySupportColor(support.significant, maximum) : missingSupportColor
@@ -73,6 +72,7 @@ export function DifferentialPage({
   const [modelFailure, setModelFailure] = useState<AssetFailureKind | null>(null)
   const [lookupFailure, setLookupFailure] = useState(false)
   const [referenceExpression, setReferenceExpression] = useState<ReferenceExpression | null>(null)
+  const [colorPreference, setColorPreference] = useState<{ key: string; enabled: boolean } | null>(null)
   useEffect(() => {
     let active = true
     loadDifferential()
@@ -250,10 +250,37 @@ export function DifferentialPage({
     (record) => record.gene === preferredGene,
   )
   const highlightedCount = points.filter((record) => geneSet.has(record.gene.toUpperCase())).length
-  const supportMaximum = points.reduce(
-    (maximum, record) => Math.max(maximum, record.studySupport?.tested ?? 0),
-    Math.max(1, Object.keys(model?.studies ?? {}).length),
+  const hasStudySupport = points.some((record) => record.studySupport != null)
+  const supportMaximum = Math.max(
+    1,
+    ...points.flatMap((record) => record.studySupport ? [record.studySupport.tested] : []),
   )
+  const referenceExpressionValues = Object.values(referenceExpression?.genes ?? {})
+    .filter((gene) => Number.isFinite(gene.cpm) && gene.cpm >= 0)
+    .map((gene) => Math.log2(gene.cpm + 1))
+  const expressionMinimum = referenceExpressionValues.length ? Math.min(...referenceExpressionValues) : 0
+  const expressionMaximum = referenceExpressionValues.length ? Math.max(...referenceExpressionValues) : 0
+  const colorPreferenceKey = `${cellId}:${modelId}`
+  const colorByReferenceExpression = colorPreference?.key === colorPreferenceKey
+    ? colorPreference.enabled
+    : !hasStudySupport
+  const referenceExpressionColor = (gene: string) => {
+    const cpm = referenceExpression?.genes[gene]?.cpm
+    if (cpm == null || !Number.isFinite(cpm) || cpm < 0) return missingSupportColor
+    const value = Math.log2(cpm + 1)
+    const normalized = expressionMaximum > expressionMinimum
+      ? (value - expressionMinimum) / (expressionMaximum - expressionMinimum)
+      : 0.5
+    return viridisColor(normalized)
+  }
+  const pointColorLabel = (record: Gene) =>
+    colorByReferenceExpression
+      ? referenceExpression?.genes[record.gene]
+        ? `log₂(reference-bin CPM + 1): ${formatNumber(Math.log2(referenceExpression.genes[record.gene].cpm + 1))}`
+        : 'Reference expression unavailable'
+      : hasStudySupport
+        ? supportLabel(record.studySupport)
+        : 'Study support unavailable'
   const combinedDownload =
     model && (model.model === 'merged' || model.model === 'combined') && model.downloadAsset
       ? model.downloadAsset
@@ -296,7 +323,7 @@ export function DifferentialPage({
         controls={
           <>
             <p className="eyebrow">Explore data</p>
-            <ChoiceMenu
+            <CellTypeSelector
               label="Cell type"
               value={cellId}
               groups={groupCellTypes([...new Set(release.cellTypes.map((item) => item.label))]).map(
@@ -305,7 +332,7 @@ export function DifferentialPage({
                   options: group.cellTypes.flatMap((label) =>
                     release.cellTypes
                       .filter((item) => item.label === label)
-                      .map((item) => ({ value: item.id, label: item.label, color: cellTypeColor(item.label) })),
+                      .map((item) => ({ value: item.id, label: item.label })),
                   ),
                 }),
               )}
@@ -341,7 +368,7 @@ export function DifferentialPage({
               )}
               <p>
                 {combinedDownload
-                  ? `Combined ${model?.covariate} results for ${cell.label}.`
+                  ? `Combined ${model?.covariate} results for ${cell.label}. The CSV starts with # metadata lines; skip them to read the table in software.`
                   : model && (model.model === 'merged' || model.model === 'combined')
                     ? 'A download is not available for this result in the current release.'
                     : 'Downloads are available for combined models only.'}
@@ -391,6 +418,7 @@ export function DifferentialPage({
           onSelectPathway,
         }}
         title="Volcano plot"
+        showTitle={false}
         descriptionPlacement="below"
         legendPlacement="below"
         description={
@@ -402,8 +430,11 @@ export function DifferentialPage({
                 retrieve other results.
               </p>
               <p>
-                Point color counts studies with adjusted p &lt; 0.05 for the same contrast, regardless of
-                direction. Each gene’s tooltip gives significant and tested study counts.
+                {colorByReferenceExpression
+                  ? 'Point color shows log₂(reference-bin CPM + 1). Genes without a reference expression value are gray.'
+                  : hasStudySupport
+                    ? 'Point color counts studies with adjusted p < 0.05 for the same contrast, regardless of direction. Each gene’s tooltip gives significant and tested study counts.'
+                    : 'Study support is unavailable for this model, so points are gray.'}
               </p>
               {geneSet.size > 0 && (
                 <p>
@@ -418,13 +449,38 @@ export function DifferentialPage({
         }
         legend={
           <>
-            <span className="de-support-legend" aria-label="Number of studies with a significant result">
-              <span className="de-support-label">Significant studies</span>
-              <span className="de-support-gradient" aria-hidden="true" />
-              <span className="de-support-endpoints"><span>1</span><span>{supportMaximum}</span></span>
-            </span>
-            <span className="de-support-zero"><i />0</span>
-            <span className="de-support-unavailable"><i />Not available</span>
+            {colorByReferenceExpression ? (
+              <>
+                <span className="de-support-legend" aria-label="Log base two reference-bin CPM plus one">
+                  <span className="de-support-label">log₂(reference-bin CPM + 1)</span>
+                  <span className="de-support-scale">
+                    <span className="de-support-gradient" aria-hidden="true" />
+                    <span className="de-support-endpoints">
+                      <span>{formatNumber(expressionMinimum)}</span>
+                      <span aria-hidden="true">–</span>
+                      <span>{formatNumber(expressionMaximum)}</span>
+                    </span>
+                  </span>
+                </span>
+                {points.some((record) => referenceExpression?.genes[record.gene] == null) && (
+                  <span className="de-support-unavailable"><i />Not available</span>
+                )}
+              </>
+            ) : hasStudySupport ? (
+              <>
+                <span className="de-support-legend" aria-label="Number of studies with a significant result">
+                  <span className="de-support-label">Significant studies</span>
+                  <span className="de-support-scale">
+                    <span className="de-support-gradient" aria-hidden="true" />
+                    <span className="de-support-endpoints"><span>1</span><span aria-hidden="true">–</span><span>{supportMaximum}</span></span>
+                  </span>
+                </span>
+                <span className="de-support-zero"><i />0</span>
+                {points.some((record) => record.studySupport == null) && (
+                  <span className="de-support-unavailable"><i />Not available</span>
+                )}
+              </>
+            ) : <span className="de-support-unavailable"><i />Study support unavailable</span>}
             <span>
               <i className="volcano-legend-pathway" /> Gene set
             </span>
@@ -447,14 +503,20 @@ export function DifferentialPage({
               effect={(record) => record.effect * ageEffectScale}
               adjustedP={(record) => record.padj}
               highlighted={(record) => geneSet.has(record.gene.toUpperCase())}
+              aspectRatio="square"
+              className="de-volcano-plot"
               title={(record) =>
-                `${record.gene}: effect ${fmt(record.effect * ageEffectScale)}${ageEffectScale === 10 ? ' log₂ fold change per decade' : ''}, adjusted p ${fmt(record.padj)}; ${supportLabel(record.studySupport)}`
+                `${record.gene}: effect ${formatNumber(record.effect * ageEffectScale)}${ageEffectScale === 10 ? ' log₂ fold change per decade' : ''}, adjusted p ${formatNumber(record.padj)}; ${pointColorLabel(record)}`
               }
               xLabel={ageEffectScale === 10 ? 'Combined age effect estimates (log₂ fold change per decade)' : 'Effect estimate (log₂ fold change)'}
               threshold={0.05}
               ariaLabel="Volcano plot of effect versus negative log ten adjusted p-value. Search for a gene to select it with a keyboard."
               appearance={(record, isSelected) => ({
-                fill: supportColor(record.studySupport, supportMaximum),
+                fill: colorByReferenceExpression
+                  ? referenceExpressionColor(record.gene)
+                  : hasStudySupport
+                    ? supportColor(record.studySupport, supportMaximum)
+                    : missingSupportColor,
                 stroke: isSelected
                   ? visualColors.selected
                   : geneSet.has(record.gene.toUpperCase())
@@ -463,7 +525,7 @@ export function DifferentialPage({
                 strokeWidth: isSelected
                   ? 2.5
                   : geneSet.has(record.gene.toUpperCase())
-                    ? 1.5
+                    ? 2.5
                     : 0,
                 radius: isSelected ? 9.5 : geneSet.has(record.gene.toUpperCase()) ? 7 : 5.5,
                 opacity:
@@ -503,18 +565,30 @@ export function DifferentialPage({
                   <p className="eyebrow">Selected model estimate</p>
                   <dl className="de-statistics">
                     <dt>{ageEffectScale === 10 ? 'Log₂ fold change per decade' : 'Log₂ fold change'}</dt>
-                    <dd>{fmt(selected.effect * ageEffectScale)}</dd>
+                    <dd>{formatNumber(selected.effect * ageEffectScale)}</dd>
                     <dt>Adjusted p-value</dt>
-                    <dd>{fmt(selected.padj)}</dd>
+                    <dd>{formatNumber(selected.padj)}</dd>
                     <dt>Study support</dt>
                     <dd>{supportLabel(selected.studySupport)}</dd>
                     <dt>{ageEffectScale === 10 ? 'Standard error per decade' : 'Standard error'}</dt>
-                    <dd>{fmt(selected.se === null ? null : selected.se * ageEffectScale)}</dd>
+                    <dd>{formatNumber(selected.se === null ? null : selected.se * ageEffectScale)}</dd>
                     <dt>Reference-bin expression (CPM)</dt>
                     <dd>
                       {referenceExpression?.genes[selected.gene]
                         ? formatCpm(referenceExpression.genes[selected.gene].cpm)
                         : 'Unavailable'}
+                      <label className="de-expression-toggle" title="Color points by reference expression">
+                        <input
+                          type="checkbox"
+                          aria-label="Color points by reference expression"
+                          checked={colorByReferenceExpression}
+                          disabled={!referenceExpression}
+                          onChange={(event) =>
+                            setColorPreference({ key: colorPreferenceKey, enabled: event.target.checked })
+                          }
+                        />
+                        <span>Color</span>
+                      </label>
                     </dd>
                   </dl>
                   <button

@@ -1,5 +1,6 @@
 import { loadAgePreview, type Bin, type Preview } from '../../data/agePreview'
 import { visualColors } from '../../theme/visualEncoding'
+import { formatNumber } from '../../theme/format'
 import { useEffect, useState } from 'react'
 
 export function GeneAgePreview({
@@ -98,7 +99,7 @@ export function GeneAgePreview({
             fill={visualColors.brain}
           >
             <title>
-              {item.bin}: {item.effect.toFixed(3)} log₂ fold change
+              {item.bin}: {formatNumber(item.effect)} log₂ fold change
             </title>
           </circle>
         ))}

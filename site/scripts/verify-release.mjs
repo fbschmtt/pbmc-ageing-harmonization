@@ -4,6 +4,7 @@ import { isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
 import { validAsset } from '../src/data/contracts.mjs'
+import { clockModelAssetPath } from './clock-assets.mjs'
 import { hashFile } from './release-sources.mjs'
 
 export async function verifyRelease(directory) {
@@ -142,13 +143,33 @@ export async function verifyRelease(directory) {
   if (!seen.has('de-index.json')) throw new Error('Missing DE asset')
   const de = parsed.get('de-index.json')
   const clocks = parsed.get('clock-data.json')
+  if (!clocks && manifest.assets.some((asset) => asset.kind === 'clockModel'))
+    throw new Error('Clock model assets are missing their index')
   if (clocks) {
     const clockAsset = manifest.assets.find((asset) => asset.path === 'clock-data.json')
-    if (clockAsset?.kind !== 'clock' || clocks.cellTypes.some((cell) =>
-      cell.scope === 'cross_cell_type'
+    const referencedModels = new Set()
+    const clockIds = new Set()
+    if (clockAsset?.kind !== 'clock') throw new Error('Invalid clock index asset')
+    for (const cell of clocks.cellTypes) {
+      if (clockIds.has(cell.id) || (cell.scope === 'cross_cell_type'
         ? cell.id !== 'cross-cell-type-mean'
         : !de.cellTypes.some((item) => item.id === cell.id && item.label === cell.label)))
-      throw new Error('Clock results reference an unknown cell type')
+        throw new Error('Clock results reference an unknown cell type')
+      clockIds.add(cell.id)
+      const methodIds = new Set()
+      for (const method of cell.methods) {
+        const expectedPath = clockModelAssetPath(cell.id, method.id)
+        const modelAsset = manifest.assets.find((asset) => asset.path === method.asset)
+        const model = parsed.get(method.asset)
+        if (methodIds.has(method.id) || method.asset !== expectedPath || modelAsset?.kind !== 'clockModel' ||
+            !model || model.cellTypeId !== cell.id || model.methodId !== method.id)
+          throw new Error(`Clock results reference an invalid model: ${cell.id}/${method.id}`)
+        methodIds.add(method.id)
+        referencedModels.add(method.asset)
+      }
+    }
+    if (manifest.assets.some((asset) => asset.kind === 'clockModel' && !referencedModels.has(asset.path)))
+      throw new Error('Unreferenced clock model asset')
   }
   const labels = new Set(),
     ids = new Set()

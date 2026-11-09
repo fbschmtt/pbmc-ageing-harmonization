@@ -49,8 +49,9 @@ a local cleanup list and is not a browser data asset.
 | Asset | Meaning and key fields |
 |---|---|
 | `de-index.json` and `de-models/*.json` | The index lists models and points to a default chunk containing adjusted p < 0.05 plus gene lookup chunks for all other records. A complete gene symbol retrieves its lookup chunk. `effect` is log2 fold change; `padj` and `pvalue` are probabilities, `se` is effect standard error, and `baseMean` is PyDESeq2’s mean size-factor-normalized count. `studySupport`, when available, counts per-study results for the same covariate and contrast with adjusted p < 0.05 and records the number with a finite adjusted p-value. The count ignores effect direction; studies with missing results or adjusted p-values are not counted as tested. It is descriptive, and per-study models can have different covariate adjustments. Null numeric values mean no finite estimate was supplied. |
-| `clock-data.json` | Optional baseline and most-advanced available clock predictions and metrics for each cell type, plus same-method equal-weight mean predictions across cell types when available. Training predictions are leave-one-study-out; held-out predictions come from studies excluded from fitting and tuning. The cross-type mean includes donors with predictions from at least two types and consistent study/age metadata. Donor identifiers and model coefficients are not exported. |
+| `clock-data.json` and `clock-models/<cell-type>/<method>.json` | The index lists every available clock method for each cell type in baseline-to-more-advanced order, includes performance metrics and a shared age-axis domain, and points to one prediction asset per method. The browser fetches prediction assets only when a method is selected. Training predictions are leave-one-study-out; held-out predictions come from studies excluded from fitting and tuning. Cross-type mean methods include donors with predictions from at least two types and consistent study/age metadata. Published points contain study, age and predicted age (plus the number of cell types for means); donor identifiers and model coefficients are not exported. |
 | `reference-expression/<cell-type>.json` | Study-balanced CPM for genes with reference-bin pseudobulk support, with the reference bin, method, and contributing sample and study counts. CPM is normalized expression, not an absolute molecule count. |
+| `de-downloads/<cell-type>/<model>-<covariate>.csv` | Combined-model gene-level differential-expression results. Available statistic columns are `gene`, `baseMean`, `log2FoldChange`, `lfcSE`, `stat`, `pvalue`, and `padj`. `#` metadata lines precede the CSV header with cell type, model, scope, analysis mode, covariate, contrast, design, sample counts, and any interpretation warning. Study and site sample-count maps identify the included studies and sites, so separate included-name lists are omitted. CSV does not standardize comments; programmatic readers must skip lines beginning with `#`. |
 | `de-previews/<cell-type>.svg` | Static preview of the merged age-model volcano plot, shown while the interactive DE records load. |
 | `age-previews/<slug>.json` and gene chunks | Age-bin effects from the separate combined age-bin model are partitioned by gene. `effect` is log2 fold change relative to `referenceBin`; null denotes a missing estimate. |
 | `pipeline-trajectory-map.json` | Compact significant-point coordinates and labels for the global map. Full seven-bin profiles are fetched from `trajectory-details/<gene-bucket>.json` when a point or gene needs detail. |
@@ -64,6 +65,24 @@ a local cleanup list and is not a browser data asset.
 | `reports/<release-id>/harmonization/harmonization_qc/<study>/report.html` | Available study QC reports, discovered from the harmonization output and linked on the datasets page. These may contain sample-level information; review them before publication. |
 | `images/<release-id>/studies/<study>-umap.png` | The standalone AIFI L2 UMAP from the study QC notebook, with a transparent background. Older QC notebooks without this figure do not produce a UMAP asset; rerender the study report to include it. |
 | `images/<release-id>/studies/<study>-heatmap.png` | The study-label versus AIFI L2 comparison extracted from the study QC notebook, with a transparent background, when available. |
+
+## Browser display semantics
+
+The differential-expression view colors points by `studySupport.significant`;
+zero is gray, and the color scale's upper bound is the largest `tested` count
+among the plotted genes. Missing support remains distinct from zero. The
+reference-expression switch uses the study-balanced CPM in
+`reference-expression/<cell-type>.json`, transformed as log₂(CPM + 1), and
+scales to the range across available genes in that asset, independent of the
+current model's plotted subset. These color choices do not alter the published
+values. Shared estimate formatting uses two decimal places for absolute values
+of at least one and two significant digits below one; plot axes can use their
+own tick formatting. Downloaded CSV statistics keep their source precision.
+
+`clock-data.json` carries one age domain shared by the available cell types and
+methods. Each method's summary metrics are in that index, while its predictions
+are in a separate asset fetched when selected. This keeps the plot axes fixed
+and avoids loading unselected prediction sets.
 
 The selected cell type's combined age-model records are preloaded on startup
 (Naive CD8 T cell on a fresh session), along with records for up to five other

@@ -19,6 +19,7 @@ export function VolcanoExplorer({
   legend,
   plot,
   detail,
+  showTitle = true,
   descriptionPlacement = 'top',
   legendPlacement = 'top',
 }: {
@@ -29,6 +30,7 @@ export function VolcanoExplorer({
   legend: ReactNode
   plot: ReactNode
   detail: ReactNode
+  showTitle?: boolean
   descriptionPlacement?: 'top' | 'below'
   legendPlacement?: 'top' | 'below'
 }) {
@@ -56,7 +58,7 @@ export function VolcanoExplorer({
       </aside>
       <div className="volcano-explorer-main">
         <p className="eyebrow">Visualise</p>
-        <h2>{title}</h2>
+        {showTitle && <h2>{title}</h2>}
         {descriptionPlacement === 'top' && (
           <div className="volcano-explorer-description">{description}</div>
         )}

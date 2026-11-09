@@ -68,6 +68,14 @@ const chooseMenu = async (page, label, option) => {
 const assertMenu = async (page, label, value) => {
   assert.equal(await menuTrigger(page, label).getAttribute('aria-label'), `${label}: ${value}`)
 }
+const assertLegendEndpointAlignment = async (page) => {
+  const bar = await page.locator('.de-support-gradient').boundingBox()
+  const low = await page.locator('.de-support-endpoints span').first().boundingBox()
+  const high = await page.locator('.de-support-endpoints span').last().boundingBox()
+  assert.ok(bar && low && high)
+  assert.ok(Math.abs(low.x - bar.x) < 2, 'Lower legend value should align to the left end of the color bar')
+  assert.ok(Math.abs(high.x + high.width - bar.x - bar.width) < 2, 'Upper legend value should align to the right end of the color bar')
+}
 const clickPoint = async (plot, titleText) => {
   const points = plot.locator('circle')
   const index = await points.evaluateAll((circles, fragment) =>
@@ -139,7 +147,16 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         assert.equal(otherPaths.some(wasRequested), false, 'Per-study model was prefetched')
         await choosePageFromGroup(page, 'Differential expression', 'By cell type')
         await visible(page.locator('.de-statistics'))
-        await visible(page.getByText('123.4 CPM', { exact: false }))
+        const volcano = page.locator('.de-volcano-plot')
+        const volcanoBox = await volcano.boundingBox()
+        assert.ok(volcanoBox)
+        assert.ok(Math.abs(volcanoBox.width - volcanoBox.height) < 2)
+        assert.ok(volcanoBox.height <= page.viewportSize().height * 0.7)
+        assert.equal(
+          await page.locator('.de-statistics dt').first().evaluate((node) => getComputedStyle(node).overflowWrap),
+          'normal',
+        )
+        await visible(page.getByText('123.40 CPM', { exact: false }))
         assert.equal(await page.getByText('Mean normalized count', { exact: false }).count(), 0)
         await visible(page.getByRole('link', { name: 'Download DEG results', exact: true }))
         assert.equal(await page.locator('.volcano-explorer-gene-set').evaluate((node) => node.open), true)
@@ -148,12 +165,12 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         assert.ok(requests.some((path) => path.includes('/data/de-models/') && path.endsWith('.gz.bin')))
         await chooseMenu(page, 'Analysis', 'study_a · Age (per decade)')
         await page.locator('.volcano-explorer-about > summary').click()
-        await visible(page.getByText('Effect: age · per decade.', { exact: false }))
+        await visible(page.getByText('Effect: age · per year.', { exact: false }))
         assert.equal(await page.getByRole('link', { name: 'Download DEG results', exact: true }).count(), 0)
         assert.equal(wasRequested(other.recordsAsset), true, 'Selected model was not fetched')
-        await visible(page.getByText('1 of 1 studies significant', { exact: true }))
+        await visible(page.getByText('3 of 3 studies significant', { exact: true }))
         assert.ok((await page.locator('svg[aria-label^="Volcano plot"] title').allTextContents())
-          .some((title) => title.includes('1 of 1 studies significant')))
+          .some((title) => title.includes('3 of 3 studies significant')))
       } finally {
         await context.close()
       }
@@ -265,7 +282,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         await visible(page.getByRole('heading', { name: 'GENE3', exact: true }))
         const statistics = page.locator('.de-statistics dd')
         await visible(statistics.nth(0).filter({ hasText: '2.30' }))
-        await visible(statistics.nth(1).filter({ hasText: '0.500' }))
+        await visible(statistics.nth(1).filter({ hasText: '0.50' }))
         await visible(statistics.nth(4).filter({ hasText: 'Unavailable' }))
         const plot = page.locator('svg[aria-label^="Volcano plot"]')
         await clickPoint(plot, 'GENE1: effect')
@@ -275,6 +292,60 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
             .filter((circle) => circle.getAttribute('stroke') === '#b5453c')
           return selected.length === 1 && selected[0].querySelector('title')?.textContent?.startsWith('GENE2:')
         })
+      } finally {
+        await context.close()
+      }
+    })
+
+    await runJourney('navigation', 'toggles volcano colors between expression and study support', async () => {
+      const context = await browser.newContext()
+      try {
+        const page = await context.newPage()
+        await openApp(page, served.url)
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
+        const colorSwitch = page.getByLabel('Color points by reference expression')
+        await visible(colorSwitch)
+        assert.equal(await colorSwitch.isChecked(), false)
+        await visible(page.getByText('Significant studies', { exact: true }))
+        await visible(page.locator('.de-statistics').getByText('3 of 3 studies significant'))
+        await visible(page.locator('.de-statistics').getByText('123.40 CPM'))
+        assert.deepEqual(await page.locator('.de-support-endpoints span').allTextContents(), ['1', '–', '3'])
+        await page.getByLabel('Highlight genes').fill('GENE1')
+        await visible(page.locator('.de-volcano-plot circle[data-highlighted="true"]'))
+        const pointOrder = await page.locator('.de-volcano-plot g').evaluateAll((groups) => groups
+          .map((group) => {
+            const point = group.querySelector('circle > title')?.textContent
+            return point ? {
+              highlighted: group.querySelector('circle[data-highlighted="true"]') !== null,
+              selected: group.querySelector('circle[data-selected="true"]') !== null,
+            } : null
+          })
+          .filter(Boolean))
+        const highlightedIndices = pointOrder.flatMap((point, index) => point.highlighted ? [index] : [])
+        const backgroundIndices = pointOrder.flatMap((point, index) => point.highlighted ? [] : [index])
+        assert.ok(highlightedIndices.length > 0)
+        assert.ok(Math.min(...highlightedIndices) > Math.max(...backgroundIndices), 'Gene-set points should be drawn above other points')
+        assert.equal(pointOrder.at(-1).selected, true, 'The selected point should remain on top')
+        assert.ok(await page.locator('.de-volcano-plot circle[aria-hidden="true"]').count() >= highlightedIndices.length)
+        await colorSwitch.check()
+        await visible(page.locator('.de-support-label').filter({ hasText: 'log₂(reference-bin CPM + 1)' }))
+        await visible(page.locator('.de-statistics').getByText('3 of 3 studies significant'))
+        await visible(page.locator('.de-statistics').getByText('123.40 CPM'))
+        assert.deepEqual(await page.locator('.de-support-endpoints span').allTextContents(), ['5.85', '–', '6.96'])
+        await assertLegendEndpointAlignment(page)
+        await colorSwitch.uncheck()
+        await visible(page.getByText('Significant studies', { exact: true }))
+        await assertLegendEndpointAlignment(page)
+        await chooseMenu(page, 'Cell type', 'Naive CD4 T cell')
+        await chooseMenu(page, 'Analysis', 'Combined · Age (per decade)')
+        await visible(page.locator('.de-volcano-plot circle').first())
+        await visible(page.locator('.de-support-label').filter({ hasText: 'log₂(reference-bin CPM + 1)' }))
+        assert.equal(await page.getByLabel('Color points by reference expression').isChecked(), true)
+        assert.equal(await page.getByText('Significant studies', { exact: true }).count(), 0)
+        assert.deepEqual(await page.locator('.de-support-endpoints span').allTextContents(), ['4.70', '–', '6.25'])
+        assert.equal(await page.getByRole('heading', { name: 'Volcano plot', exact: true }).count(), 0)
+        const pointFill = await page.locator('.de-volcano-plot circle').first().getAttribute('fill')
+        assert.notEqual(pointFill, '#b9bdbc')
       } finally {
         await context.close()
       }
@@ -332,20 +403,57 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
+        const modelRequests = []
+        page.on('request', (request) => {
+          const url = new URL(request.url())
+          if (url.pathname.includes('/data/clock-models/')) modelRequests.push(url.pathname)
+        })
         await openApp(page, served.url)
+        assert.equal(modelRequests.length, 0, 'Clock model records should not load before opening the clock page')
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
+        await chooseMenu(page, 'Cell type', 'Naive CD4 T cell')
         await choosePageFromGroup(page, 'More age analysis', 'Transcriptomic clocks')
         await visible(page.getByRole('heading', { name: 'Predicting age from gene expression' }))
+        await visible(page.getByLabel('Cell type: Naive CD4 T cell'))
+        assert.equal(
+          await page.getByLabel('Cell type: Naive CD4 T cell').locator('.choice-color').evaluate((dot) => getComputedStyle(dot).backgroundColor),
+          'rgb(89, 127, 198)',
+        )
+        await visible(page.getByRole('heading', { name: 'Age-aware study-offset elastic net' }))
         await page.locator('.clock-method-card').first().waitFor({ state: 'visible' })
-        assert.equal(await page.locator('.clock-method-card').count(), 2)
-        assert.equal(await page.locator('.clock-plot svg').count(), 4)
+        assert.equal(await page.locator('.clock-method-card').count(), 1)
+        assert.equal(await page.locator('.clock-plot svg').count(), 2)
+        assert.equal(new Set(modelRequests).size, 1, 'Only the selected model should load its point data')
+        assert.equal(await menuTrigger(page, 'Clock model').getAttribute('aria-label'), 'Clock model: Age-aware study-offset elastic net')
+        await menuTrigger(page, 'Clock model').click()
+        assert.deepEqual(
+          await page.locator('.clock-model-select [role="menuitemradio"]').evaluateAll((buttons) =>
+            buttons.map((button) => button.querySelector('span')?.textContent?.trim())),
+          ['Elastic net', 'Equal-study elastic net', 'Rank elastic net', 'Study z-score elastic net', 'Age-aware study-offset elastic net'],
+        )
+        await page.keyboard.press('Escape')
+        const viewportWidth = page.viewportSize().width
+        const clockCard = await page.locator('.clock-method-card').first().boundingBox()
+        const clockIntro = await page.locator('.clock-intro').boundingBox()
+        assert.ok(clockCard && clockCard.width > viewportWidth * 0.75, 'Clock cards should use the wide centered content area')
+        assert.ok(clockCard && Math.abs(clockCard.x + clockCard.width / 2 - viewportWidth / 2) < 2, 'Clock cards should be centered')
+        assert.ok(clockIntro && clockIntro.width > 600, 'Clock introduction should not remain in a narrow text column')
         assert.equal(await page.locator('.clock-plot svg').first().evaluate((svg) => getComputedStyle(svg).backgroundColor), 'rgba(0, 0, 0, 0)')
-        await page.getByLabel('Cell type').selectOption('cross-cell-type-mean')
+        const axisTicks = await page.locator('.clock-plot svg').first().locator('.clock-tick').allTextContents()
+        await chooseMenu(page, 'Clock model', 'Elastic net')
+        await visible(page.getByRole('heading', { name: 'Elastic net', exact: true }))
+        assert.deepEqual(await page.locator('.clock-plot svg').first().locator('.clock-tick').allTextContents(), axisTicks)
+        assert.equal(new Set(modelRequests).size, 2, 'Changing models should fetch only the newly selected model')
+        await chooseMenu(page, 'Cell type', 'Across cell types · mean clock')
         await visible(page.getByText('Cross-cell-type ensemble', { exact: true }))
         await visible(page.getByRole('heading', { name: 'Elastic net · mean across cell types' }))
         assert.equal(await page.locator('.clock-method-card').count(), 1)
         assert.equal(await page.locator('.clock-plot svg').count(), 2)
-        await page.getByLabel('Cell type').selectOption('cd14-monocyte')
-        assert.equal(await page.locator('.clock-method-card').count(), 2)
+        await chooseMenu(page, 'Cell type', 'CD14 monocyte')
+        await visible(page.getByRole('heading', { name: 'Age-aware study-offset elastic net', exact: true }))
+        assert.equal(await page.locator('.clock-method-card').count(), 1)
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
+        assert.equal(await menuTrigger(page, 'Cell type').getAttribute('aria-label'), 'Cell type: CD14 monocyte')
       } finally {
         await context.close()
       }
@@ -367,8 +475,8 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
           ),
           [
             'Clusters in context',
-            'Age-DE genes on UMAP',
             'Genes distinguishing clusters',
+            'Age-DE genes on UMAP',
             'Cluster 0: fraction across age',
           ],
         )
@@ -458,11 +566,11 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         await visible(page.getByText('Synthetic fixture: not biological evidence.'))
         await chooseMenu(page, 'Analysis', 'study_a · Age (per decade)')
         await page.locator('.volcano-explorer-about > summary').click()
-        await visible(page.getByText('Effect: age · per decade.', { exact: false }))
+        await visible(page.getByText('Effect: age · per year.', { exact: false }))
         await page.getByLabel('Search genes').fill('GENE2')
         await chooseMenu(page, 'Matching genes (1)', 'GENE2')
         await visible(page.getByRole('heading', { name: 'GENE2', exact: true }))
-        await visible(page.locator('.de-statistics dd').first().filter({ hasText: '-0.210' }))
+        await visible(page.locator('.de-statistics dd').first().filter({ hasText: '-2.10' }))
         await choosePageFromGroup(page, 'Differential expression', 'By gene')
         await visible(page.locator('.profiles-page'))
         assert.equal(await page.getByLabel('Gene symbol').inputValue(), 'GENE2')
@@ -621,14 +729,14 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
           await assertMenu(page, 'Analysis', 'study_a · Age (per decade)')
           await page.getByLabel('Search genes').fill('GENE2')
           await chooseMenu(page, 'Matching genes (1)', 'GENE2')
-          await visible(page.locator('.de-statistics dd').first().filter({ hasText: '-0.670' }))
+          await visible(page.locator('.de-statistics dd').first().filter({ hasText: '-0.67' }))
           await chooseMenu(page, 'Cell type', 'CD16 monocyte')
           await visible(
             page.getByText('The selected model is unavailable for CD16 monocyte.', { exact: false }),
           )
           await assertMenu(page, 'Analysis', 'study_a · Age (per decade) (unavailable)')
           await chooseMenu(page, 'Cell type', 'CD14 monocyte')
-          await visible(page.locator('.de-statistics dd').first().filter({ hasText: '-0.210' }))
+          await visible(page.locator('.de-statistics dd').first().filter({ hasText: '-2.10' }))
           await page.getByRole('button', { name: 'Composition', exact: true }).click()
           await visible(menuTrigger(page, 'Age plot denominator'))
           await chooseMenu(page, 'Age plot denominator', 'Within retained PBMCs')

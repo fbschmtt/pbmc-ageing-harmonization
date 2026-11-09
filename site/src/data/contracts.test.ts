@@ -25,19 +25,29 @@ describe('release contracts', () => {
   }
   const release = { schemaVersion: 1, source: 'pseudobulk', cellTypes: [cell] }
   it('accepts valid data and null estimates', () => expect(validAsset('de', release)).toBe(true))
-  it('validates compact clock predictions without exposing sample identifiers', () => {
+  it('validates a compact clock index and its on-demand model predictions', () => {
     const index = {
       schemaVersion: 1,
+      ageDomain: [20, 80],
       cellTypes: [{
         id: 'a', label: 'A', methods: [{
-          id: 'elastic_net', name: 'Elastic net', description: 'Baseline',
-          training: { metrics: { n: 1, mae: 2, rmse: 2, r2: null }, predictions: [{ study: 'Study A', age: 40, predictedAge: 42 }] },
-          heldOut: { metrics: { n: 1, mae: 2, rmse: 2, r2: null }, predictions: [{ study: 'Study B', age: 50, predictedAge: 48 }] },
+          id: 'elastic_net', name: 'Elastic net', description: 'Baseline', asset: 'clock-models/a/elastic_net.json',
+          training: { metrics: { n: 1, mae: 2, rmse: 2, r2: null } },
+          heldOut: { metrics: { n: 1, mae: 2, rmse: 2, r2: null } },
         }],
       }],
     }
     expect(validAsset('clock', index)).toBe(true)
-    expect(validAsset('clock', { ...index, cellTypes: [{ ...index.cellTypes[0], methods: [{ ...index.cellTypes[0].methods[0], heldOut: { ...index.cellTypes[0].methods[0].heldOut, predictions: [{ study: 'Study B', age: '50', predictedAge: 48 }] } }] }] })).toBe(false)
+    expect(validAsset('clock', { ...index, ageDomain: [80, 20] })).toBe(false)
+    const modelAsset = {
+      schemaVersion: 1,
+      cellTypeId: 'a',
+      methodId: 'elastic_net',
+      training: { predictions: [{ study: 'Study A', age: 40, predictedAge: 42 }] },
+      heldOut: { predictions: [{ study: 'Study B', age: 50, predictedAge: 48 }] },
+    }
+    expect(validAsset('clockModel', modelAsset)).toBe(true)
+    expect(validAsset('clockModel', { ...modelAsset, heldOut: { predictions: [{ study: 'Study B', age: '50', predictedAge: 48 }] } })).toBe(false)
   })
   it('validates reference-bin expression values and support counts', () => {
     expect(validAsset('referenceExpression', {

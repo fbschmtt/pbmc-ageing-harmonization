@@ -258,7 +258,12 @@ export function App() {
       {(page === 'datasets' || page === 'modelling') && (
         <InformationalPage page={page} onNavigate={navigate} />
       )}
-      {page === 'clock' && <TranscriptomicClockPage />}
+      {page === 'clock' && (
+        <TranscriptomicClockPage
+          preferredCellType={session.selectedCellType}
+          onSelectCellType={(cellType) => dispatch({ type: 'selectCellType', cellType })}
+        />
+      )}
       {page === 'about' && <InformationalPage page="about" />}
       <footer>
         <div className="footer-branding">

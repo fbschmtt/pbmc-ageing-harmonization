@@ -1,5 +1,6 @@
-import { readFile, readdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { clockModelAssetPath } from './clock-assets.mjs'
 
 async function optional(path) {
   try {
@@ -98,13 +99,57 @@ function combinePredictions(cellTypes, split) {
   })
 }
 
-const advancedPreference = [
-  'age_sex_aware_study_offset_elastic_net',
-  'age_aware_study_offset_elastic_net',
+const methodOrder = [
+  'elastic_net',
+  'equal_study_elastic_net',
   'rank_elastic_net',
   'study_zscore_elastic_net',
-  'equal_study_elastic_net',
+  'age_aware_study_offset_elastic_net',
+  'age_sex_aware_study_offset_elastic_net',
 ]
+const methodRank = new Map(methodOrder.map((id, index) => [id, index]))
+
+function sortMethods(methods) {
+  return methods.sort((a, b) => {
+    const aId = a.id.replace(/^cross_type_mean:/, '')
+    const bId = b.id.replace(/^cross_type_mean:/, '')
+    return (methodRank.get(aId) ?? methodOrder.length) - (methodRank.get(bId) ?? methodOrder.length) ||
+      a.name.localeCompare(b.name)
+  })
+}
+
+function methodResult(method, trainingText, heldOutText) {
+  if (!trainingText || !heldOutText) return null
+  const training = predictions(csvRows(trainingText)), heldOut = predictions(csvRows(heldOutText))
+  if (!training.length || !heldOut.length) return null
+  return {
+    id: method.method ?? method.id,
+    name: method.method_name ?? method.name ?? method.method ?? method.id,
+    description: method.method_description ?? method.description ?? method.method_name ?? method.name ?? 'Clock model predictions.',
+    training: { metrics: metrics(training), predictions: training },
+    heldOut: { metrics: metrics(heldOut), predictions: heldOut },
+  }
+}
+
+async function writeMethodAsset(stage, cell, method) {
+  const asset = clockModelAssetPath(cell.id, method.id)
+  await mkdir(join(stage, dirname(asset)), { recursive: true })
+  await writeFile(join(stage, asset), JSON.stringify({
+    schemaVersion: 1,
+    cellTypeId: cell.id,
+    methodId: method.id,
+    training: { predictions: method.training.predictions },
+    heldOut: { predictions: method.heldOut.predictions },
+  }))
+  return {
+    id: method.id,
+    name: method.name,
+    description: method.description,
+    asset,
+    training: { metrics: method.training.metrics },
+    heldOut: { metrics: method.heldOut.metrics },
+  }
+}
 
 export async function exportClocks(input, stage, de) {
   const entries = await readdir(input, { withFileTypes: true })
@@ -121,11 +166,7 @@ export async function exportClocks(input, stage, de) {
       ['input', 'configuration_sha256', 'training_studies', 'external_studies', 'cross_validation', 'normalization']
         .map((key) => [key, manifest[key]]),
     ))
-    const byId = new Map(manifest.methods.map((method) => [method.method, method]))
-    const chosen = []
-    if (byId.has('elastic_net')) chosen.push(byId.get('elastic_net'))
-    const advanced = advancedPreference.map((id) => byId.get(id)).find(Boolean)
-    if (advanced && advanced.method !== 'elastic_net') chosen.push(advanced)
+    const chosen = manifest.methods
     const methods = []
     const methodFiles = []
     for (const method of chosen) {
@@ -136,18 +177,11 @@ export async function exportClocks(input, stage, de) {
       ])
       if (!trainingText || !heldOutText) continue
       methodFiles.push({ id: method.method, name: method.method_name, training: trainingText, heldOut: heldOutText })
-      const training = predictions(csvRows(trainingText)), heldOut = predictions(csvRows(heldOutText))
-      if (!training.length || !heldOut.length) continue
-      methods.push({
-        id: method.method,
-        name: method.method_name,
-        description: method.method_description,
-        training: { metrics: metrics(training), predictions: training },
-        heldOut: { metrics: metrics(heldOut), predictions: heldOut },
-      })
+      const result = methodResult(method, trainingText, heldOutText)
+      if (result) methods.push(result)
     }
     if (methods.length) cellTypes.push({
-      id: entry.name, label: labels.get(entry.name), methods, methodFiles, clockCohort,
+      id: entry.name, label: labels.get(entry.name), methods: sortMethods(methods), methodFiles, clockCohort,
     })
   }
   const crossTypeSummaryText = await optional(join(input, 'age_clock_cross_type/summary.json'))
@@ -162,21 +196,18 @@ export async function exportClocks(input, stage, de) {
         optional(join(input, 'age_clock_cross_type', method.held_out.predictions_file)),
       ])
       if (!trainingText || !heldOutText) continue
-      const training = predictions(csvRows(trainingText)), heldOut = predictions(csvRows(heldOutText))
-      if (!training.length || !heldOut.length) continue
-      methods.push({
+      const result = methodResult({
         id: `cross_type_mean:${method.id}`,
         name: `${method.name} · mean across cell types`,
         description: `Equal-weight mean of this clock's predictions across ${(method.training.cell_types ?? []).length} cell types for each donor. This is a cross-cell-type ensemble, not an ensemble of clock methods.`,
-        training: { metrics: metrics(training), predictions: training },
-        heldOut: { metrics: metrics(heldOut), predictions: heldOut },
-      })
+      }, trainingText, heldOutText)
+      if (result) methods.push(result)
     }
     if (methods.length) cellTypes.push({
       id: 'cross-cell-type-mean',
       label: 'Across cell types · mean clock',
       scope: 'cross_cell_type',
-      methods,
+      methods: sortMethods(methods),
     })
     crossMethods = methods
   }
@@ -201,15 +232,31 @@ export async function exportClocks(input, stage, de) {
       id: 'cross-cell-type-mean',
       label: 'Across cell types · mean clock',
       scope: 'cross_cell_type',
-      methods,
+      methods: sortMethods(methods),
     })
   }
   if (!cellTypes.length) return null
+  const allPoints = cellTypes.flatMap((cell) => cell.methods.flatMap((method) => [
+    ...method.training.predictions,
+    ...method.heldOut.predictions,
+  ]))
+  const { min: minValue, max: maxValue } = allPoints.reduce((range, point) => ({
+    min: Math.min(range.min, point.age, point.predictedAge),
+    max: Math.max(range.max, point.age, point.predictedAge),
+  }), { min: Infinity, max: -Infinity })
+  const min = Math.floor(minValue / 10) * 10
+  const max = Math.ceil(maxValue / 10) * 10
+  const ageDomain = [min, Math.max(max, min + 10)]
+  const publicCellTypes = []
+  for (const cell of cellTypes) {
+    const methods = []
+    for (const method of cell.methods) methods.push(await writeMethodAsset(stage, cell, method))
+    publicCellTypes.push({ id: cell.id, label: cell.label, ...(cell.scope ? { scope: cell.scope } : {}), methods })
+  }
   const path = 'clock-data.json'
-  // Per-type prediction CSVs are retained above only to match donors while
-  // constructing a cross-cell-type mean. Do not publish those raw files or
-  // their donor identifiers in the browser asset.
-  const publicCellTypes = cellTypes.map(({ methodFiles: _methodFiles, clockCohort: _clockCohort, ...cell }) => cell)
-  await writeFile(join(stage, path), JSON.stringify({ schemaVersion: 1, cellTypes: publicCellTypes }))
+  // Prediction coordinates are split into per-model assets so opening the
+  // clock page only fetches the selected model. Donor identifiers and model
+  // coefficients are never included.
+  await writeFile(join(stage, path), JSON.stringify({ schemaVersion: 1, ageDomain, cellTypes: publicCellTypes }))
   return path
 }

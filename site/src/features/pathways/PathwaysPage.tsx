@@ -8,6 +8,7 @@ import { parseGeneSet } from '../../data/geneSet'
 import type { PathwaySet } from '../../data/pathways'
 import { formatAxisValue, symmetricAxis } from '../../theme/axisScale'
 import { visualColors, visualRgb } from '../../theme/visualEncoding'
+import { formatNumber } from '../../theme/format'
 import './pathways.css'
 
 export function PathwaysPage({
@@ -82,7 +83,7 @@ export function PathwaysPage({
     const [red, green, blue] = value >= 0 ? visualRgb.positiveChange : visualRgb.negativeChange
     return `rgb(${Math.round(255 + (red - 255) * intensity)} ${Math.round(255 + (green - 255) * intensity)} ${Math.round(255 + (blue - 255) * intensity)})`
   }
-  const formatResultValue = (value: number) => value.toFixed(2)
+  const formatResultValue = formatNumber
 
   return (
     <section className="pathways-page">

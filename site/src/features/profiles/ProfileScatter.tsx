@@ -2,6 +2,7 @@ import { cellTypeColor } from '../../theme/cellTypeColors'
 import { VolcanoPlot } from '../../components/VolcanoPlot'
 import type { TrajectoryRecord } from '../../data/atlas'
 import { visualColors } from '../../theme/visualEncoding'
+import { formatNumber } from '../../theme/format'
 
 type ProfileScatterProps = {
   records: TrajectoryRecord[]
@@ -33,7 +34,7 @@ export function ProfileScatter({
       xLabel="Signed maximum age-bin change (log₂ fold change)"
       ariaLabel="Signed maximum age-bin change against negative log10 adjusted p-value"
       title={(record) =>
-        `${label(record)} · ${record.tissue}\nSigned maximum age change: ${record.valueAtMaxAbsChange.toFixed(2)}\nAdjusted p-value: ${record.adjustedPValue.toExponential(2)}`
+        `${label(record)} · ${record.tissue}\nSigned maximum age change: ${formatNumber(record.valueAtMaxAbsChange)}\nAdjusted p-value: ${formatNumber(record.adjustedPValue)}`
       }
       appearance={(record, isSelected) => ({
         fill: colorByCellType ? (cellTypeColor(record.cellType) ?? '#87918d') : record.tissue === 'brain' ? visualColors.brain : visualColors.blood,

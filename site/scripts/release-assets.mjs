@@ -28,6 +28,8 @@ const kindOf = (name) =>
                 ? 'pathways'
                   : name === 'clock-data.json'
                     ? 'clock'
+                    : name.startsWith('clock-models/') && name.endsWith('.json')
+                      ? 'clockModel'
                 : name === 'pipeline-trajectory-preview.svg'
                   ? 'trajectory_preview'
                   : name.startsWith('reference-expression/') && name.endsWith('.json')

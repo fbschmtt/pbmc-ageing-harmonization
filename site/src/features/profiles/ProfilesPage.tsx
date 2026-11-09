@@ -1,5 +1,5 @@
-import { cellTypeColor } from '../../theme/cellTypeColors'
 import { useMemo } from 'react'
+import { CellTypeSelector } from '../../components/CellTypeSelector'
 import { ChoiceMenu } from '../../components/ChoiceMenu'
 import { GeneTypePairCard, type GeneTypePairActions } from '../../components/GeneTypePairCard'
 import { VolcanoExplorer } from '../../components/VolcanoExplorer'
@@ -135,12 +135,12 @@ export function ProfilesPage({
                 </datalist>
               </label>
             ) : (
-              <ChoiceMenu
+              <CellTypeSelector
                 label="Cell type"
                 value={cellType}
                 groups={cellTypeGroups.map((group) => ({
                   label: group.label,
-                  options: group.cellTypes.map((item) => ({ value: item, label: item, color: cellTypeColor(item) })),
+                  options: group.cellTypes.map((item) => ({ value: item, label: item })),
                 }))}
                 onChange={(value) => {
                   onSelectCellType(value)
