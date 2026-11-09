@@ -81,6 +81,11 @@ def render_report_index(outdir: Path) -> Path:
         ]
     else:
         manifest_slugs = []
+    failed_cell_types = (
+        document.get("failed_cell_types", [])
+        if cell_type_manifest.is_file() and isinstance(document, dict)
+        else []
+    )
     if cell_type_manifest.is_file():
         slugs = sorted(set(manifest_slugs))
     else:
@@ -193,6 +198,17 @@ def render_report_index(outdir: Path) -> Path:
         )
     else:
         per_type_content = "<p>No per-cell-type reports are published yet.</p>"
+    if failed_cell_types:
+        failed_labels = ", ".join(
+            escape(str(record.get("cell_type") or record.get("slug") or "unknown"))
+            for record in failed_cell_types
+            if isinstance(record, dict)
+        )
+        per_type_content += (
+            "<p><strong>Some cell-type reports were not produced:</strong> "
+            f"{failed_labels}. See <code>analysis/per_type/cell_type_manifest.json</code> "
+            "for the failed stage of each type and the Nextflow log for error details.</p>"
+        )
 
     generated_at = datetime.now(timezone.utc)
     generated_iso = escape(generated_at.isoformat(timespec="seconds"), quote=True)

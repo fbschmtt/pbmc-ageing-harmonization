@@ -611,6 +611,10 @@ make run-cell-type-analysis
 This downstream workflow requires an existing merged single-cell H5AD at
 `<outdir>/harmonization/merged/single_cell_merged.h5ad`. Override that location with
 `MERGED_INPUT=/path/to/single_cell_merged.h5ad`.
+When a per-type analysis or report fails, the merged-input workflow continues
+with other types. The report index lists successful types and names failed
+types; the cell-type manifest records whether each failure occurred during
+analysis or report rendering. Nextflow logs contain the underlying error.
 
 For a complete production run, `make run-all` executes the core workflow with
 single-cell merging enabled, then runs differential expression, detailed

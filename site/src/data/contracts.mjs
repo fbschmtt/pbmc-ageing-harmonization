@@ -25,7 +25,7 @@
 /** @typedef {{ schemaVersion: number; releaseId?: string; cellTypes: ClockCellType[] }} ClockIndex */
 /** @typedef {{ gene: string; effect: number; padj: number | null }} ClusterMarker */
 /** @typedef {{ cluster: string; image: string; fits: { study: string | null; samples: number; meanFraction: number; slopePpPerDecade: number | null }[] }} ClusterFractionDetail */
-/** @typedef {{ schemaVersion: number; cellType: string; nCells: number; nClusters: number; integration: string; image: string; ageDeImage?: string | null; fractionNote?: string | null; fractionHasStudyTrends?: boolean; fractionIncludesZeros?: boolean; fractionDetails?: ClusterFractionDetail[] | null; groups: { cluster: string; higher?: ClusterMarker[]; lower?: ClusterMarker[]; markers?: { gene: string; score: number; padj: number | null }[] }[] }} SingleCell */
+/** @typedef {{ schemaVersion: number; cellType: string; nCells: number; nClusters: number; integration: string; image: string; ageDeImage?: string | null; ageDeNote?: string | null; fractionNote?: string | null; fractionHasStudyTrends?: boolean; fractionIncludesZeros?: boolean; fractionDetails?: ClusterFractionDetail[] | null; groups: { cluster: string; higher?: ClusterMarker[]; lower?: ClusterMarker[]; markers?: { gene: string; score: number; padj: number | null }[] }[] }} SingleCell */
 /** @typedef {{ de: DifferentialRelease; trajectory: Atlas; trajectoryMap: TrajectoryMap; composition: FractionIndex; preview: Preview; pathways: { pathwaySets: PathwaySet[] }; metadata: GeneMetadataIndex; singleCell: SingleCell; singleCellIndex: SingleCellIndex; referenceExpression: ReferenceExpression; clock: ClockIndex }} Assets */
 
 // Shared runtime contract for published JSON and browser loaders.
@@ -142,6 +142,7 @@ const validators = {
     str(x.integration) && str(x.image) && x.image.startsWith('iVBORw0KGgo') &&
     (x.ageDeImage === undefined || x.ageDeImage === null ||
       (str(x.ageDeImage) && x.ageDeImage.startsWith('iVBORw0KGgo'))) &&
+    (x.ageDeNote === undefined || x.ageDeNote === null || typeof x.ageDeNote === 'string') &&
     (x.fractionNote === undefined || x.fractionNote === null || typeof x.fractionNote === 'string') &&
     (x.fractionHasStudyTrends === undefined || typeof x.fractionHasStudyTrends === 'boolean') &&
     (x.fractionIncludesZeros === undefined || typeof x.fractionIncludesZeros === 'boolean') &&

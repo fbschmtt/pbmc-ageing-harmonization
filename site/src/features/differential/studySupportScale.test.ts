@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { studySupportColor } from './studySupportScale'
 
 describe('study support color scale', () => {
-  it('keeps zero support neutral and varies teal intensity with support', () => {
+  it('keeps zero support neutral and maps support onto viridis', () => {
     expect(studySupportColor(0, 10)).toBe('#b9bdbc')
-    expect(studySupportColor(1, 10)).toBe('oklch(0.834 0.09 180)')
-    expect(studySupportColor(10, 10)).toBe('oklch(0.420 0.09 180)')
+    expect(studySupportColor(1, 10)).toBe('#440154')
+    expect(studySupportColor(10, 10)).toBe('#fde725')
   })
 
   it('keeps every study count distinguishable on a ten-study scale', () => {

@@ -142,11 +142,12 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         await visible(page.getByText('123.4 CPM', { exact: false }))
         assert.equal(await page.getByText('Mean normalized count', { exact: false }).count(), 0)
         await visible(page.getByRole('link', { name: 'Download DEG results', exact: true }))
-        await page.locator('.volcano-explorer-gene-set > summary').click()
+        assert.equal(await page.locator('.volcano-explorer-gene-set').evaluate((node) => node.open), true)
         await page.getByLabel('Highlight genes').fill('GENE3')
         assert.equal(otherPaths.some(wasRequested), false, 'Unselected model was prefetched')
         assert.ok(requests.some((path) => path.includes('/data/de-models/') && path.endsWith('.gz.bin')))
         await chooseMenu(page, 'Analysis', 'study_a · Age (per decade)')
+        await page.locator('.volcano-explorer-about > summary').click()
         await visible(page.getByText('Effect: age · per decade.', { exact: false }))
         assert.equal(await page.getByRole('link', { name: 'Download DEG results', exact: true }).count(), 0)
         assert.equal(wasRequested(other.recordsAsset), true, 'Selected model was not fetched')
@@ -361,10 +362,15 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         assert.equal(await page.getByText('Explore the local embedding and clusters within each annotated cell type.').count(), 0)
         assert.equal(await page.getByText('Each point is a cell; colors and labels show local Leiden clusters.').count(), 0)
         assert.deepEqual(
-          await page.locator('.single-cell-layout > .single-cell-column').evaluateAll((columns) =>
-            columns.map((column) => column.getAttribute('aria-label')),
+          await page.locator('.single-cell-layout .single-cell-panel h2').evaluateAll((headings) =>
+            headings.map((heading) => heading.textContent.trim()),
           ),
-          ['Cell expression views', 'Cluster patterns'],
+          [
+            'Clusters in context',
+            'Age-DE genes on UMAP',
+            'Genes distinguishing clusters',
+            'Cluster 0: fraction across age',
+          ],
         )
         await visible(page.getByText('TESTMARKER', { exact: true }))
         await visible(page.getByText('OTHER', { exact: true }))
@@ -372,7 +378,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         await visible(page.getByRole('cell', { name: '25.0%' }))
         await visible(page.getByRole('cell', { name: '+1.50' }))
         await visible(page.getByText('log₂ FC').first())
-        await visible(page.getByText(/Dashed lines are per-study trends/))
+        await visible(page.getByText(/Dashed lines show study trends/))
         await visible(page.getByText(/Eligible samples with no cells in a cluster are included at zero/))
         await visible(page.getByText(/3 sample\(s\) excluded/))
         await page.evaluate(() => document.fonts.ready)
@@ -420,6 +426,12 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       try {
         const page = await context.newPage()
         await openApp(page, served.url)
+        await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+        await page.locator('.entry-grid a[href="#composition"]').click()
+        await visible(page.locator('.pipeline-composition'))
+        await page.waitForFunction(() => window.scrollY === 0)
+        assert.equal(new URL(page.url()).hash, '#composition')
+        await page.getByRole('button', { name: 'Overview', exact: true }).click()
         await page.getByRole('heading', { name: 'Cell composition' }).click()
         await visible(page.locator('.pipeline-composition'))
         assert.equal(new URL(page.url()).hash, '#composition')
@@ -445,6 +457,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         await choosePageFromGroup(page, 'Differential expression', 'By cell type')
         await visible(page.getByText('Synthetic fixture: not biological evidence.'))
         await chooseMenu(page, 'Analysis', 'study_a · Age (per decade)')
+        await page.locator('.volcano-explorer-about > summary').click()
         await visible(page.getByText('Effect: age · per decade.', { exact: false }))
         await page.getByLabel('Search genes').fill('GENE2')
         await chooseMenu(page, 'Matching genes (1)', 'GENE2')

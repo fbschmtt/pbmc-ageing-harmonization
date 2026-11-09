@@ -73,14 +73,32 @@ workflow {
     }
 
     if (report_inputs != null) {
+        def report_inputs_with_de = report_inputs.map { slug, primitive, analysis_dir ->
+            def merged_de = file(
+                "${params.outdir}/analysis/per_type/${slug}/differential_expression/merged.csv",
+                checkIfExists: false,
+            )
+            def has_merged_de = merged_de.exists()
+            def dependency = has_merged_de ? merged_de : pipeline_config_file
+            tuple(slug, primitive, analysis_dir, has_merged_de, dependency)
+        }
         RENDER_CELL_TYPE_REPORTS(
-            report_inputs,
+            report_inputs_with_de,
             pipeline_config,
             report_template,
         )
         if (models != null) {
+            def analysed_slugs = ANALYSE_CELL_TYPE.out.analysis
+                .map { slug, _analysis_dir -> slug.toString() }
+                .collect()
+            def selected_slugs = params.cell_types
+                ? params.cell_types.toString().split(',').collect { value -> value.trim() }.findAll { value -> value }
+                : []
             WRITE_CELL_TYPE_MANIFEST(
                 RENDER_CELL_TYPE_REPORTS.out.collect(),
+                SPLIT_CELL_TYPES.out.manifest,
+                analysed_slugs,
+                selected_slugs,
                 merged_input,
                 pipeline_config,
                 models,

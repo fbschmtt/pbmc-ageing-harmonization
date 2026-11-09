@@ -391,6 +391,8 @@ export function DifferentialPage({
           onSelectPathway,
         }}
         title="Volcano plot"
+        descriptionPlacement="below"
+        legendPlacement="below"
         description={
           model ? (
             <>
@@ -417,13 +419,12 @@ export function DifferentialPage({
         legend={
           <>
             <span className="de-support-legend" aria-label="Number of studies with a significant result">
-              <span className="de-support-label">Studies with significant results</span>
-              {Array.from({ length: supportMaximum + 1 }, (_, count) => <span className="de-support-step" key={count}>
-                <i style={{ backgroundColor: studySupportColor(count, supportMaximum) }} />
-                {count}
-              </span>)}
+              <span className="de-support-label">Significant studies</span>
+              <span className="de-support-gradient" aria-hidden="true" />
+              <span className="de-support-endpoints"><span>1</span><span>{supportMaximum}</span></span>
             </span>
-            <span><i className="de-support-unavailable" style={{ backgroundColor: missingSupportColor }} /> Not available</span>
+            <span className="de-support-zero"><i />0</span>
+            <span className="de-support-unavailable"><i />Not available</span>
             <span>
               <i className="volcano-legend-pathway" /> Gene set
             </span>
@@ -464,7 +465,7 @@ export function DifferentialPage({
                   : geneSet.has(record.gene.toUpperCase())
                     ? 1.5
                     : 0,
-                radius: isSelected ? 7.5 : geneSet.has(record.gene.toUpperCase()) ? 6 : 4,
+                radius: isSelected ? 9.5 : geneSet.has(record.gene.toUpperCase()) ? 7 : 5.5,
                 opacity:
                   !isSelected && search && !record.gene.toUpperCase().includes(search.trim().toUpperCase())
                     ? 0.12

@@ -48,9 +48,15 @@ export async function exportSingleCell(input, stage) {
       (Array.isArray(cell.source) ? cell.source.join('') : cell.source || '').includes('### Age-DE Gene Expression'))
     const ageDeOutputs = ageDeHeading < 0 ? [] : cells[ageDeHeading + 1]?.outputs || []
     let ageDeImage = null
+    let ageDeNote = null
     for (const output of ageDeOutputs) {
       const pngOutput = output.data?.['image/png']
       const htmlOutput = output.data?.['text/html']
+      const markdownOutput = output.data?.['text/markdown']
+      if (markdownOutput && !ageDeNote) {
+        const markdown = Array.isArray(markdownOutput) ? markdownOutput.join('') : markdownOutput
+        ageDeNote = markdown.replace(/^_|_$/g, '')
+      }
       if (pngOutput) ageDeImage = Array.isArray(pngOutput) ? pngOutput.join('') : pngOutput
       else if (htmlOutput) {
         const html = Array.isArray(htmlOutput) ? htmlOutput.join('') : htmlOutput
@@ -65,15 +71,18 @@ export async function exportSingleCell(input, stage) {
       .includes('# study-specific linear trends'))
     const fractionIncludesZeros = cells.some((cell) => (Array.isArray(cell.source) ? cell.source.join('') : cell.source || '')
       .includes('# cluster-fraction zeros included'))
-    let fractionNote = null
+    const fractionNotes = []
     let fractionDetails = null
     for (const output of fractionCell?.outputs || []) {
       const details = output.data?.['application/vnd.pbmc.cluster-fractions+json']
       if (details && Array.isArray(details.clusters)) fractionDetails = details.clusters
       const markdown = output.data?.['text/markdown']
       const message = Array.isArray(markdown) ? markdown.join('') : markdown || ''
-      if (message.includes('excluded from cluster fractions')) fractionNote = message.replace(/^_|_$/g, '')
+      if (message.includes('excluded from cluster fractions')) fractionNotes.push(message.replace(/^_|_$/g, ''))
+      else if (message.includes('No samples meet the denominator cutoff'))
+        fractionNotes.push(message.replace(/^_|_$/g, ''))
     }
+    const fractionNote = fractionNotes.length ? fractionNotes.join(' ') : null
     const lines = markerText.trim().split(/\r?\n/)
     const headers = lines.shift().split('\t')
     const column = (name) => headers.indexOf(name)
@@ -100,7 +109,7 @@ export async function exportSingleCell(input, stage) {
     await mkdir(join(stage, 'single-cell'), { recursive: true })
     await writeFile(join(stage, path), JSON.stringify({ schemaVersion: 1, cellType: report.cell_type,
       nCells: report.n_cells, nClusters: report.n_clusters, integration: report.embedding?.integration?.method || 'none',
-      image: encoded, ageDeImage, fractionNote, fractionHasStudyTrends, fractionIncludesZeros, fractionDetails, groups }))
+      image: encoded, ageDeImage, ageDeNote, fractionNote, fractionHasStudyTrends, fractionIncludesZeros, fractionDetails, groups }))
     cellTypes.push({ id: entry.name, label: report.cell_type, path })
   }
   if (cellTypes.length) await writeFile(join(stage, 'single-cell-index.json'), JSON.stringify({ schemaVersion: 1, cellTypes }))

@@ -1,12 +1,9 @@
 export type { FractionCoefficient } from '../../data/contracts.mjs'
 import type { FractionCoefficient } from '../../data/contracts.mjs'
-import { formatAxisValue, symmetricAxis } from '../../theme/axisScale'
+import { formatAxisValue } from '../../theme/axisScale'
+import { clipForestInterval, fractionForestAxis, type FractionDiagnostic } from './fractionForestPlot'
 
-export type FractionDiagnostic = {
-  study: string
-  residualSd: number | null
-  binomialSamplingSd: number | null
-}
+export type { FractionDiagnostic } from './fractionForestPlot'
 
 const names: Record<string, string> = {
   age: 'Age',
@@ -44,18 +41,13 @@ export function FractionForest({
       )
     },
   )
-  const axis = symmetricAxis([
-      0.01,
-      ...coefficients.flatMap((item) => [item.low, item.high, item.estimate]),
-      ...diagnostics.flatMap((item) => [item.residualSd ?? 0, item.binomialSamplingSd ?? 0]),
-    ], 0.1)
-  const extent = axis.extent
+  const axis = fractionForestAxis(coefficients, diagnostics)
   const width = 820,
     left = 190,
     right = 790,
     top = 45,
     height = Math.max(190, (rows.length + (hasDiagnostics ? 1 : 0)) * 65 + 110)
-  const x = (value: number) => left + ((value / extent + 1) / 2) * (right - left)
+  const x = (value: number) => left + ((value - axis.low) / (axis.high - axis.low)) * (right - left)
   const rowY = (index: number) => top + index * 65 + 20
   return (
     <div className="fraction-chart-panel atlas-card atlas-card-soft">
@@ -101,12 +93,19 @@ export function FractionForest({
               study = studies.indexOf(item.study),
               offset = (study - (studies.length - 1) / 2) * Math.min(8, 34 / Math.max(studies.length, 1)),
               cy = rowY(row) + offset,
-              color = studyColors.get(item.study) ?? '#65736f'
+              color = studyColors.get(item.study) ?? '#65736f',
+              interval = clipForestInterval(item, axis.low, axis.high)
             return (
               <g key={`${item.study}-${item.term}-${index}`}>
-                <line x1={x(item.low)} x2={x(item.high)} y1={cy} y2={cy} stroke={color} strokeWidth="2" />
-                <line x1={x(item.low)} x2={x(item.low)} y1={cy - 3} y2={cy + 3} stroke={color} />
-                <line x1={x(item.high)} x2={x(item.high)} y1={cy - 3} y2={cy + 3} stroke={color} />
+                <line x1={x(interval.low)} x2={x(interval.high)} y1={cy} y2={cy} stroke={color} strokeWidth="2" />
+                {!interval.clippedLow && <line x1={x(interval.low)} x2={x(interval.low)} y1={cy - 3} y2={cy + 3} stroke={color} />}
+                {!interval.clippedHigh && <line x1={x(interval.high)} x2={x(interval.high)} y1={cy - 3} y2={cy + 3} stroke={color} />}
+                {interval.clippedLow && (
+                  <path d={`M ${x(axis.low) + 4} ${cy - 4} L ${x(axis.low) - 2} ${cy} L ${x(axis.low) + 4} ${cy + 4} Z`} fill={color} />
+                )}
+                {interval.clippedHigh && (
+                  <path d={`M ${x(axis.high) - 4} ${cy - 4} L ${x(axis.high) + 2} ${cy} L ${x(axis.high) - 4} ${cy + 4} Z`} fill={color} />
+                )}
                 <circle cx={x(item.estimate)} cy={cy} r="4" fill={color}>
                   <title>
                     {item.study}: {(item.estimate * 100).toFixed(2)} pp (95% CI {(item.low * 100).toFixed(2)}{' '}
@@ -154,7 +153,7 @@ export function FractionForest({
               className="fraction-chart-text"
               fontWeight={tick === 0 ? '700' : undefined}
             >
-              {formatAxisValue(tick * 100, extent * 100)}
+              {formatAxisValue(tick * 100, Math.max(Math.abs(axis.low), Math.abs(axis.high)) * 100)}
             </text>
           ))}
           <text x={(left + right) / 2} y={height - 8} textAnchor="middle" className="fraction-chart-text">

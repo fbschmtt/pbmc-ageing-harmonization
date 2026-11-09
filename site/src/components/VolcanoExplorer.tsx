@@ -19,6 +19,8 @@ export function VolcanoExplorer({
   legend,
   plot,
   detail,
+  descriptionPlacement = 'top',
+  legendPlacement = 'top',
 }: {
   controls: ReactNode
   geneSet?: GeneSetControl
@@ -27,13 +29,15 @@ export function VolcanoExplorer({
   legend: ReactNode
   plot: ReactNode
   detail: ReactNode
+  descriptionPlacement?: 'top' | 'below'
+  legendPlacement?: 'top' | 'below'
 }) {
   return (
     <div className="volcano-explorer">
       <aside className="volcano-explorer-controls">
         {controls}
         {geneSet && (
-          <details className="volcano-explorer-gene-set">
+          <details className="volcano-explorer-gene-set" open>
             <summary>
               Gene sets{geneSet.value.trim() ? <span> · active</span> : null}
             </summary>
@@ -53,9 +57,18 @@ export function VolcanoExplorer({
       <div className="volcano-explorer-main">
         <p className="eyebrow">Visualise</p>
         <h2>{title}</h2>
-        <div className="volcano-explorer-description">{description}</div>
-        <div className="volcano-explorer-legend">{legend}</div>
+        {descriptionPlacement === 'top' && (
+          <div className="volcano-explorer-description">{description}</div>
+        )}
+        {legendPlacement === 'top' && <div className="volcano-explorer-legend">{legend}</div>}
         {plot}
+        {legendPlacement === 'below' && <div className="volcano-explorer-legend">{legend}</div>}
+        {descriptionPlacement === 'below' && (
+          <details className="volcano-explorer-description volcano-explorer-about">
+            <summary>About this plot</summary>
+            {description}
+          </details>
+        )}
       </div>
       <aside className="volcano-explorer-detail">{detail}</aside>
     </div>

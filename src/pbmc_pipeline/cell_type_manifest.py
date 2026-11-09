@@ -16,7 +16,17 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def write_cell_type_manifest(*, input_path: Path, config_path: Path, model_paths: list[Path], report_dirs: list[Path], output_path: Path) -> dict:
+def write_cell_type_manifest(
+    *,
+    input_path: Path,
+    config_path: Path,
+    model_paths: list[Path],
+    report_dirs: list[Path],
+    output_path: Path,
+    split_manifest_path: Path | None = None,
+    analysed_slugs: list[str] | None = None,
+    selected_slugs: list[str] | None = None,
+) -> dict:
     config = json.loads(config_path.read_text())
     analysis = config["cell_type_analysis"]
     types = []
@@ -44,12 +54,29 @@ def write_cell_type_manifest(*, input_path: Path, config_path: Path, model_paths
             "report_html_sha256": _sha256(report_dir / "report.html"),
             "age_trajectory_outputs": trajectory_files,
         })
-    if not types:
-        raise ValueError("No cell-type report directories were supplied")
+    expected_types = types
+    if split_manifest_path is not None:
+        split_manifest = json.loads(split_manifest_path.read_text())
+        expected_types = split_manifest.get("cell_types", [])
+    if selected_slugs:
+        selected = set(selected_slugs)
+        expected_types = [record for record in expected_types if record.get("slug") in selected]
+    successful_slugs = {record["slug"] for record in types}
+    analysed = set(analysed_slugs or ())
+    failed_types = [
+        {
+            "slug": str(record["slug"]),
+            "cell_type": str(record.get("cell_type") or record["slug"]),
+            "failed_stage": "report" if record["slug"] in analysed else "analysis",
+        }
+        for record in expected_types
+        if record.get("slug") not in successful_slugs
+    ]
     analysis_bytes = json.dumps(analysis, sort_keys=True, separators=(",", ":")).encode()
     document = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "cell_type_analysis",
+        "status": "partial" if failed_types else "complete",
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "merged_input": {"path": str(input_path), "sha256": _sha256(input_path)},
         "configuration": {"path": str(config_path), "sha256": _sha256(config_path)},
@@ -57,6 +84,7 @@ def write_cell_type_manifest(*, input_path: Path, config_path: Path, model_paths
         "analysis_specification_sha256": hashlib.sha256(analysis_bytes).hexdigest(),
         "models": [{"path": str(path), "sha256": _sha256(path)} for path in model_paths],
         "cell_types": types,
+        "failed_cell_types": failed_types,
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(document, indent=2) + "\n")
@@ -68,12 +96,17 @@ def main() -> None:
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--model", type=Path, nargs="+", required=True)
-    parser.add_argument("--report-dir", type=Path, nargs="+", required=True)
+    parser.add_argument("--split-manifest", type=Path)
+    parser.add_argument("--analysed-slug", action="append", default=[])
+    parser.add_argument("--selected-slug", action="append", default=[])
+    parser.add_argument("--report-dir", type=Path, nargs="*", default=[])
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     write_cell_type_manifest(
         input_path=args.input, config_path=args.config, model_paths=args.model,
         report_dirs=args.report_dir, output_path=args.output,
+        split_manifest_path=args.split_manifest, analysed_slugs=args.analysed_slug,
+        selected_slugs=args.selected_slug,
     )
 
 

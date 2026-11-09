@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 import seaborn as sns
-from IPython.display import HTML, Markdown, display
+from IPython.display import HTML, Image as DisplayImage, Markdown, display
 
 from pbmc_pipeline.report_theme import render_report_header
 
@@ -136,7 +136,17 @@ def plot_umap(
     if title:
         figure.axes[0].set_title(title)
     figure.tight_layout()
-    plt.show()
+    image_buffer = BytesIO()
+    figure.savefig(
+        image_buffer,
+        format="png",
+        bbox_inches="tight",
+        transparent=True,
+        facecolor="none",
+        edgecolor="none",
+    )
+    display(DisplayImage(data=image_buffer.getvalue()))
+    plt.close(figure)
 
 
 def plot_umap_split_by_study(adata):

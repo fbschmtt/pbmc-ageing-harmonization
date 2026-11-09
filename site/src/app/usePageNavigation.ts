@@ -14,6 +14,9 @@ export function usePageNavigation() {
     if (!window.location.hash) window.history.replaceState(null, '', '#overview')
     return () => window.removeEventListener('hashchange', syncPage)
   }, [])
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [page])
   const navigate = (nextPage: Page) => {
     window.location.hash = nextPage
     setPage(nextPage)

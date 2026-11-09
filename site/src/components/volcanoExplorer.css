@@ -1,6 +1,6 @@
 .volcano-explorer {
   display: grid;
-  grid-template-columns: minmax(190px, 220px) minmax(0, 1fr) minmax(240px, 315px);
+  grid-template-columns: minmax(180px, 205px) minmax(0, 1fr) minmax(220px, 280px);
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--atlas-border);
@@ -80,6 +80,21 @@
 .volcano-explorer-description p {
   margin: 5px 0;
 }
+.volcano-explorer-about {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--atlas-border);
+}
+.volcano-explorer-about summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--atlas-teal);
+  font-size: 12px;
+  font-weight: 600;
+}
+.volcano-explorer-about[open] p {
+  max-width: 760px;
+}
 .volcano-explorer-legend {
   display: flex;
   flex-wrap: wrap;
@@ -154,20 +169,32 @@
   background: var(--atlas-surface-soft);
 }
 .volcano-explorer-legend .de-support-legend {
-  gap: 7px;
+  gap: 9px;
   padding: 0;
   border: 0;
   background: transparent;
 }
 .volcano-explorer-legend .de-support-label {
-  margin-right: 3px;
   color: var(--atlas-muted);
   font-weight: 400;
 }
-.volcano-explorer-legend .de-support-step {
-  gap: 4px;
+.volcano-explorer-legend .de-support-gradient {
+  width: 132px;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #440154 0%, #482878 11%, #3e4989 22%, #31688e 33%, #26828e 44%, #1f9e89 56%, #35b779 67%, #6ece58 78%, #b5de2b 89%, #fde725 100%);
+}
+.volcano-explorer-legend .de-support-endpoints {
+  gap: 0;
   font-family: var(--atlas-font-mono);
   font-variant-numeric: tabular-nums;
+}
+.volcano-explorer-legend .de-support-zero i {
+  background: #b9bdbc;
+}
+.volcano-explorer-legend .de-support-unavailable i {
+  border: 1px dashed #68736f;
+  background: transparent !important;
 }
 .volcano-explorer-main .profile-scatter {
   padding: 0;
@@ -188,12 +215,6 @@
 }
 .volcano-explorer-controls .de-gene-matches select {
   min-width: 0;
-}
-@media (min-width: 901px) {
-  .volcano-explorer-main .volcano-plot {
-    width: min(100%, max(320px, calc(133.333vh - 507px)));
-    margin: 0 auto;
-  }
 }
 @media (max-width: 900px) {
   .volcano-explorer {

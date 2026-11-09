@@ -23,6 +23,7 @@ process SPLIT_CELL_TYPES {
 
 process ANALYSE_CELL_TYPE {
     tag { slug }
+    errorStrategy { params.merged_input && !params.split_only ? 'ignore' : 'terminate' }
 
     input:
     tuple val(slug), path(primitive)
@@ -80,11 +81,13 @@ workflow RENDER_CELL_TYPE_REPORTS {
 
 process RENDER_CELL_TYPE_REPORT {
     tag { slug }
+    errorStrategy { params.merged_input && !params.split_only ? 'ignore' : 'terminate' }
     publishDir "${params.outdir}/analysis/per_type", mode: 'copy', overwrite: true,
         saveAs: { filename -> "${filename}/analysis" }
 
     input:
-    tuple val(slug), path(primitive), path(analysis_dir, stageAs: 'analysis_result')
+    tuple val(slug), path(primitive), path(analysis_dir, stageAs: 'analysis_result'),
+        val(has_merged_de), path(merged_de_input, stageAs: 'merged_de_input')
     path pipeline_config
     path report_template
 
@@ -95,6 +98,10 @@ process RENDER_CELL_TYPE_REPORT {
     """
     mkdir -p ${slug}
     cp -a analysis_result/. ${slug}/
+    if [ "${has_merged_de}" = "true" ]; then
+      mkdir -p differential_expression
+      cp merged_de_input differential_expression/merged.csv
+    fi
     pbmc-cell-type-report --input ${primitive} --analysis ${slug}/analysis.h5ad \\
       --output-dir ${slug} --template ${report_template} --config ${pipeline_config}
     """
@@ -106,6 +113,9 @@ process WRITE_CELL_TYPE_MANIFEST {
 
     input:
     path report_dirs
+    path split_manifest
+    val analysed_slugs
+    val selected_slugs
     path merged_input
     path pipeline_config
     path models
@@ -114,8 +124,15 @@ process WRITE_CELL_TYPE_MANIFEST {
     path 'cell_type_manifest.json'
 
     script:
+    def analysed_args = analysed_slugs
+        ? analysed_slugs.collect { slug -> "--analysed-slug ${slug}" }.join(' ')
+        : ''
+    def selected_args = selected_slugs
+        ? selected_slugs.collect { slug -> "--selected-slug ${slug}" }.join(' ')
+        : ''
     """
     pbmc-cell-type-manifest --input ${merged_input} --config ${pipeline_config} --model ${models} \\
+      --split-manifest ${split_manifest} ${analysed_args} ${selected_args} \\
       --report-dir ${report_dirs} --output cell_type_manifest.json
     """
 }

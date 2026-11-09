@@ -35,6 +35,7 @@ export const initialAtlasSession: AtlasSessionState = {
 }
 
 export type AtlasSessionAction =
+  | { type: 'initializeCellType'; cellType: string }
   | { type: 'initializePathway'; pathways: PathwaySet[] }
   | { type: 'selectGene'; gene: string | null; cellType?: string }
   | { type: 'selectCellType'; cellType: string }
@@ -50,6 +51,10 @@ export type AtlasSessionAction =
 
 export function atlasSessionReducer(state: AtlasSessionState, action: AtlasSessionAction): AtlasSessionState {
   switch (action.type) {
+    case 'initializeCellType':
+      return state.selectedCellType === null
+        ? { ...state, selectedCellType: action.cellType }
+        : state
     case 'initializePathway': {
       if (state.geneSetTouched || action.pathways.length === 0) return state
       const pathway =

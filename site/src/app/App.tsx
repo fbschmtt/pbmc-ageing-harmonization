@@ -16,12 +16,24 @@ import { releaseLabel } from './releaseLabel'
 import { atlasSessionReducer, initialAtlasSession } from './session'
 import { SingleCellPage } from '../features/singleCell/SingleCellPage'
 import { TranscriptomicClockPage } from '../features/content/TranscriptomicClockPage'
-import { preloadCombinedAgeModel } from '../data/differential'
+import { loadDifferential, preloadCombinedAgeModel } from '../data/differential'
+import { initialCell } from '../features/differential/differentialView'
 
 export function App() {
   const [session, dispatch] = useReducer(atlasSessionReducer, initialAtlasSession)
   useEffect(() => {
-    void preloadCombinedAgeModel(session.selectedCellType).catch(() => {})
+    let active = true
+    loadDifferential()
+      .then((data) => {
+        if (!active) return
+        const initial = initialCell(data.cellTypes, null, null)
+        dispatch({ type: 'initializeCellType', cellType: initial.label })
+        void preloadCombinedAgeModel(initial.label).catch(() => {})
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
   }, [])
   const { page, navigate } = usePageNavigation()
   const {
