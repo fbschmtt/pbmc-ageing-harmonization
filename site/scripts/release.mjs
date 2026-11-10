@@ -16,7 +16,7 @@ import { verifyRelease } from './verify-release.mjs'
 import { pantherFilename, pantherRelease, pantherSha256 } from './panther-release.mjs'
 import { exportSingleCell } from './export-single-cell.mjs'
 import { exportClocks } from './export-clocks.mjs'
-import { addStudySupport } from './export-study-support.mjs'
+import { addStudySupport, removeIndividualModels } from './export-study-support.mjs'
 import { writeDifferentialDownload } from './export-de-download.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -96,7 +96,7 @@ export async function createRelease(inputPath, targetPath, options = {}) {
         const asset = `de-models/${cellIndex}-${modelIndex}.json`
         await mkdir(join(stage, 'de-models'), { recursive: true })
         if (model.model !== 'per_study' && model.model !== 'developmental') {
-          const downloadAsset = `de-downloads/${cell.id}/${model.model}-${model.covariate}.csv`
+          const downloadAsset = `de-downloads/${cell.id}/${model.model}-${model.covariate}.csv.gz`
           const downloadPath = join(stage, downloadAsset)
           await mkdir(dirname(downloadPath), { recursive: true })
           await writeDifferentialDownload(sourceFile, downloadPath)
@@ -235,34 +235,8 @@ export async function createRelease(inputPath, targetPath, options = {}) {
         trajectoryMap.geneBuckets[bucket] = path
       }
       await writeFile(join(stage, 'pipeline-trajectory-map.json'), JSON.stringify(trajectoryMap))
-      const buckets = new Map()
-      for (const record of trajectory.records) {
-        if (record.adjustedPValue < 0.05) continue
-        const bucket = geneBucket(record.gene)
-        if (!buckets.has(bucket)) buckets.set(bucket, [])
-        buckets.get(bucket).push(record)
-      }
-      trajectory.geneBuckets = {}
-      if (buckets.size) await mkdir(join(stage, 'trajectory-extras'), { recursive: true })
-      for (const [bucket, records] of buckets) {
-        const path = `trajectory-extras/${bucket}.json`
-        await writeFile(
-          join(stage, path),
-          JSON.stringify({
-            schemaVersion: 1,
-            release: trajectory.release,
-            records,
-            genes: [...new Set(records.map((record) => record.gene))],
-            cellTypes: trajectory.cellTypes,
-            tissues: trajectory.tissues,
-          }),
-        )
-        trajectory.geneBuckets[bucket] = path
-      }
-      trajectory.records = trajectory.records.filter((record) => record.adjustedPValue < 0.05)
-      trajectory.description +=
-        ' The default map shows adjusted p < 0.05; requested genes may include other retained trajectories.'
-      await writeFile(trajectoryPath, JSON.stringify(trajectory))
+      // All full profiles live in trajectory-details; gene/pathway views use DE models.
+      await rm(trajectoryPath)
     }
     // Keep the model catalogue small; fetch gene records only for the selected model.
     const dePath = join(stage, 'de-index.json')
@@ -298,6 +272,7 @@ export async function createRelease(inputPath, targetPath, options = {}) {
     }
     await writeFile(dePath, JSON.stringify(catalogue))
     await timed('preparing study support counts', () => addStudySupport(stage))
+    await timed('removing individual model assets', () => removeIndividualModels(stage))
     await timed('preparing single-cell summaries', () => exportSingleCell(input, stage))
     await timed('preparing transcriptomic clock results', () => exportClocks(input, stage, catalogue))
     const assets = await timed('validating and stamping generated assets', () =>
@@ -307,6 +282,7 @@ export async function createRelease(inputPath, targetPath, options = {}) {
     )
     let compressedCount = 0
     for (const [index, asset] of assets.entries()) {
+      if (['de_download', 'single_cell_image'].includes(asset.kind)) continue // Already compressed; publish only the .csv.gz file.
       const source = await readFile(join(stage, asset.path))
       if (source.length >= 16 * 1024 * 1024)
         progress(`Compressing large asset ${index + 1}/${assets.length}: ${asset.path} (${formatBytes(source.length)})`)

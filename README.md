@@ -1157,7 +1157,8 @@ predictions when an older analysis output does not yet contain the aggregate sum
 the component clocks share the same input, configuration, and study splits.
 To build the aggregate and diagnostics from already fitted per-type clocks without
 refitting them, run `make aggregate-age-clocks`; then run `make site-export` to publish
-the selector option and report.
+the selector option. The aggregate report remains in the analysis outputs;
+it is not copied into the site's HTML report bundle.
 
 Smoke-test with `make run-age-clock-synthetic-test` and check that expected output files
 exist with `make check-age-clock-synthetic-test`; both are included in `make run-all-test`
@@ -1173,13 +1174,24 @@ trajectory, transcriptomic-clock, pathway, dataset, modelling, overview, and
 about views. Cell-type and gene selections are shared across views when matching
 results exist, and cell-type selectors use the shared type colors. A shared
 gene set can be selected on the Pathways page or edited from a plot; it
-highlights matching genes in the differential-expression and by-cell-type
-trajectory plots. In the volcano plot, gene-set points have a distinct outline
-and are drawn above ordinary points; the selected point is drawn last.
+highlights matching genes in the per-cell-type differential-expression plot and
+the age-bin trajectory map. In the per-cell-type volcano plot, gene-set points
+have a distinct outline and are drawn above ordinary points; the selected point is drawn last.
 
-Volcano-plot color shows the number of studies with a significant result for
-the same contrast, regardless of direction. Zero is gray; missing support is
-shown as unavailable. The viridis scale runs from one to the largest tested-
+The per-gene volcano and pathway heatmap use combined linear age effects per
+decade. The per-gene volcano plots the matching combined-model adjusted
+p-values on its y axis, colors points by cell type, and uses the same square
+plot sizing as the per-cell-type volcano. Exact-gene lookups include
+non-significant results; the pathway heatmap does not run an enrichment test.
+These views do not require clustered trajectory results. Full trajectory profiles are stored
+once for the UMAP; the separate per-type age-bin preview remains available.
+Standalone figures are exported as PNG files, deduplicated for single-cell
+views and automatically recompressed losslessly when that reduces their size.
+HTML reports and their embedded figures are copied unchanged.
+
+Per-cell-type volcano-plot color shows the number of studies with a significant
+result for the same contrast, regardless of direction. Zero is gray; missing
+support is shown as unavailable. The viridis scale runs from one to the largest tested-
 study count among the plotted genes. A switch beside reference-bin expression
 colors points by study-balanced expression (log₂ CPM + 1) instead. This mode is
 selected by default when study-support data are unavailable. Its color-bar
@@ -1222,6 +1234,25 @@ release. It does not rerun analysis. Changes to analysis outputs, newly rendered
 QC figures, or newly available clocks require another export. `make site-build`
 validates the current export and creates the static site in `site/dist/`; run
 both targets after changing source results before deploying a static build.
+The interactive DE catalogue publishes combined models and the developmental
+juvenile-age and age-25-versus-5 results. Per-study DE chunks are removed after
+computing study-support counts. The developmental adult-age result is omitted
+from the site but remains in the analysis outputs. Combined DE downloads are
+prepared from source result tables during export and stored only as `.csv.gz`
+archives; the browser extracts them when downloading and saves a plain
+CSV with the original source values (per year for linear-age effects). Browsers
+without decompression support receive the gzip archive instead.
+These storage reductions take effect after re-exporting and rebuilding the site:
+
+```bash
+make site-export
+make site-build
+```
+
+Deploy the complete resulting `site/dist/`, including the PNG assets and gzip
+files. Download `.csv.gz` files and JSON/SVG `.gz.bin` companions must be served
+as raw compressed bytes without HTTP `Content-Encoding`; the frontend handles
+their decompression. Keep the original JSON files for browser fallback support.
 The build expects to be served from the host root. See
 [the data contract](site/DATA_CONTRACT.md) for asset contents, provenance,
 release validation, and publication considerations.
@@ -1229,7 +1260,10 @@ release validation, and publication considerations.
 For test data, run the relevant workflow first and point `SITE_INPUT` at its
 per-type output. `make site-test-workflow` exercises existing `output/test`
 artifacts without replacing the local export. Browser tests build an isolated
-synthetic release and do not change the export. Useful frontend checks are:
+synthetic release and do not change the export. They check downloaded CSV
+filenames and exact contents, decompression failures and fallback, matching
+volcano sizes on desktop and mobile, model values, and PNG image loading.
+Useful frontend checks are:
 
 ```bash
 make site-test

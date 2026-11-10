@@ -78,6 +78,7 @@ export async function exportAtlas(inputPath, outputPath, options = {}) {
     for (const model of metadata.models || []) {
       if (model.status !== 'complete' || model.purpose === 'age_trajectory') continue
       for (const [covariate, path] of Object.entries(model.results_by_covariate || {})) {
+        if (model.model === 'developmental' && !['juvenile_age', 'age_25_vs_5'].includes(covariate)) continue
         const file = resolve(dir, path)
         const rel = relative(dir, file)
         if (rel.startsWith('..') || isAbsolute(rel)) throw new Error(`Unsafe result path: ${path}`)

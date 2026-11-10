@@ -16,7 +16,7 @@ import type { AtlasSessionAction, AtlasSessionState } from './session'
 export function useSiteData(page: Page, dispatch: Dispatch<AtlasSessionAction>, session: AtlasSessionState) {
   const [releaseLoading, setReleaseLoading] = useState(true)
   const [release, setRelease] = useState<ReleaseManifest | null>(null)
-  const [atlas, setAtlas] = useState<Atlas | null>(null)
+  const [legacyAtlas, setLegacyAtlas] = useState<Atlas | null>(null)
   const [trajectoryMap, setTrajectoryMap] = useState<TrajectoryMap | null>(null)
   const [loadError, setLoadError] = useState<AssetFailureKind | null>(null)
   const [annotationError, setAnnotationError] = useState<AssetFailureKind | null>(null)
@@ -36,21 +36,16 @@ export function useSiteData(page: Page, dispatch: Dispatch<AtlasSessionAction>, 
       .finally(() => pendingChunks.current.delete(path))
   }, [extraRecords])
   const ensureTrajectoryDetails = useCallback((point: TrajectoryPoint) => {
-    if (atlas?.records.some((record) => record.id === point.id)) return
+    if (legacyAtlas?.records.some((record) => record.id === point.id)) return
     const path = trajectoryMap?.geneBuckets?.[geneBucket(point.gene)]
     if (path) requestChunk(path)
-  }, [atlas, trajectoryMap, requestChunk])
-  const requestedText =
-    ['pathways', 'geneTypeMatrix'].includes(page)
-      ? session.highlightGenes
-      : page === 'genes'
-        ? session.geneProfile.gene || session.selectedGene || ''
-        : page === 'trajectories'
-          ? session.trajectory.query || (session.trajectory.selectedId ? session.selectedGene || '' : '')
-          : ''
+  }, [legacyAtlas, trajectoryMap, requestChunk])
+  const requestedText = page === 'trajectories'
+    ? session.trajectory.query || (session.trajectory.selectedId ? session.selectedGene || '' : '')
+    : ''
   const requestedGenes = useMemo(() => parseGeneSet(requestedText), [requestedText])
   useEffect(() => {
-    const source = page === 'trajectories' ? trajectoryMap : atlas
+    const source = page === 'trajectories' ? trajectoryMap : null
     if (!source?.geneBuckets) return
     const paths = [
       ...new Set(
@@ -66,14 +61,7 @@ export function useSiteData(page: Page, dispatch: Dispatch<AtlasSessionAction>, 
     return () => {
       window.clearTimeout(timer)
     }
-  }, [atlas, trajectoryMap, page, requestedGenes, extraRecords, requestChunk])
-  const visibleAtlas = useMemo(() => {
-    if (!atlas?.geneBuckets || !requestedGenes.size) return atlas
-    const additional = Object.values(extraRecords)
-      .flat()
-      .filter((record) => requestedGenes.has(record.gene.toUpperCase()))
-    return { ...atlas, records: [...atlas.records, ...additional] }
-  }, [atlas, extraRecords, requestedGenes])
+  }, [trajectoryMap, page, requestedGenes, extraRecords, requestChunk])
   const visibleTrajectoryMap = useMemo(() => {
     if (!trajectoryMap) return null
     const baseIds = new Set(trajectoryMap.records.map((record) => record.id))
@@ -84,8 +72,8 @@ export function useSiteData(page: Page, dispatch: Dispatch<AtlasSessionAction>, 
     return { ...trajectoryMap, records: [...trajectoryMap.records, ...additional] }
   }, [trajectoryMap, extraRecords, requestedGenes])
   useEffect(() => {
-    const source = page === 'trajectories' ? trajectoryMap : atlas
-    if (!source?.geneBuckets || !['genes', 'trajectories', 'pathways', 'geneTypeMatrix'].includes(page))
+    const source = page === 'trajectories' ? trajectoryMap : null
+    if (!source?.geneBuckets || page !== 'trajectories')
       return
     const genes = parseGeneSet(session.highlightGenes)
     if (!genes.size) return
@@ -102,7 +90,7 @@ export function useSiteData(page: Page, dispatch: Dispatch<AtlasSessionAction>, 
     return () => {
       window.clearTimeout(timer)
     }
-  }, [atlas, trajectoryMap, session.highlightGenes, page, extraRecords, requestChunk])
+  }, [trajectoryMap, session.highlightGenes, page, extraRecords, requestChunk])
   useEffect(() => {
     if (!['genes', 'trajectories'].includes(page) || geneMetadata) return
     let active = true
@@ -158,7 +146,7 @@ export function useSiteData(page: Page, dispatch: Dispatch<AtlasSessionAction>, 
         loadAtlas()
           .then((legacy) => {
             if (!active) return
-            setAtlas(legacy)
+            setLegacyAtlas(legacy)
             setTrajectoryMap({
               schemaVersion: 1,
               release: legacy.release,
@@ -180,20 +168,6 @@ export function useSiteData(page: Page, dispatch: Dispatch<AtlasSessionAction>, 
       active = false
     }
   }, [page, trajectoryMap])
-  useEffect(() => {
-    if (!['genes', 'pathways', 'geneTypeMatrix'].includes(page) || atlas) return
-    let active = true
-    loadAtlas()
-      .then((value) => {
-        if (active) setAtlas(value)
-      })
-      .catch((error) => {
-        if (active) setLoadError(assetFailureKind(error))
-      })
-    return () => {
-      active = false
-    }
-  }, [page, atlas])
   useEffect(() => {
     if (!['pathways', 'differential', 'geneTypeMatrix', 'trajectories'].includes(page)) return
     let active = true
@@ -217,9 +191,8 @@ export function useSiteData(page: Page, dispatch: Dispatch<AtlasSessionAction>, 
   return {
     release,
     releaseLoading,
-    atlas: visibleAtlas,
     trajectoryMap: visibleTrajectoryMap,
-    trajectoryDetails: [...(atlas?.records ?? []), ...Object.values(extraRecords).flat()],
+    trajectoryDetails: [...(legacyAtlas?.records ?? []), ...Object.values(extraRecords).flat()],
     ensureTrajectoryDetails,
     loadError,
     pathwaySets,

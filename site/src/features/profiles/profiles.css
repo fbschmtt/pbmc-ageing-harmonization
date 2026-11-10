@@ -1,5 +1,6 @@
 .profiles-page.profiles-page {
-  padding-top: 16px;
+  margin: auto;
+  padding: 18px max(4vw, 34px) 48px;
 }
 .profiles-layout.profiles-layout {
   grid-template-columns: 220px minmax(0, 1fr) 315px;

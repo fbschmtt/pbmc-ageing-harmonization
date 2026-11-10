@@ -94,9 +94,17 @@ export async function verifyRelease(directory) {
         throw new Error(`Invalid study figure: ${asset.path}`)
       continue
     }
+    if (asset.kind === 'single_cell_image') {
+      if (!/^single-cell-images\/[a-f0-9]{64}\.png$/.test(asset.path) ||
+          asset.path !== `single-cell-images/${asset.sha256}.png` ||
+          !bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')))
+        throw new Error(`Invalid single-cell figure: ${asset.path}`)
+      continue
+    }
     if (asset.kind === 'de_download') {
-      if (!asset.path.startsWith('de-downloads/') || !asset.path.endsWith('.csv'))
+      if (!asset.path.startsWith('de-downloads/') || !(asset.path.endsWith('.csv') || asset.path.endsWith('.csv.gz')))
         throw new Error(`Invalid combined-model download: ${asset.path}`)
+      if (asset.path.endsWith('.gz')) gunzipSync(bytes)
       continue
     }
     if (asset.kind === 'de_preview') {
@@ -137,6 +145,10 @@ export async function verifyRelease(directory) {
       const details = parsed.get(cell.path)
       if (ids.has(cell.id) || cell.path !== `single-cell/${cell.id}.json` || !details || details.cellType !== cell.label)
         throw new Error(`Invalid single-cell reference: ${cell.id}`)
+      for (const image of [details.image, details.ageDeImage, ...(details.fractionDetails || []).map((d) => d.image)].filter(Boolean)) {
+        if (image.startsWith('single-cell-images/') && !manifest.assets.some((asset) => asset.path === image && asset.kind === 'single_cell_image'))
+          throw new Error(`Missing single-cell figure: ${image}`)
+      }
       ids.add(cell.id)
     }
   }
@@ -238,8 +250,11 @@ export async function verifyRelease(directory) {
         throw new Error(`Invalid age-preview gene chunk: ${path}`)
     }
   }
-  if (trajectory && trajectory.records.some((record) => !labels.has(record.cellType)))
-    throw new Error('Trajectory references an unknown cell type')
+  for (const [path, value] of parsed) {
+    if ((path === 'pipeline-trajectory-index.json' || path.startsWith('trajectory-details/')) &&
+        value.records.some((record) => !labels.has(record.cellType)))
+      throw new Error('Trajectory references an unknown cell type')
+  }
   const composition = parsed.get('pipeline-composition-index.json')
   if (
     composition &&

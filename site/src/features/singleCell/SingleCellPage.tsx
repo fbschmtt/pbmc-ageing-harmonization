@@ -24,6 +24,9 @@ export function SingleCellPage({
   const selected = index?.cellTypes.find((item) => item.label === preferredCellType) ?? index?.cellTypes[0]
   const selectedCluster = data?.groups.find((group) => group.cluster === cluster) ?? data?.groups[0]
   const fractionDetail = data?.fractionDetails?.find((item) => item.cluster === selectedCluster?.cluster)
+  const imageSource = (image: string) => image.startsWith('single-cell-images/')
+    ? `${import.meta.env.BASE_URL}data/${image}?release=${encodeURIComponent(data?.releaseId || '')}`
+    : `data:image/png;base64,${image}`
   const maxFitRows = Math.max(0, ...(data?.fractionDetails ?? []).map((item) => item.fits.length))
 
   useEffect(() => {
@@ -145,7 +148,7 @@ export function SingleCellPage({
             </div>
             <img
               className="single-cell-umap"
-              src={`data:image/png;base64,${data.image}`}
+              src={imageSource(data.image)}
               alt={`UMAP of ${data.cellType}, colored by local cluster`}
             />
           </article>
@@ -229,7 +232,7 @@ export function SingleCellPage({
             {data.ageDeImage ? (
               <img
                 className="single-cell-umap single-cell-age-de-image"
-                src={`data:image/png;base64,${data.ageDeImage}`}
+                src={imageSource(data.ageDeImage)}
                 alt={`Expression of up to nine significant age-associated genes on the ${data.cellType} UMAP`}
               />
             ) : (
@@ -269,7 +272,7 @@ export function SingleCellPage({
               <>
                 <div className="single-cell-plot-frame">
                   <img
-                    src={`data:image/png;base64,${fractionDetail.image}`}
+                    src={imageSource(fractionDetail.image)}
                     alt={`Cluster ${fractionDetail.cluster} sample-level fractions across age for ${data.cellType}, colored by study`}
                   />
                 </div>

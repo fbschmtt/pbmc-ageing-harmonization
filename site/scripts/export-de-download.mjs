@@ -1,4 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises'
+import { gzipSync } from 'node:zlib'
 import { parseCsv } from './parse-csv.mjs'
 
 const downloadColumns = [
@@ -62,5 +63,5 @@ export async function writeDifferentialDownload(source, target) {
     selected,
     ...rows.map((row) => indexes.map((index) => row[index])),
   ].map((row) => Array.isArray(row) ? row.map(encodeField).join(',') : row).join('\n') + '\n'
-  await writeFile(target, output)
+  await writeFile(target, target.endsWith('.gz') ? gzipSync(output, { level: 9 }) : output)
 }

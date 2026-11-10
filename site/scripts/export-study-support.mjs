@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, writeFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 
 // Annotate model chunks after export, one cell type at a time, without loading
@@ -43,4 +43,20 @@ export async function addStudySupport(stage) {
       }
     }
   }
+}
+
+// Study chunks are staging inputs for support counts, not published downloads.
+export async function removeIndividualModels(stage) {
+  const path = join(stage, 'de-index.json')
+  const index = JSON.parse(await readFile(path, 'utf8'))
+  for (const cell of index.cellTypes) {
+    for (const model of cell.models.filter((model) => model.model === 'per_study')) {
+      for (const asset of [model.recordsAsset, ...Object.values(model.recordBuckets || {})].filter(Boolean))
+        await unlink(join(stage, asset))
+    }
+    cell.models = cell.models.filter((model) => model.model !== 'per_study')
+  }
+  index.cellTypes = index.cellTypes.filter((cell) => cell.models.length)
+  if (!index.cellTypes.length) throw new Error('No completed combined or developmental DE models to publish')
+  await writeFile(path, JSON.stringify(index))
 }

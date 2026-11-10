@@ -59,7 +59,7 @@ export function VolcanoPlot<T>({
       Number(Boolean(highlighted?.(a.record))) - Number(Boolean(highlighted?.(b.record))),
   )
   return (
-    <figure className={`volcano-plot ${className}`}>
+    <figure className={`volcano-plot ${aspectRatio === 'square' ? 'volcano-plot-square' : ''} ${className}`}>
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={ariaLabel}>
         {yAxis.ticks.map((tick) => (
           <g key={tick}>

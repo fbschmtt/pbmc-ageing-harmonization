@@ -4,7 +4,9 @@ import { validAsset } from '../src/data/contracts.mjs'
 import { files, hash } from './release-sources.mjs'
 
 const kindOf = (name) =>
-  name === 'single-cell-index.json'
+  name.startsWith('single-cell-images/') && name.endsWith('.png')
+    ? 'single_cell_image'
+    : name === 'single-cell-index.json'
     ? 'singleCellIndex'
     : name.startsWith('single-cell/') && name.endsWith('.json')
       ? 'singleCell'
@@ -34,7 +36,7 @@ const kindOf = (name) =>
                   ? 'trajectory_preview'
                   : name.startsWith('reference-expression/') && name.endsWith('.json')
                     ? 'referenceExpression'
-                    : name.startsWith('de-downloads/') && name.endsWith('.csv')
+                    : name.startsWith('de-downloads/') && (name.endsWith('.csv') || name.endsWith('.csv.gz'))
                       ? 'de_download'
                       : name.startsWith('de-previews/') && name.endsWith('.svg')
                         ? 'de_preview'
@@ -52,7 +54,7 @@ export async function stampAssets(stage, id, onProgress) {
     const name = relative(stage, path).replaceAll('\\', '/')
     const kind = kindOf(name)
     if (!kind) continue // internal age-preview cleanup manifest
-    if (kind === 'de_download' || kind === 'de_preview' || kind === 'trajectory_preview') {
+    if (kind === 'single_cell_image' || kind === 'de_download' || kind === 'de_preview' || kind === 'trajectory_preview') {
       const contents = await readFile(path)
       assets.push({ path: name, kind, bytes: contents.length, sha256: hash(contents) })
       continue

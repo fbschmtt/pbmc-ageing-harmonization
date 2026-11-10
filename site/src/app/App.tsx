@@ -39,7 +39,6 @@ export function App() {
   const {
     release,
     releaseLoading,
-    atlas,
     trajectoryMap,
     trajectoryDetails,
     ensureTrajectoryDetails,
@@ -70,11 +69,6 @@ export function App() {
     navigate('genes')
   }
   const openGene = (gene: string) => {
-    const record = atlas?.records.find((item) => item.gene === gene)
-    if (record) {
-      openProfile(record, false)
-      return
-    }
     dispatch({ type: 'selectGene', gene, cellType: session.selectedCellType ?? undefined })
     dispatch({
       type: 'setProfile',
@@ -84,10 +78,8 @@ export function App() {
     navigate('genes')
   }
   const openGenePair = (gene: string, cellType: string) => {
-    const record = atlas?.records.find((item) => item.gene === gene && item.cellType === cellType)
     dispatch({ type: 'selectGene', gene, cellType })
-    if (record) dispatch({ type: 'openProfile', tab: 'gene', record, selectPair: true })
-    else dispatch({ type: 'setProfile', tab: 'gene', state: { ...session.geneProfile, gene, cellType, selectedId: null } })
+    dispatch({ type: 'setProfile', tab: 'gene', state: { ...session.geneProfile, gene, cellType, selectedId: null } })
     navigate('genes')
   }
   const openCellType = (cellType: string) => {
@@ -176,7 +168,7 @@ export function App() {
           }}
         />
       )}
-      {!atlas && !trajectoryMap && ['genes', 'trajectories'].includes(page) && (
+      {!trajectoryMap && page === 'trajectories' && (
         <section className="content-page">
           <h1>
             {loadError === 'invalid'
@@ -217,23 +209,22 @@ export function App() {
           onSelectPathway={selectPathway}
         />
       )}
-      {page === 'genes' && atlas && (
+      {page === 'genes' && (
         <ProfilesPage
-          atlas={atlas}
           state={session.geneProfile}
           preferredGene={session.selectedGene}
           onSelectGene={(gene, cellType) => dispatch({ type: 'selectGene', gene, cellType })}
-          onSelectCellType={(cellType) => dispatch({ type: 'selectCellType', cellType })}
+          onOpenCellType={openCellType}
+          onOpenTrajectory={(gene, cellType) => {
+            dispatch({ type: 'focusTrajectoryPair', gene, cellType })
+            navigate('trajectories')
+          }}
           onStateChange={(state) => dispatch({ type: 'setProfile', tab: 'gene', state })}
-          tab="gene"
-          actions={pairActions}
           geneMetadata={geneMetadata}
         />
       )}
       {['pathways', 'geneTypeMatrix'].includes(page) && (
         <PathwaysPage
-          atlas={atlas}
-          loadError={loadError}
           genes={session.highlightGenes}
           onGenesChange={updateHighlightGenes}
           onOpenGene={openGene}

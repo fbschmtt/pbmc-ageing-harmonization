@@ -5,7 +5,7 @@ import { afterEach, expect, it } from 'vitest'
 import { exportSingleCell } from './export-single-cell.mjs'
 
 const roots = []
-const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a1sAAAAASUVORK5CYII='
+const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
 
 async function analysis(input, id, label, notebook = true) {
@@ -37,6 +37,8 @@ it('exports only complete manifest entries and preserves older reports without f
   expect(payload.groups[0].higher[0]).toMatchObject({ gene: 'UP', effect: 2 })
   expect(payload.groups[0].lower[0]).toMatchObject({ gene: 'DOWN', effect: -3 })
   expect(payload.fractionDetails).toBeNull()
+  expect(payload.image).toMatch(/^single-cell-images\/[a-f0-9]{64}\.png$/)
+  expect(await readFile(join(stage, payload.image))).toEqual(Buffer.from(png, 'base64'))
 })
 
 it('rejects a report that disagrees with its manifest', async () => {

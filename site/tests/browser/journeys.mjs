@@ -6,7 +6,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { gzipSync } from 'node:zlib'
+import { gzipSync, gunzipSync } from 'node:zlib'
 import { chromium } from '@playwright/test'
 import { makeFixture } from './fixture.mjs'
 import { verifyRelease } from '../../scripts/verify-release.mjs'
@@ -19,6 +19,7 @@ const types = {
   '.css': 'text/css',
   '.json': 'application/json',
   '.svg': 'image/svg+xml',
+  '.png': 'image/png',
 }
 
 async function serve(root) {
@@ -110,6 +111,13 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
     const built = await verifyRelease(join(dist, 'data'))
     assert.equal(built.releaseId, manifest.releaseId)
     assert.ok(built.assets.some((asset) => asset.kind === 'trajectoryMap'))
+    assert.equal(built.assets.some((asset) => asset.path === 'pipeline-trajectory-index.json' || asset.path.startsWith('trajectory-extras/')), false)
+    const chunks = built.assets.filter((asset) => asset.path.startsWith('trajectory-details/'))
+    const profiles = (await Promise.all(chunks.map(async (asset) => JSON.parse(await readFile(join(dist, 'data', asset.path), 'utf8')).records))).flat()
+    assert.equal(profiles.length, 3)
+    assert.equal(new Set(profiles.map((row) => row.id)).size, 3)
+    assert.ok(built.assets.some((asset) => asset.kind === 'single_cell_image'))
+    assert.equal(built.assets.some((asset) => asset.kind === 'single_cell_image' && asset.gzipPath), false)
     const report = built.assets.find((asset) => asset.kind === 'report' && asset.cellType === 'CD14 monocyte')
     assert.ok(report)
     assert.equal(
@@ -124,7 +132,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       executablePath: process.env.SITE_BROWSER_EXECUTABLE || undefined,
     })
 
-    await runJourney('release', 'preloads combined age results and keeps per-study fits lazy', async () => {
+    await runJourney('release', 'preloads combined age results and keeps developmental fits lazy', async () => {
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
@@ -139,12 +147,13 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         const catalogue = JSON.parse(await readFile(join(dist, 'data/de-index.json'), 'utf8'))
         const cell = catalogue.cellTypes.find((item) => item.label === 'CD14 monocyte')
         const combined = cell.models.find((model) => model.model === 'merged' && model.covariate === 'age')
-        const other = cell.models.find((model) => model.model === 'per_study')
+        const other = cell.models.find((model) => model.model === 'developmental' && model.covariate === 'juvenile_age')
+        assert.equal(cell.models.some((model) => model.model === 'per_study' || model.covariate === 'adult_age'), false)
         const otherPaths = [other.recordsAsset, ...Object.values(other.recordBuckets || {})]
         const wasRequested = (asset) =>
           requests.some((path) => path.endsWith(`/${asset}`) || path.endsWith(`/${asset}.gz.bin`))
         assert.equal(wasRequested(combined.recordsAsset), true, 'Combined age results were not preloaded')
-        assert.equal(otherPaths.some(wasRequested), false, 'Per-study model was prefetched')
+        assert.equal(otherPaths.some(wasRequested), false, 'Developmental model was prefetched')
         await choosePageFromGroup(page, 'Differential expression', 'By cell type')
         await visible(page.locator('.de-statistics'))
         const volcano = page.locator('.de-volcano-plot')
@@ -158,19 +167,87 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         )
         await visible(page.getByText('123.40 CPM', { exact: false }))
         assert.equal(await page.getByText('Mean normalized count', { exact: false }).count(), 0)
-        await visible(page.getByRole('link', { name: 'Download DEG results', exact: true }))
+        const download = page.getByRole('button', { name: 'Download DEG results', exact: true })
+        await visible(download)
+        const savedEvent = page.waitForEvent('download')
+        await download.click()
+        const saved = await savedEvent
+        assert.equal(saved.suggestedFilename(), 'cd14-monocyte-age-combined.csv')
+        assert.equal(await saved.failure(), null)
+        const savedBytes = await readFile(await saved.path())
+        const expectedBytes = gunzipSync(await readFile(join(dist, 'data', combined.downloadAsset)))
+        assert.ok(savedBytes.equals(expectedBytes), 'Saved CSV differs from the exported download')
         assert.equal(await page.locator('.volcano-explorer-gene-set').evaluate((node) => node.open), true)
         await page.getByLabel('Highlight genes').fill('GENE3')
         assert.equal(otherPaths.some(wasRequested), false, 'Unselected model was prefetched')
         assert.ok(requests.some((path) => path.includes('/data/de-models/') && path.endsWith('.gz.bin')))
-        await chooseMenu(page, 'Analysis', 'study_a · Age (per decade)')
+        await chooseMenu(page, 'Analysis', 'Developmental · Juvenile age (per year)')
         await page.locator('.volcano-explorer-about > summary').click()
-        await visible(page.getByText('Effect: age · per year.', { exact: false }))
-        assert.equal(await page.getByRole('link', { name: 'Download DEG results', exact: true }).count(), 0)
+        await visible(page.getByText('Effect: juvenile age · per year.', { exact: false }))
+        assert.equal(await page.getByRole('button', { name: 'Download DEG results', exact: true }).isDisabled(), true)
         assert.equal(wasRequested(other.recordsAsset), true, 'Selected model was not fetched')
+        await chooseMenu(page, 'Analysis', 'Combined · Age (per decade)')
         await visible(page.getByText('3 of 3 studies significant', { exact: true }))
         assert.ok((await page.locator('svg[aria-label^="Volcano plot"] title').allTextContents())
           .some((title) => title.includes('3 of 3 studies significant')))
+      } finally {
+        await context.close()
+      }
+    })
+
+    await runJourney('release', 'failed CSV downloads save no file and allow retry', async () => {
+      const context = await browser.newContext()
+      try {
+        const page = await context.newPage()
+        let downloads = 0
+        page.on('download', () => { downloads++ })
+        await openApp(page, served.url)
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
+        const button = page.getByRole('button', { name: 'Download DEG results', exact: true })
+        await visible(button)
+        const pattern = '**/data/de-downloads/**'
+        let finishRequest
+        let requestStarted
+        const started = new Promise((resolve) => { requestStarted = resolve })
+        const finish = new Promise((resolve) => { finishRequest = resolve })
+        await page.route(pattern, async (route) => {
+          requestStarted()
+          await finish
+          await route.fulfill({ status: 200, contentType: 'application/gzip', body: 'invalid gzip' })
+        })
+        await button.click()
+        await started
+        await visible(page.getByRole('button', { name: 'Preparing CSV…', exact: true }))
+        assert.equal(await page.getByRole('button', { name: 'Preparing CSV…', exact: true }).isDisabled(), true)
+        finishRequest()
+        await visible(page.getByRole('alert').filter({ hasText: 'Could not prepare the CSV download' }))
+        assert.equal(downloads, 0)
+        await page.unroute(pattern)
+        const savedEvent = page.waitForEvent('download')
+        await button.click()
+        const saved = await savedEvent
+        assert.match(saved.suggestedFilename(), /\.csv$/)
+        assert.equal(await saved.failure(), null)
+      } finally {
+        await context.close()
+      }
+    })
+
+    await runJourney('release', 'offers the gzip file when browser decompression is unavailable', async () => {
+      const context = await browser.newContext()
+      try {
+        await context.addInitScript(() => { window.DecompressionStream = undefined })
+        const page = await context.newPage()
+        await openApp(page, served.url)
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
+        const link = page.getByRole('link', { name: 'Download compressed DEG results', exact: true })
+        await visible(link)
+        const savedEvent = page.waitForEvent('download')
+        await link.click()
+        const saved = await savedEvent
+        assert.match(saved.suggestedFilename(), /\.csv\.gz$/)
+        assert.equal(await saved.failure(), null)
+        assert.match(gunzipSync(await readFile(await saved.path())).toString('utf8'), /gene,log2FoldChange|gene,baseMean/)
       } finally {
         await context.close()
       }
@@ -217,8 +294,15 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         const page = await context.newPage()
         const legacy = {
           ...built,
-          assets: built.assets.filter((asset) => asset.kind !== 'trajectoryMap' && !asset.path.startsWith('trajectory-details/')),
+          assets: [...built.assets.filter((asset) => asset.kind !== 'trajectoryMap'),
+            { path: 'pipeline-trajectory-index.json', kind: 'trajectory', bytes: 0, sha256: 'legacy-fixture' }],
         }
+        const map = JSON.parse(await readFile(join(dist, 'data/pipeline-trajectory-map.json'), 'utf8'))
+        const profiles = (await Promise.all(Object.values(map.geneBuckets).map(async (path) =>
+          JSON.parse(await readFile(join(dist, 'data', path), 'utf8')).records))).flat()
+        await page.route('**/data/pipeline-trajectory-index.json*', (route) => route.fulfill({
+          json: { ...map, records: profiles.filter((row) => row.adjustedPValue < 0.05) },
+        }))
         await page.route('**/data/release.json.gz.bin', (route) =>
           route.fulfill({ body: gzipSync(JSON.stringify(legacy)), contentType: 'application/octet-stream' }),
         )
@@ -351,7 +435,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       }
     })
 
-    await runJourney('navigation', 'retrieves non-significant retained trajectories for an explicit gene', async () => {
+    await runJourney('navigation', 'uses combined linear age results for every cell type, including types without trajectories', async () => {
       const context = await browser.newContext()
       try {
         const page = await context.newPage()
@@ -365,6 +449,13 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
           .filter({ hasText: 'Naive CD4 T cell' })
           .waitFor({ state: 'attached' })
         assert.equal(await page.locator('.profile-scatter circle').filter({ has: page.locator('title', { hasText: 'Naive CD4 T cell' }) }).getAttribute('fill'), '#597FC6')
+        assert.equal(await page.getByLabel('Gene symbol').inputValue(), 'GENE2')
+        assert.equal(await page.locator('.profile-scatter circle').count(), 3)
+        await visible(page.locator('.profile-scatter').getByText('Combined linear age effect (log₂ fold change per decade)'))
+        const titles = await page.locator('.profile-scatter title').allTextContents()
+        assert.ok(titles.some((title) => title.includes('CD14 monocyte') && title.includes('per decade: -3.50') && title.includes('model): 0.020')))
+        assert.ok(titles.some((title) => title.includes('CD16 monocyte')))
+        assert.ok(titles.some((title) => title.includes('Naive CD4 T cell') && title.includes('model): 0.020')), 'Gene view used the trajectory omnibus p-value instead of the linear model')
         const profilePlot = page.locator('.profile-scatter')
         await clickPoint(profilePlot, 'CD14 monocyte')
         await clickPoint(profilePlot, 'Naive CD4 T cell')
@@ -375,6 +466,64 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         })
       } finally {
         await context.close()
+      }
+    })
+
+    await runJourney('navigation', 'keeps the entered gene while initial model data loads', async () => {
+      const context = await browser.newContext()
+      let releaseModels
+      try {
+        const page = await context.newPage()
+        const gate = new Promise((resolve) => { releaseModels = resolve })
+        await page.route('**/data/de-models/**', async (route) => {
+          await gate
+          await route.fallback()
+        })
+        await openApp(page, served.url)
+        await choosePageFromGroup(page, 'Differential expression', 'By gene')
+        await visible(page.getByLabel('Gene symbol'))
+        await page.getByLabel('Gene symbol').fill('GENE2')
+        releaseModels()
+        await page.locator('.profile-scatter title').filter({ hasText: 'CD14 monocyte' }).waitFor({ state: 'attached' })
+        assert.equal(await page.getByLabel('Gene symbol').inputValue(), 'GENE2')
+        await visible(page.locator('.pair-card').getByRole('heading', { name: 'GENE2', exact: true }))
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
+        await visible(page.getByRole('heading', { name: 'GENE2', exact: true }))
+      } finally {
+        releaseModels?.()
+        await context.close()
+      }
+    })
+
+    await runJourney('navigation', 'gene and pathway views avoid trajectory assets and share volcano sizing', async () => {
+      for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+        const context = await browser.newContext({ viewport })
+        try {
+          const page = await context.newPage()
+          const requests = []
+          page.on('request', (request) => requests.push(new URL(request.url()).pathname))
+          await openApp(page, served.url)
+          await choosePageFromGroup(page, 'Differential expression', 'By cell type')
+          await visible(page.locator('.de-volcano-plot svg'))
+          const reference = await page.locator('.de-volcano-plot svg').boundingBox()
+          await choosePageFromGroup(page, 'Differential expression', 'By gene')
+          await page.getByLabel('Gene symbol').fill('GENE2')
+          await visible(page.locator('.profile-scatter svg'))
+          const actual = await page.locator('.profile-scatter svg').boundingBox()
+          assert.ok(Math.abs(reference.width - actual.width) < 1, 'Per-gene width differs from per-type')
+          assert.ok(Math.abs(reference.height - actual.height) < 1, 'Per-gene height differs from per-type')
+          assert.equal(await page.locator('.profile-scatter svg').getAttribute('viewBox'), '0 0 800 800')
+          await page.getByLabel('Gene symbol').fill('GENE3')
+          await page.locator('.profile-scatter title').filter({ hasText: 'CD14 monocyte' }).waitFor({ state: 'attached' })
+          assert.match((await page.locator('.profile-scatter title').allTextContents()).join(' '), /model\): 0\.50/)
+          await page.getByRole('button', { name: 'Pathways', exact: true }).click()
+          await page.locator('.pathways-controls textarea').fill('GENE2')
+          await visible(page.locator('.heatmap'))
+          assert.equal(await page.locator('.heatmap-column-label').count(), 3)
+          assert.equal(requests.some((path) => /pipeline-trajectory-(index|map)\.json|trajectory-(details|extras)\//.test(path)), false)
+        } finally {
+          await context.close()
+        }
       }
     })
 
@@ -467,6 +616,10 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         await page.getByRole('button', { name: 'Cell states', exact: true }).click()
         await visible(page.getByRole('heading', { name: 'Cell states' }))
         await visible(page.getByRole('img', { name: 'UMAP of CD14 monocyte, colored by local cluster' }))
+        const image = page.getByRole('img', { name: 'UMAP of CD14 monocyte, colored by local cluster' })
+        assert.match(await image.getAttribute('src'), /\/data\/single-cell-images\/[a-f0-9]{64}\.png\?release=/)
+        await image.evaluate((element) => element.decode())
+        assert.ok(await image.evaluate((element) => element.naturalWidth > 0))
         assert.equal(await page.getByText('Explore the local embedding and clusters within each annotated cell type.').count(), 0)
         assert.equal(await page.getByText('Each point is a cell; colors and labels show local Leiden clusters.').count(), 0)
         assert.deepEqual(
@@ -564,13 +717,13 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
         await visible(page.getByText('SYNTHETIC TEST DATA · EXPORT', { exact: false }))
         await choosePageFromGroup(page, 'Differential expression', 'By cell type')
         await visible(page.getByText('Synthetic fixture: not biological evidence.'))
-        await chooseMenu(page, 'Analysis', 'study_a · Age (per decade)')
+        await chooseMenu(page, 'Analysis', 'Developmental · Juvenile age (per year)')
         await page.locator('.volcano-explorer-about > summary').click()
-        await visible(page.getByText('Effect: age · per year.', { exact: false }))
+        await visible(page.getByText('Effect: juvenile age · per year.', { exact: false }))
         await page.getByLabel('Search genes').fill('GENE2')
         await chooseMenu(page, 'Matching genes (1)', 'GENE2')
         await visible(page.getByRole('heading', { name: 'GENE2', exact: true }))
-        await visible(page.locator('.de-statistics dd').first().filter({ hasText: '-2.10' }))
+        await visible(page.locator('.de-statistics dd').first().filter({ hasText: '-0.21' }))
         await choosePageFromGroup(page, 'Differential expression', 'By gene')
         await visible(page.locator('.profiles-page'))
         assert.equal(await page.getByLabel('Gene symbol').inputValue(), 'GENE2')
@@ -696,6 +849,42 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
       }
     })
 
+    await runJourney('navigation', 'shows signed maximum age-bin change only in trajectory details below the linear effect', async () => {
+      const context = await browser.newContext()
+      try {
+        const page = await context.newPage()
+        await openApp(page, served.url)
+        const maximumLabel = 'Signed maximum age-bin change (vs 20–30)'
+        await choosePageFromGroup(page, 'More age analysis', 'Age-bin trajectories')
+        const card = page.locator('.detail-panel .pair-card')
+        for (const [gene, linear, maximum] of [
+          ['GENE1', '+1.20 log₂ fold change', '+0.60 log₂ fold change'],
+          ['GENE2', '-3.50 log₂ fold change', '-0.70 log₂ fold change'],
+        ]) {
+          await page.getByLabel('Focus by gene or cell type').fill(gene)
+          await visible(card.getByRole('button', { name: gene, exact: true }))
+          const linearRow = card.locator('dl > div').filter({ has: page.getByText('Combined linear age effect per decade', { exact: true }) })
+          const maximumRow = card.locator('dl > div').filter({ has: page.getByText(maximumLabel, { exact: true }) })
+          await visible(linearRow.getByText(linear, { exact: true }))
+          await visible(maximumRow.getByText(maximum, { exact: true }))
+          const terms = await card.locator('dt').allTextContents()
+          assert.equal(terms[terms.indexOf('Combined linear age effect per decade') + 1], maximumLabel)
+          await visible(card.getByText('Age-bin omnibus adjusted p-value', { exact: true }))
+        }
+        await choosePageFromGroup(page, 'Differential expression', 'By gene')
+        await visible(page.locator('.profile-scatter'))
+        assert.equal(await page.getByText(maximumLabel, { exact: true }).count(), 0)
+        await choosePageFromGroup(page, 'Differential expression', 'By cell type')
+        await visible(page.locator('.de-volcano-plot'))
+        assert.equal(await page.getByText(maximumLabel, { exact: true }).count(), 0)
+        await page.getByRole('button', { name: 'Pathways', exact: true }).click()
+        await visible(page.locator('.pathways-page'))
+        assert.equal(await page.getByText(maximumLabel, { exact: true }).count(), 0)
+      } finally {
+        await context.close()
+      }
+    })
+
     await runJourney('navigation', 'shares the cell type selected from the trajectory map', async () => {
       const context = await browser.newContext()
       try {
@@ -724,9 +913,9 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
           await openApp(page, served.url)
           await choosePageFromGroup(page, 'Differential expression', 'By cell type')
           await visible(menuTrigger(page, 'Analysis'))
-          await chooseMenu(page, 'Analysis', 'study_a · Age (per decade)')
+          await chooseMenu(page, 'Analysis', 'Developmental · Juvenile age (per year)')
           await chooseMenu(page, 'Cell type', 'Naive CD4 T cell')
-          await assertMenu(page, 'Analysis', 'study_a · Age (per decade)')
+          await assertMenu(page, 'Analysis', 'Developmental · Juvenile age (per decade)')
           await page.getByLabel('Search genes').fill('GENE2')
           await chooseMenu(page, 'Matching genes (1)', 'GENE2')
           await visible(page.locator('.de-statistics dd').first().filter({ hasText: '-0.67' }))
@@ -734,9 +923,9 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
           await visible(
             page.getByText('The selected model is unavailable for CD16 monocyte.', { exact: false }),
           )
-          await assertMenu(page, 'Analysis', 'study_a · Age (per decade) (unavailable)')
+          await assertMenu(page, 'Analysis', 'Developmental · Juvenile age (per year) (unavailable)')
           await chooseMenu(page, 'Cell type', 'CD14 monocyte')
-          await visible(page.locator('.de-statistics dd').first().filter({ hasText: '-2.10' }))
+          await visible(page.locator('.de-statistics dd').first().filter({ hasText: '-0.21' }))
           await page.getByRole('button', { name: 'Composition', exact: true }).click()
           await visible(menuTrigger(page, 'Age plot denominator'))
           await chooseMenu(page, 'Age plot denominator', 'Within retained PBMCs')
@@ -744,7 +933,7 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
           await assertMenu(page, 'Age plot denominator', 'Within retained PBMCs')
           await choosePageFromGroup(page, 'Differential expression', 'By cell type')
           await visible(menuTrigger(page, 'Analysis'))
-          await assertMenu(page, 'Analysis', 'study_a · Age (per decade)')
+          await assertMenu(page, 'Analysis', 'Developmental · Juvenile age (per decade)')
           await assertMenu(page, 'Cell type', 'Naive CD4 T cell')
           await page.getByRole('button', { name: 'Composition', exact: true }).click()
           await visible(menuTrigger(page, 'Age plot denominator'))

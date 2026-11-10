@@ -1,4 +1,4 @@
-import { validAsset, type DifferentialRelease } from './contracts.mjs'
+import { validAsset, type DifferentialRelease, type Gene } from './contracts.mjs'
 import { AssetError, fetchReleaseAsset, prefetchReleaseAsset } from './release'
 import { geneBucket } from './geneBucket.mjs'
 
@@ -11,28 +11,30 @@ export type ReferenceExpression = {
   method: string
   genes: Record<string, { cpm: number; studies: number; samples: number }>
 }
-const combinedAgeEffectCache = new Map<string, Promise<number | null>>()
+const combinedAgeResultCache = new Map<string, Promise<Gene | null>>()
 
-export function loadCombinedAgeEffect(cellType: string, gene: string): Promise<number | null> {
+export function loadCombinedAgeResult(cellType: string, gene: string): Promise<Gene | null> {
   const key = `${cellType.toLocaleLowerCase()}\0${gene.toLocaleUpperCase()}`
-  const cached = combinedAgeEffectCache.get(key)
+  const cached = combinedAgeResultCache.get(key)
   if (cached) return cached
   const request = (async () => {
     const release = await loadDifferential()
     const cell = release.cellTypes.find((item) => item.label === cellType)
     const model = cell?.models.find((item) => item.model === 'merged' && item.covariate === 'age')
-    if (!cell || !model?.recordsAsset) return null
-    const findEffect = (records: Awaited<ReturnType<typeof loadModelRecords>>) =>
-      records.find((record) => record.gene.toLocaleUpperCase() === gene.toLocaleUpperCase())?.effect ?? null
-    const records = await loadModelRecords(model.recordsAsset, cell.id, model.id)
-    const direct = findEffect(records)
-    if (direct !== null) return direct
+    if (!cell || !model) return null
+    const find = (records: Gene[]) =>
+      records.find((record) => record.gene.toLocaleUpperCase() === gene.toLocaleUpperCase()) ?? null
+    const direct = find(model.recordsAsset ? await loadModelRecords(model.recordsAsset, cell.id, model.id) : model.records)
+    if (direct) return direct
     const bucket = model.recordBuckets?.[geneBucket(gene)]
-    return bucket ? findEffect(await loadModelRecords(bucket, cell.id, model.id)) : null
+    return bucket ? find(await loadModelRecords(bucket, cell.id, model.id)) : null
   })()
-  combinedAgeEffectCache.set(key, request)
-  request.catch(() => combinedAgeEffectCache.delete(key))
+  combinedAgeResultCache.set(key, request)
+  request.catch(() => combinedAgeResultCache.delete(key))
   return request
+}
+export async function loadCombinedAgeEffect(cellType: string, gene: string): Promise<number | null> {
+  return (await loadCombinedAgeResult(cellType, gene))?.effect ?? null
 }
 export async function loadDifferential(): Promise<DifferentialRelease> {
   const value = await fetchReleaseAsset('de-index.json')

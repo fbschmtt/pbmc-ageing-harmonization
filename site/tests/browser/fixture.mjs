@@ -35,13 +35,13 @@ export async function makeFixture(root) {
   await write(join(analysis, 'markers.tsv'), 'names\tscores\tlogfoldchanges\tpvals_adj\tgroup\nTESTMARKER\t3.2\t2.4\t0.01\t0\nOTHER\t-2\t-1.5\t0.1\t0\nSECOND\t3\t1\t0.01\t1\n')
   await write(join(analysis, 'executed.ipynb'), JSON.stringify({ cells: [
     { cell_type: 'markdown', source: ['### Harmony-Integrated UMAP'] },
-    { cell_type: 'code', outputs: [{ data: { 'image/png': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a1sAAAAASUVORK5CYII=' } }] },
+    { cell_type: 'code', outputs: [{ data: { 'image/png': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=' } }] },
     { cell_type: 'code', source: ['# cluster-fraction zeros included\ncluster_fractions = sample_cluster_fractions('], outputs: [
       { data: { 'text/markdown': ['_3 sample(s) excluded from cluster fractions because the split cell-type denominator has fewer than 10 cells._'] } },
-      { data: { 'text/html': ['<details><summary>Show cluster-composition curves</summary><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a1sAAAAASUVORK5CYII="></details>'] } },
+      { data: { 'text/html': ['<details><summary>Show cluster-composition curves</summary><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="></details>'] } },
       { data: { 'application/vnd.pbmc.cluster-fractions+json': { clusters: [
-        { cluster: '0', image: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a1sAAAAASUVORK5CYII=', fits: [{ study: null, samples: 3, meanFraction: 0.25, slopePpPerDecade: 1.5 }, { study: 'study_a', samples: 1, meanFraction: 0.5, slopePpPerDecade: null }] },
-        { cluster: '1', image: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a1sAAAAASUVORK5CYII=', fits: [{ study: null, samples: 3, meanFraction: 0.75, slopePpPerDecade: -1.5 }] },
+        { cluster: '0', image: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=', fits: [{ study: null, samples: 3, meanFraction: 0.25, slopePpPerDecade: 1.5 }, { study: 'study_a', samples: 1, meanFraction: 0.5, slopePpPerDecade: null }] },
+        { cluster: '1', image: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=', fits: [{ study: null, samples: 3, meanFraction: 0.75, slopePpPerDecade: -1.5 }] },
       ] } } },
     ] },
     { cell_type: 'code', source: ['# study-specific linear trends'], outputs: [] },
@@ -83,6 +83,8 @@ export async function makeFixture(root) {
           ]),
           results_by_covariate: { age: 'merged.csv' },
         },
+        { model: 'developmental', status: 'complete', design: '~ age + juvenile_age', n_samples: 8,
+          results_by_covariate: { juvenile_age: 'study.csv', age_25_vs_5: 'study.csv', adult_age: 'study.csv' } },
         ...[
           ['study_a', 'study.csv'],
           ['study_b', 'study-b.csv'],
@@ -178,12 +180,11 @@ export async function makeFixture(root) {
           ...(hasFractions
             ? [
                 {
-                  model: 'per_study',
-                  study: 'study_a',
+                  model: 'developmental',
                   status: 'complete',
                   design: '~ age',
                   n_samples: 8,
-                  results_by_covariate: { age: 'study.csv' },
+                  results_by_covariate: { juvenile_age: 'study.csv' },
                 },
               ]
             : []),
@@ -201,7 +202,7 @@ export async function makeFixture(root) {
     )
     await write(
       join(other, 'merged.csv'),
-      'gene,log2FoldChange,padj,pvalue,lfcSE,baseMean,contrast\nGENE1,0.11,0.01,0.001,0.02,10,per year\nGENE2,-0.22,0.02,0.01,0.04,20,per year\n',
+      `gene,log2FoldChange,padj,pvalue,lfcSE,baseMean,contrast\nGENE1,0.11,0.01,0.001,0.02,10,per year\nGENE2,${hasFractions ? '-0.22,0.02' : '-0.32,0.03'},0.01,0.04,20,per year\n`,
     )
     if (hasFractions)
       await write(

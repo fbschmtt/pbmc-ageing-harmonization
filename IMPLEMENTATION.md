@@ -358,9 +358,16 @@ for up to five positive and four negative age-DE genes. It selects FDR-significa
 genes (adjusted p < 0.05) by adjusted p-value, overlays per-cell log-normalized
 expression, and draws low-expression cells before high-expression cells. The
 overlay is descriptive; significance comes from the merged sample-level
-pseudobulk model. The site release exports the rendered PNG only, without
-per-cell expression values. The single-cell page places this image alongside
-the sample-level cluster-fraction plot.
+pseudobulk model. The site release extracts PNG outputs from the executed
+notebook, without per-cell expression values. Single-cell figures, including
+per-cluster fraction plots, are stored as separate PNG assets referenced by
+summary JSON. Export applies lossless level-9 recompression only when it saves
+bytes and deduplicates identical optimized PNGs by SHA-256. The original
+notebooks and copied HTML reports remain unchanged. The single-cell page places
+the age-DE image alongside the sample-level cluster-fraction plot. See the
+[static atlas data contract](site/DATA_CONTRACT.md) for publication formats and
+the distinction between linear DE results, per-type age-bin previews, and
+clustered UMAP trajectories.
 
 Each study is fitted once with its maximal available design: age and sex plus
 each optional covariate with at least two observed values, plus `study_site`

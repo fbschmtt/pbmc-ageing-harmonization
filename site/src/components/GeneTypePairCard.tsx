@@ -74,7 +74,7 @@ export function GeneTypePairCard({
           </dd>
         </div>
         <div>
-          <dt>Adjusted p-value</dt>
+          <dt>Age-bin omnibus adjusted p-value</dt>
           <dd>{formatNumber(record.adjustedPValue)}</dd>
         </div>
         <div>
@@ -83,6 +83,12 @@ export function GeneTypePairCard({
             {ageEffectLoaded && combinedAgeEffect !== null
               ? `${combinedAgeEffect * 10 > 0 ? '+' : ''}${formatNumber(combinedAgeEffect * 10)} log₂ fold change`
               : ageEffectLoaded ? 'Unavailable' : 'Loading…'}
+          </dd>
+        </div>
+        <div>
+          <dt>Signed maximum age-bin change (vs 20–30)</dt>
+          <dd>
+            {record.valueAtMaxAbsChange > 0 ? '+' : ''}{formatNumber(record.valueAtMaxAbsChange)} log₂ fold change
           </dd>
         </div>
         <div>

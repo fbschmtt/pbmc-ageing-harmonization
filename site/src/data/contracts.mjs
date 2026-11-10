@@ -28,7 +28,7 @@
 /** @typedef {{ schemaVersion: number; releaseId?: string; ageDomain: [number, number]; cellTypes: ClockCellType[] }} ClockIndex */
 /** @typedef {{ gene: string; effect: number; padj: number | null }} ClusterMarker */
 /** @typedef {{ cluster: string; image: string; fits: { study: string | null; samples: number; meanFraction: number; slopePpPerDecade: number | null }[] }} ClusterFractionDetail */
-/** @typedef {{ schemaVersion: number; cellType: string; nCells: number; nClusters: number; integration: string; image: string; ageDeImage?: string | null; ageDeNote?: string | null; fractionNote?: string | null; fractionHasStudyTrends?: boolean; fractionIncludesZeros?: boolean; fractionDetails?: ClusterFractionDetail[] | null; groups: { cluster: string; higher?: ClusterMarker[]; lower?: ClusterMarker[]; markers?: { gene: string; score: number; padj: number | null }[] }[] }} SingleCell */
+/** @typedef {{ schemaVersion: number; releaseId?: string; cellType: string; nCells: number; nClusters: number; integration: string; image: string; ageDeImage?: string | null; ageDeNote?: string | null; fractionNote?: string | null; fractionHasStudyTrends?: boolean; fractionIncludesZeros?: boolean; fractionDetails?: ClusterFractionDetail[] | null; groups: { cluster: string; higher?: ClusterMarker[]; lower?: ClusterMarker[]; markers?: { gene: string; score: number; padj: number | null }[] }[] }} SingleCell */
 /** @typedef {{ de: DifferentialRelease; trajectory: Atlas; trajectoryMap: TrajectoryMap; composition: FractionIndex; preview: Preview; pathways: { pathwaySets: PathwaySet[] }; metadata: GeneMetadataIndex; singleCell: SingleCell; singleCellIndex: SingleCellIndex; referenceExpression: ReferenceExpression; clock: ClockIndex; clockModel: ClockModelAsset }} Assets */
 
 // Shared runtime contract for published JSON and browser loaders.
@@ -40,6 +40,7 @@ const nullableNumber = (x) => x === null || num(x)
 const count = (x) => Number.isInteger(x) && x >= 0
 const probability = (x) => num(x) && x >= 0 && x <= 1
 const arr = (x, predicate) => Array.isArray(x) && x.every(predicate)
+const pngImage = (x) => str(x) && (x.startsWith('iVBORw0KGgo') || /^single-cell-images\/[a-f0-9]{64}\.png$/.test(x))
 const base = (x) => obj(x) && x.schemaVersion === 1
 const clockPrediction = (point) => obj(point) && str(point.study) && num(point.age) && num(point.predictedAge) &&
   (point.nCellTypes === undefined || count(point.nCellTypes))
@@ -146,15 +147,15 @@ const validators = {
     ['training', 'heldOut'].every((split) => obj(x[split]) && arr(x[split].predictions, clockPrediction)),
   singleCellIndex: (x) => base(x) && arr(x.cellTypes, (c) => obj(c) && str(c.id) && str(c.label) && str(c.path)),
   singleCell: (x) => base(x) && str(x.cellType) && count(x.nCells) && count(x.nClusters) &&
-    str(x.integration) && str(x.image) && x.image.startsWith('iVBORw0KGgo') &&
+    str(x.integration) && pngImage(x.image) &&
     (x.ageDeImage === undefined || x.ageDeImage === null ||
-      (str(x.ageDeImage) && x.ageDeImage.startsWith('iVBORw0KGgo'))) &&
+      pngImage(x.ageDeImage)) &&
     (x.ageDeNote === undefined || x.ageDeNote === null || typeof x.ageDeNote === 'string') &&
     (x.fractionNote === undefined || x.fractionNote === null || typeof x.fractionNote === 'string') &&
     (x.fractionHasStudyTrends === undefined || typeof x.fractionHasStudyTrends === 'boolean') &&
     (x.fractionIncludesZeros === undefined || typeof x.fractionIncludesZeros === 'boolean') &&
     (x.fractionDetails == null || arr(x.fractionDetails, (d) => obj(d) && str(d.cluster) &&
-      str(d.image) && d.image.startsWith('iVBORw0KGgo') && arr(d.fits, (fit) => obj(fit) &&
+      pngImage(d.image) && arr(d.fits, (fit) => obj(fit) &&
         nullableString(fit.study) && count(fit.samples) && probability(fit.meanFraction) &&
         nullableNumber(fit.slopePpPerDecade)))) &&
     arr(x.groups, (g) => obj(g) && str(g.cluster) && (

@@ -21,6 +21,7 @@ import { formatCpm, formatNumber } from '../../theme/format'
 import { defaultModelId, groupModels, modelLabel } from './modelSelection'
 import { filterGenes, hasPlottableEstimate, initialCell, visibleGenes } from './differentialView'
 import { studySupportColor, viridisColor } from './studySupportScale'
+import { DifferentialDownload } from './DifferentialDownload'
 import { GeneAgePreview } from './GeneAgePreview'
 import './differential.css'
 
@@ -354,13 +355,12 @@ export function DifferentialPage({
             />
             <div className="de-combined-download">
               {combinedDownload ? (
-                <a
-                  className="de-download-button"
-                  href={`${import.meta.env.BASE_URL}data/${combinedDownload}?release=${encodeURIComponent(release.releaseId || '')}`}
-                  download={`${cell.id}-${model?.covariate}-combined.csv`}
-                >
-                  Download DEG results
-                </a>
+                <DifferentialDownload
+                  key={`${release.releaseId}:${combinedDownload}`}
+                  path={combinedDownload}
+                  releaseId={release.releaseId || ''}
+                  filename={`${cell.id}-${model?.covariate}-combined.csv`}
+                />
               ) : (
                 <button className="de-download-button" type="button" disabled>
                   Download DEG results

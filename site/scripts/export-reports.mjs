@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { access, copyFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve, isAbsolute } from 'node:path'
+import { optimizePng } from './png.mjs'
 import { exists, hashFile } from './release-sources.mjs'
 
 async function optional(path) {
@@ -124,20 +125,24 @@ export async function exportReports(input, stage, releaseId, cellTypes, onProgre
       if (!key) continue
       const next = cells[index + 1]
       const output = next?.outputs?.find((item) => item.data?.['image/png'])
-      if (output) figures[key] = Buffer.from(output.data['image/png'], 'base64')
+      if (output) {
+        const image = output.data['image/png']
+        figures[key] = Buffer.from(Array.isArray(image) ? image.join('') : image, 'base64')
+      }
     }
     for (const [kind, bytes] of Object.entries(figures)) {
       if (!bytes) continue
       const path = `images/${releaseId}/studies/${id}-${kind}.png`
       const target = join(stage, path)
       await mkdir(dirname(target), { recursive: true })
-      await writeFile(target, bytes)
+      const optimized = optimizePng(bytes)
+      await writeFile(target, optimized)
       reports.push({
         path,
         kind: `study_${kind}`,
         study: id,
-        bytes: bytes.length,
-        sha256: createHash('sha256').update(bytes).digest('hex'),
+        bytes: optimized.length,
+        sha256: createHash('sha256').update(optimized).digest('hex'),
       })
     }
   }

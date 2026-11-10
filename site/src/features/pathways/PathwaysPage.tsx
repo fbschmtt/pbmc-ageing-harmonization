@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { GeneSetInput } from '../../components/GeneSetInput'
 import { PathwayAttribution } from '../../components/PathwayAttribution'
-import type { Atlas } from '../../data/atlas'
-import { loadCombinedAgeEffect } from '../../data/differential'
+import type { DifferentialRelease } from '../../data/contracts.mjs'
+import { assetFailureKind, type AssetFailureKind } from '../../data/release'
+import { loadCombinedAgeEffect, loadDifferential } from '../../data/differential'
 import { groupCellTypes } from '../../data/cellTypeHierarchy'
 import { parseGeneSet } from '../../data/geneSet'
 import type { PathwaySet } from '../../data/pathways'
@@ -12,8 +13,6 @@ import { formatNumber } from '../../theme/format'
 import './pathways.css'
 
 export function PathwaysPage({
-  atlas,
-  loadError,
   genes,
   onGenesChange,
   onOpenGene,
@@ -22,8 +21,6 @@ export function PathwaysPage({
   activePathway,
   onSelectPathway,
 }: {
-  atlas: Atlas | null
-  loadError: 'unavailable' | 'invalid' | 'mismatch' | null
   genes: string
   onGenesChange: (value: string) => void
   onOpenGene: (gene: string) => void
@@ -32,12 +29,22 @@ export function PathwaysPage({
   activePathway: PathwaySet | null
   onSelectPathway: (pathway: PathwaySet) => void
 }) {
+  const [catalogue, setCatalogue] = useState<DifferentialRelease | null>(null)
+  const [loadError, setLoadError] = useState<AssetFailureKind | null>(null)
+  useEffect(() => {
+    let active = true
+    loadDifferential().then((value) => { if (active) setCatalogue(value) })
+      .catch((error) => { if (active) setLoadError(assetFailureKind(error)) })
+    return () => { active = false }
+  }, [])
   const [hideGenesWithoutResults, setHideGenesWithoutResults] = useState(false)
   const [combinedAgeEffects, setCombinedAgeEffects] = useState<Record<string, number | null>>({})
   const [effectsLoading, setEffectsLoading] = useState(false)
   const cellTypes = useMemo(
-    () => atlas ? groupCellTypes(atlas.cellTypes).flatMap((group) => group.cellTypes) : [],
-    [atlas?.cellTypes],
+    () => catalogue ? groupCellTypes(catalogue.cellTypes.filter((cell) =>
+      cell.models.some((model) => model.model === 'merged' && model.covariate === 'age'),
+    ).map((cell) => cell.label)).flatMap((group) => group.cellTypes) : [],
+    [catalogue],
   )
   const selectedGenes = useMemo(() => [...parseGeneSet(genes)], [genes])
   useEffect(() => {
@@ -176,7 +183,7 @@ export function PathwaysPage({
             <p>Each value is the combined linear-age model estimate in log₂ fold change per decade. Select a gene or cell type label to open its detailed view.</p>
           </div>
         </div>
-        {!atlas ? (
+        {!catalogue ? (
           <div className="empty-pathways" role={loadError ? 'alert' : 'status'}>
             {loadError === 'invalid'
               ? 'The age-effect data is invalid.'

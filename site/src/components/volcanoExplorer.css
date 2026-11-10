@@ -237,11 +237,11 @@
 .volcano-explorer-main .profile-scatter svg {
   max-height: none;
 }
-.volcano-explorer-main .de-volcano-plot {
+.volcano-explorer-main .volcano-plot-square {
   width: min(100%, 68svh);
   margin-inline: auto;
 }
-.volcano-explorer-main .de-volcano-plot svg {
+.volcano-explorer-main .volcano-plot-square svg {
   width: 100%;
   height: auto;
 }
@@ -271,7 +271,7 @@
   .volcano-explorer-detail {
     border-top: 1px solid var(--atlas-border);
   }
-  .volcano-explorer-main .de-volcano-plot {
+  .volcano-explorer-main .volcano-plot-square {
     width: min(100%, 68svh);
   }
 }

@@ -1,5 +1,6 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { writeSingleCellImage } from './png.mjs'
 
 async function optional(path) {
   try { return await readFile(path, 'utf8') } catch (error) {
@@ -105,11 +106,16 @@ export async function exportSingleCell(input, stage) {
         higher: markers.filter((item) => item.effect > 0).sort((a, b) => b.effect - a.effect).slice(0, 10),
         lower: markers.filter((item) => item.effect < 0).sort((a, b) => a.effect - b.effect).slice(0, 10),
       }))
+    const imageAsset = await writeSingleCellImage(stage, encoded)
+    if (ageDeImage) ageDeImage = await writeSingleCellImage(stage, ageDeImage)
+    if (fractionDetails) fractionDetails = await Promise.all(fractionDetails.map(async (detail) => ({
+      ...detail, image: await writeSingleCellImage(stage, detail.image),
+    })))
     const path = `single-cell/${entry.name}.json`
     await mkdir(join(stage, 'single-cell'), { recursive: true })
     await writeFile(join(stage, path), JSON.stringify({ schemaVersion: 1, cellType: report.cell_type,
       nCells: report.n_cells, nClusters: report.n_clusters, integration: report.embedding?.integration?.method || 'none',
-      image: encoded, ageDeImage, ageDeNote, fractionNote, fractionHasStudyTrends, fractionIncludesZeros, fractionDetails, groups }))
+      image: imageAsset, ageDeImage, ageDeNote, fractionNote, fractionHasStudyTrends, fractionIncludesZeros, fractionDetails, groups }))
     cellTypes.push({ id: entry.name, label: report.cell_type, path })
   }
   if (cellTypes.length) await writeFile(join(stage, 'single-cell-index.json'), JSON.stringify({ schemaVersion: 1, cellTypes }))

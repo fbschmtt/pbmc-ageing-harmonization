@@ -1,8 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { gunzipSync } from 'node:zlib'
 import { createHash } from 'node:crypto'
 import { createRelease } from './release.mjs'
 import { verifyRelease } from './verify-release.mjs'
@@ -43,6 +44,10 @@ test('release validates and inventories a snapshot; failure preserves previous r
             results_by_covariate: { age: 'merged.csv' },
           },
           { model: 'per_study', status: 'skipped', reason: 'insufficient samples' },
+          { model: 'per_study', study: 'A', design: '~ age', n_samples: 10, status: 'complete', results_by_covariate: { age: 'merged.csv' } },
+          { model: 'developmental', design: '~ age + juvenile_age', n_samples: 10, status: 'complete', results_by_covariate: {
+            adult_age: 'adult-not-needed.csv', juvenile_age: 'merged.csv', age_25_vs_5: 'merged.csv',
+          } },
         ],
       }),
     )
@@ -119,16 +124,26 @@ test('release validates and inventories a snapshot; failure preserves previous r
     assert.ok(release.assets.some((asset) => asset.path === dePreview && asset.kind === 'de_preview'))
     const model = JSON.parse(de).cellTypes[0].models[0]
     assert.deepEqual(model.records, [])
-    assert.equal(model.downloadAsset, 'de-downloads/monocyte/merged-age.csv')
+    assert.equal(model.downloadAsset, 'de-downloads/monocyte/merged-age.csv.gz')
     assert.equal(release.assets.find((asset) => asset.path === model.downloadAsset).kind, 'de_download')
     assert.equal(
-      await readFile(join(target, model.downloadAsset), 'utf8'),
+      gunzipSync(await readFile(join(target, model.downloadAsset))).toString('utf8'),
       '# Contrast: per year\n' +
         'gene,baseMean,log2FoldChange,lfcSE,pvalue,padj\n' +
         'GENE1,5,0.1,0.02,0.001,0.01\n' +
         'GENE2,7,0.2,0.03,0.4,0.5\n',
     )
+    assert.deepEqual(JSON.parse(de).cellTypes[0].models.map((m) => [m.model, m.covariate]), [
+      ['merged', 'age'], ['developmental', 'juvenile_age'], ['developmental', 'age_25_vs_5'],
+    ])
+    assert.deepEqual(await readdir(join(target, 'de-downloads/monocyte')), ['merged-age.csv.gz'])
+    assert.equal(release.assets.find((a) => a.path === model.downloadAsset).gzipPath, undefined)
+    for (const name of (await readdir(join(target, 'de-models'))).filter((name) => name.endsWith('.json'))) {
+      const chunk = JSON.parse(await readFile(join(target, 'de-models', name), 'utf8'))
+      assert.ok(chunk.cellTypes[0].models.every((m) => m.model !== 'per_study'))
+    }
     const chunk = JSON.parse(await readFile(join(target, model.recordsAsset), 'utf8'))
+    assert.deepEqual(chunk.cellTypes[0].models[0].records[0].studySupport, { significant: 1, tested: 1 })
     assert.deepEqual(
       chunk.cellTypes[0].models[0].records.map((record) => record.gene),
       ['GENE1'],

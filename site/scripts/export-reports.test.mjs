@@ -2,7 +2,20 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { crc32 } from 'node:zlib'
+import { optimizePng } from './png.mjs'
 import { exportReports } from './export-reports.mjs'
+
+const png = (label) => {
+  const base = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=', 'base64')
+  const text = Buffer.from(`Description\0${label}`)
+  const chunk = Buffer.alloc(text.length + 12)
+  chunk.writeUInt32BE(text.length)
+  chunk.write('tEXt', 4)
+  text.copy(chunk, 8)
+  chunk.writeUInt32BE(crc32(chunk.subarray(4, -4)), chunk.length - 4)
+  return Buffer.concat([base.subarray(0, -12), chunk, base.subarray(-12)])
+}
 
 let root
 afterEach(async () => {
@@ -18,7 +31,7 @@ describe('HTML diagnostics', () => {
     await writeFile(join(qc, 'report.html'), '<html>QC</html>')
     const plot = (bytes) => ({
       cell_type: 'code',
-      outputs: [{ data: { 'image/png': Buffer.from(bytes).toString('base64') } }],
+      outputs: [{ data: { 'image/png': png(bytes).toString('base64') } }],
     })
     await writeFile(
       join(qc, 'executed.ipynb'),
@@ -34,7 +47,7 @@ describe('HTML diagnostics', () => {
     const output = join(root, 'release')
     const reports = await exportReports(input, output, 'release-a', [])
     const image = reports.find((item) => item.kind === 'study_umap')
-    expect(await readFile(join(output, image.path), 'utf8')).toBe('dedicated-l2')
+    expect(await readFile(join(output, image.path))).toEqual(optimizePng(png('dedicated-l2')))
     await writeFile(
       join(qc, 'executed.ipynb'),
       JSON.stringify({
