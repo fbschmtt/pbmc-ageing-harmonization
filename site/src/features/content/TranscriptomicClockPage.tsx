@@ -12,20 +12,22 @@ const format = formatNumber
 function PredictionPlot({
   title,
   points,
-  ageDomain,
 }: {
   title: string
   points: ClockPrediction[]
-  ageDomain: [number, number]
 }) {
   const studies = [...new Set(points.map((point) => point.study))].sort()
   const colors = new Map(studies.map((study, index) => [study, palette[index % palette.length]]))
-  const [min, max] = ageDomain
+  const min = 0, max = 100
   const range = max - min
-  const width = 560, height = 370, left = 58, right = 18, top = 18, bottom = 50
+  const width = 560, left = 58, right = 18, top = 18, bottom = 50
+  const height = top + (width - left - right) + bottom
   const x = (value: number) => left + ((value - min) / range) * (width - left - right)
   const y = (value: number) => height - bottom - ((value - min) / range) * (height - top - bottom)
+  const clippedX = (value: number) => x(Math.max(min, Math.min(max, value)))
+  const clippedY = (value: number) => y(Math.max(min, Math.min(max, value)))
   const ticks = Array.from({ length: 5 }, (_, index) => min + (range * index) / 4)
+  const outsideCount = points.filter((point) => point.age < min || point.age > max || point.predictedAge < min || point.predictedAge > max).length
   return (
     <section className="clock-plot" aria-label={title}>
       <h3>{title}</h3>
@@ -39,14 +41,32 @@ function PredictionPlot({
           </g>
         ))}
         <line x1={x(min)} y1={y(min)} x2={x(max)} y2={y(max)} className="clock-reference" />
-        {points.map((point, index) => (
-          <circle key={`${point.study}-${point.age}-${index}`} cx={x(point.age)} cy={y(point.predictedAge)} r="4" fill={colors.get(point.study)} className="clock-dot">
-            <title>{`${point.study}: observed ${format(point.age)} years, predicted ${format(point.predictedAge)} years${point.nCellTypes === undefined ? '' : `; mean of ${point.nCellTypes} cell types`}`}</title>
-          </circle>
-        ))}
+        <g>
+          {points.map((point, index) => {
+            const outsideX = point.age < min || point.age > max
+            const outsideY = point.predictedAge < min || point.predictedAge > max
+            const label = `${point.study}: observed ${format(point.age)} years, predicted ${format(point.predictedAge)} years${point.nCellTypes === undefined ? '' : `; mean of ${point.nCellTypes} cell types`}`
+            if (!outsideX && !outsideY) return (
+              <circle key={`${point.study}-${point.age}-${index}`} cx={x(point.age)} cy={y(point.predictedAge)} r="4" fill={colors.get(point.study)} className="clock-dot">
+                <title>{label}</title>
+              </circle>
+            )
+            const dx = outsideX ? Math.sign(point.age - (min + max) / 2) : 0
+            const dy = outsideY ? -Math.sign(point.predictedAge - (min + max) / 2) : 0
+            const angle = Math.atan2(dy, dx) * 180 / Math.PI
+            return (
+              <path key={`${point.study}-${point.age}-${index}`} d="M 6 0 L -4 -4 L -2 0 L -4 4 Z" transform={`translate(${clippedX(point.age)} ${clippedY(point.predictedAge)}) rotate(${angle})`} fill={colors.get(point.study)} className="clock-outlier-arrow">
+                <title>{`${label}; outside the 0–100 year plot range`}</title>
+              </path>
+            )
+          })}
+        </g>
         <text x={(left + width - right) / 2} y={height - 8} textAnchor="middle" className="clock-axis">Observed age (years)</text>
         <text transform={`translate(15 ${(top + height - bottom) / 2}) rotate(-90)`} textAnchor="middle" className="clock-axis">Predicted age (years)</text>
       </svg>
+      <p className="clock-outlier-note" aria-hidden={outsideCount === 0}>
+        {outsideCount > 0 ? `${outsideCount} ${outsideCount === 1 ? 'point is' : 'points are'} beyond 0–100 years; hover an arrow for its value.` : '\u00a0'}
+      </p>
       <div className="clock-study-key" aria-label="Studies">
         {studies.map((study) => <span key={study}><i style={{ background: colors.get(study) }} />{study}</span>)}
       </div>
@@ -58,7 +78,7 @@ function Performance({ metrics }: { metrics: { n: number; mae: number; rmse: num
   return <p className="clock-metrics">MAE {format(metrics.mae)} years <span>·</span> RMSE {format(metrics.rmse)} years <span>·</span> R² {metrics.r2 === null ? '—' : format(metrics.r2)} <span>·</span> n = {metrics.n}</p>
 }
 
-function ClockCard({ method, ageDomain }: { method: ClockMethod; ageDomain: [number, number] }) {
+function ClockCard({ method }: { method: ClockMethod }) {
   const isCrossType = method.id.startsWith('cross_type_mean:')
   return (
     <article className="clock-method-card atlas-card">
@@ -70,11 +90,11 @@ function ClockCard({ method, ageDomain }: { method: ClockMethod; ageDomain: [num
       <div className="clock-plots">
         <div>
           <Performance metrics={method.training.metrics} />
-          <PredictionPlot title="Training studies · leave-one-study-out" points={method.training.predictions} ageDomain={ageDomain} />
+          <PredictionPlot title="Training studies · leave-one-study-out" points={method.training.predictions} />
         </div>
         <div>
           <Performance metrics={method.heldOut.metrics} />
-          <PredictionPlot title="Held-out studies" points={method.heldOut.predictions} ageDomain={ageDomain} />
+          <PredictionPlot title="Held-out studies" points={method.heldOut.predictions} />
         </div>
       </div>
     </article>
@@ -89,7 +109,6 @@ export function TranscriptomicClockPage({
   onSelectCellType: (cellType: string) => void
 }) {
   const [cellTypes, setCellTypes] = useState<ClockCellType[]>([])
-  const [ageDomain, setAgeDomain] = useState<[number, number]>([0, 100])
   const [selectedCellId, setSelectedCellId] = useState('')
   const [selectedMethodId, setSelectedMethodId] = useState('')
   const [loadedMethod, setLoadedMethod] = useState<ClockMethod | null>(null)
@@ -101,7 +120,6 @@ export function TranscriptomicClockPage({
     loadClockIndex().then((index) => {
       if (!active) return
       setCellTypes(index.cellTypes)
-      setAgeDomain(index.ageDomain)
       setStatus('ready')
     }).catch((error) => {
       if (!active) return
@@ -187,11 +205,11 @@ export function TranscriptomicClockPage({
               />
             </div>
           </div>
-          <p className="clock-explanation">Each dot is a donor pseudobulk. The diagonal marks perfect agreement between observed and predicted age. Study colors make differences in cohort performance visible.</p>
+          <p className="clock-explanation">Each dot is a donor pseudobulk. Axes use the same 0–100 year range for every model and cell type; arrows mark points beyond that range. The diagonal marks perfect agreement between observed and predicted age. Study colors make differences in cohort performance visible.</p>
           {modelStatus === 'loading' && <p role="status">Loading selected clock model…</p>}
           {modelStatus === 'unavailable' && <p role="status">The selected clock model is not available in this site release.</p>}
           {modelStatus === 'invalid' && <p role="alert">The selected clock model could not be read because the release data are invalid.</p>}
-          {modelStatus === 'ready' && loadedMethod && <ClockCard method={loadedMethod} ageDomain={ageDomain} />}
+          {modelStatus === 'ready' && loadedMethod && <ClockCard method={loadedMethod} />}
         </>
       )}
     </section>

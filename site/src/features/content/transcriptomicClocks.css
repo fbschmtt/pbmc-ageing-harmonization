@@ -53,10 +53,12 @@
 .clock-method-card h2 {
   margin-bottom: 6px;
   font-size: 25px;
+  min-height: 1.2em;
 }
 .clock-method-card header > p:last-child {
   max-width: 900px;
   margin: 0;
+  min-height: 3em;
   color: var(--atlas-muted);
   line-height: 1.5;
 }
@@ -66,7 +68,13 @@
   gap: 22px;
   margin-top: 22px;
 }
+.clock-plots > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
 .clock-plot {
+  flex: 1;
   min-width: 0;
   padding: 16px;
   border: 1px solid var(--atlas-border);
@@ -81,6 +89,7 @@
 }
 .clock-metrics {
   margin: 7px 0 0;
+  min-height: 1.5em;
   color: var(--atlas-muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -120,6 +129,19 @@
   stroke-width: 0.7;
   opacity: 0.82;
 }
+.clock-outlier-arrow {
+  stroke: var(--atlas-surface);
+  stroke-width: 0.8;
+  stroke-linejoin: round;
+  opacity: 0.92;
+}
+.clock-outlier-note {
+  margin: -2px 0 5px;
+  min-height: 1.4em;
+  color: var(--atlas-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
 .clock-study-key {
   display: flex;
   flex-wrap: wrap;
@@ -148,5 +170,16 @@
   }
   .clock-method-card {
     padding: 16px;
+  }
+}
+@media (max-width: 600px) {
+  .clock-method-card h2 {
+    min-height: 3.6em;
+  }
+  .clock-method-card header > p:last-child {
+    min-height: 6em;
+  }
+  .clock-metrics {
+    min-height: 2.8em;
   }
 }
