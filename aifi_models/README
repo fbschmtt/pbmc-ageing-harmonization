@@ -1,6 +1,6 @@
 Download the AIFI CellTypist model binaries from the Allen Institute Immune
 Health Atlas model page and place them here using the filenames listed in
-`../INPUT_FILES.md`:
+[the input catalog](../docs/inputs/files.md#celltypist-models):
 
 https://apps.allenimmunology.org/aifi/resources/imm-health-atlas/downloads/models/
 

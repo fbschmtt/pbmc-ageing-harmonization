@@ -3,14 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import shutil
-import subprocess
-import sys
-import tempfile
 from pathlib import Path
 
-from pbmc_pipeline.report_toc import populate_html_toc, set_notebook_title
+from pbmc_pipeline.config import load_analysis_configuration
+from pbmc_pipeline.notebook import render_notebook
 
 
 def generate_cell_type_report(
@@ -20,43 +16,18 @@ def generate_cell_type_report(
     for path in (input_path, analysis_path, template_path, config_path):
         if not path.exists():
             raise FileNotFoundError(path)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    for name in (
-        "age_trajectory_clusters.csv",
-        "age_trajectory_cluster_means.csv",
-        "residual_sample_clusters.csv",
-        "residual_sample_pc_scores.csv",
-    ):
-        (output_dir / name).unlink(missing_ok=True)
-    shutil.rmtree(output_dir / "residual_wgcna", ignore_errors=True)
-    executed, html = output_dir / "executed.ipynb", output_dir / "report.html"
-    env = os.environ.copy()
-    env.update({
-        "CELL_TYPE_H5AD": str(input_path.resolve()),
-        "CELL_TYPE_ANALYSIS_H5AD": str(analysis_path.resolve()),
-        "CELL_TYPE_OUTPUT_DIR": str(output_dir.resolve()),
-        "CELL_TYPE_CONFIG": str(config_path.resolve()),
-    })
-    with tempfile.TemporaryDirectory(prefix="pbmc-cell-type-notebook-") as temporary_dir:
-        materialized_template = Path(temporary_dir) / f"{template_path.stem}.ipynb"
-        subprocess.run([sys.executable, "-m", "jupytext", "--to", "notebook", "--output", str(materialized_template), str(template_path.resolve())], check=True, env=env)
-        subprocess.run([sys.executable, "-m", "jupyter", "nbconvert", "--execute", "--to", "notebook", "--output", executed.name, "--output-dir", str(output_dir), str(materialized_template)], check=True, env=env)
-    if executed.is_file():
-        report_metadata_path = output_dir / "report.json"
-        report_metadata = json.loads(report_metadata_path.read_text()) if report_metadata_path.is_file() else {}
-        set_notebook_title(
-            executed,
-            f"{report_metadata.get('cell_type', input_path.stem)} | PBMC ageing",
-        )
-    subprocess.run([
-        sys.executable, "-m", "jupyter", "nbconvert", "--to", "html",
-        "--HTMLExporter.exclude_input=True",
-        "--HTMLExporter.exclude_input_prompt=True",
-        "--HTMLExporter.exclude_output_prompt=True",
-        "--output", html.name, "--output-dir", str(output_dir), str(executed),
-    ], check=True, env=env)
-    populate_html_toc(html)
-    return html
+    load_analysis_configuration(config_path, sections=("cell_type_analysis", "processing"))
+    def title():
+        metadata_path = output_dir / "report.json"
+        metadata = json.loads(metadata_path.read_text()) if metadata_path.is_file() else {}
+        return f"{metadata.get('cell_type', input_path.stem)} | PBMC ageing"
+    return render_notebook(
+        template_path=template_path, output_dir=output_dir, project_root=Path.cwd(),
+        environment={"CELL_TYPE_H5AD": str(input_path.resolve()),
+                     "CELL_TYPE_ANALYSIS_H5AD": str(analysis_path.resolve()),
+                     "CELL_TYPE_OUTPUT_DIR": str(output_dir.resolve()),
+                     "CELL_TYPE_CONFIG": str(config_path.resolve())}, title=title,
+    )
 
 
 def main() -> None:

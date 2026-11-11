@@ -58,10 +58,24 @@ def write_cell_type_manifest(
     if split_manifest_path is not None:
         split_manifest = json.loads(split_manifest_path.read_text())
         expected_types = split_manifest.get("cell_types", [])
+    expected_slugs = [record["slug"] for record in expected_types]
+    if not expected_slugs or len(set(expected_slugs)) != len(expected_slugs):
+        raise ValueError("Expected cell types must be non-empty and have unique slugs")
     if selected_slugs:
         selected = set(selected_slugs)
+        missing = selected - set(expected_slugs)
+        if missing:
+            raise ValueError(
+                f"Requested cell types are absent from the input: {sorted(missing)}. "
+                f"Available: {sorted(expected_slugs)}"
+            )
         expected_types = [record for record in expected_types if record.get("slug") in selected]
     successful_slugs = {record["slug"] for record in types}
+    if len(successful_slugs) != len(types):
+        raise ValueError("Report directories must have unique cell-type slugs")
+    unexpected = successful_slugs - {record["slug"] for record in expected_types}
+    if unexpected:
+        raise ValueError(f"Reports are outside the expected cell-type selection: {sorted(unexpected)}")
     analysed = set(analysed_slugs or ())
     failed_types = [
         {

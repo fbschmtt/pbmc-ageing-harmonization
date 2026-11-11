@@ -214,10 +214,10 @@ def test_profile_report_renderer_captures_routine_tool_output(tmp_path, monkeypa
             command, 0, stdout="routine progress\n", stderr="routine warning\n",
         )
 
-    monkeypatch.setattr("pbmc_pipeline.gene_profile_report.subprocess.run", record)
-    monkeypatch.setattr("pbmc_pipeline.gene_profile_report.set_notebook_title", lambda *_: None)
+    monkeypatch.setattr("pbmc_pipeline.notebook.subprocess.run", record)
+    monkeypatch.setattr("pbmc_pipeline.notebook.set_notebook_title", lambda *_: None)
     monkeypatch.setattr(
-        "pbmc_pipeline.gene_profile_report.populate_html_toc", lambda *_, **__: None,
+        "pbmc_pipeline.notebook.populate_html_toc", lambda *_, **__: None,
     )
 
     report = generate_gene_profile_report(
@@ -239,7 +239,7 @@ def test_profile_report_renderer_prints_and_logs_tool_output_on_failure(
 ) -> None:
     profile_dir = tmp_path / "profile"
     profile_dir.mkdir()
-    (profile_dir / "fit_summary.json").write_text("{}")
+    (profile_dir / "fit_summary.json").write_text(json.dumps({"gene": "G", "cell_type": "T"}))
     template = tmp_path / "gene_profile_report.py"
     template.write_text("# report template")
 
@@ -248,7 +248,7 @@ def test_profile_report_renderer_prints_and_logs_tool_output_on_failure(
             command, 1, stdout="partial output\n", stderr="render failed\n",
         )
 
-    monkeypatch.setattr("pbmc_pipeline.gene_profile_report.subprocess.run", fail)
+    monkeypatch.setattr("pbmc_pipeline.notebook.subprocess.run", fail)
 
     with pytest.raises(subprocess.CalledProcessError, match="returned non-zero exit status 1"):
         generate_gene_profile_report(
@@ -314,3 +314,31 @@ def test_exploratory_infant_adult_contrast_skips_missing_bins() -> None:
     assert _exploratory_infant_adult_contrast(
         metadata, design, ["20-30", "30-40"], fit, bin_width=10,
     ) is None
+
+
+def test_prepared_profile_model_mismatch_never_refits(tmp_path, monkeypatch):
+    from scripts.profile_gene import _load_or_fit_deseq2_model
+
+    prepared = tmp_path / 'prepared'
+    prepared.mkdir()
+    (prepared / 'manifest.json').write_text('{"cache_key":"from-a-different-input"}')
+    (prepared / 'fitted_model.h5ad').write_bytes(b'not opened on mismatch')
+    (prepared / 'age_results.csv').write_text('gene,padj\nGENE1,0.01\n')
+    config = tmp_path / 'pipeline.json'
+    config.write_text('{}')
+
+    def unexpected_fit(*args, **kwargs):
+        pytest.fail('A gene task must not refit a mismatched immutable model')
+
+    monkeypatch.setattr('pydeseq2.dds.DeseqDataSet', unexpected_fit)
+    with pytest.raises(ValueError, match='prepared gene-profile model does not match'):
+        _load_or_fit_deseq2_model(
+            input_path=tmp_path / 'input.h5ad', config_path=config,
+            cache_parent=tmp_path / 'cache', prepared_model_dir=prepared,
+            cell_type='CD14 monocyte', genes=pd.Index(['GENE1']),
+            counts_df=pd.DataFrame({'GENE1': [5, 7]}, index=['sample1', 'sample2']),
+            metadata=pd.DataFrame(index=['sample1', 'sample2']),
+            design_matrix=pd.DataFrame({'Intercept': [1.0, 1.0], 'age': [20.0, 30.0]}),
+            alpha=0.05, cpus=1,
+        )
+    assert not (tmp_path / 'cache').exists()

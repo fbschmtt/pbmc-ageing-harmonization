@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 from pbmc_pipeline.merge_qc import generate_merge_qc_report
 
@@ -28,7 +29,9 @@ def test_merge_qc_runner_uses_a_writable_temporary_matplotlib_cache(tmp_path, mo
                 '<h2 id="merge-summary">Merge Summary</h2>'
             )
 
-    monkeypatch.setattr("pbmc_pipeline.merge_qc.subprocess.run", record)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("pbmc_pipeline.notebook.subprocess.run", record)
     html = generate_merge_qc_report(
         root=tmp_path,
         inputs=[pseudobulk],
@@ -41,6 +44,6 @@ def test_merge_qc_runner_uses_a_writable_temporary_matplotlib_cache(tmp_path, mo
     assert html == tmp_path / "output" / "harmonization" / "harmonization_qc" / "merged" / "report.html"
     assert len(calls) == 3
     matplotlib_cache = calls[0][1]["env"]["MPLCONFIGDIR"]
-    assert matplotlib_cache.startswith("/tmp/pbmc-merge-qc-notebook-")
+    assert matplotlib_cache.startswith("/tmp/pbmc-notebook-")
     assert matplotlib_cache.endswith("/matplotlib")
     assert '<a href="#merge-summary">Merge Summary</a>' in html.read_text()

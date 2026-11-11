@@ -2,14 +2,10 @@
 from __future__ import annotations
 
 import argparse
-import os
-import subprocess
-import sys
-import tempfile
 from pathlib import Path
 
-from .config import AgeTrajectorySettings, ExpressionAtlasSettings, read_json
-from .report_toc import populate_html_toc, set_notebook_title
+from .config import AgeTrajectorySettings, ExpressionAtlasSettings, load_analysis_configuration
+from .notebook import render_notebook
 from .trajectory_analysis import analyze_age_trajectories
 
 
@@ -26,7 +22,7 @@ def generate_trajectory_report(
     for path in (differential_expression_dir, config_path, template_path):
         if not path.exists():
             raise FileNotFoundError(path)
-    pipeline = read_json(config_path)
+    pipeline = load_analysis_configuration(config_path)
     settings = AgeTrajectorySettings.from_mapping(
         pipeline["differential_expression"]["age_trajectory"]
     )
@@ -36,19 +32,6 @@ def generate_trajectory_report(
     if pseudobulk_path is not None and not pseudobulk_path.exists():
         raise FileNotFoundError(pseudobulk_path)
     output_dir.mkdir(parents=True, exist_ok=True)
-    env = os.environ.copy()
-    env["MPLCONFIGDIR"] = str((project_root / ".cache" / "matplotlib").resolve())
-    env["JUPYTER_DATA_DIR"] = str((project_root / ".cache" / "jupyter-data").resolve())
-    env["NUMBA_CACHE_DIR"] = str((project_root / ".cache" / "numba").resolve())
-    env["TRAJECTORY_ANALYSIS_DIR"] = str(output_dir.resolve())
-    os.environ.update({
-        "MPLCONFIGDIR": env["MPLCONFIGDIR"],
-        "JUPYTER_DATA_DIR": env["JUPYTER_DATA_DIR"],
-        "NUMBA_CACHE_DIR": env["NUMBA_CACHE_DIR"],
-        "TRAJECTORY_ANALYSIS_DIR": env["TRAJECTORY_ANALYSIS_DIR"],
-    })
-    for key in ("MPLCONFIGDIR", "JUPYTER_DATA_DIR", "NUMBA_CACHE_DIR"):
-        Path(env[key]).mkdir(parents=True, exist_ok=True)
     analyze_age_trajectories(
         differential_expression_dir,
         output_dir,
@@ -58,28 +41,11 @@ def generate_trajectory_report(
         split_by=pipeline["differential_expression"]["split_by"],
         l2_parent_l1=pipeline["cell_type_analysis"]["l2_parent_l1"],
     )
-    executed, html = output_dir / "executed.ipynb", output_dir / "report.html"
-    with tempfile.TemporaryDirectory(prefix="pbmc-trajectory-notebook-") as temp_dir:
-        notebook = Path(temp_dir) / f"{template_path.stem}.ipynb"
-        subprocess.run([
-            sys.executable, "-m", "jupytext", "--to", "notebook",
-            "--output", str(notebook), str(template_path.resolve()),
-        ], cwd=project_root, env=env, check=True)
-        subprocess.run([
-            sys.executable, "-m", "jupyter", "nbconvert", "--execute", "--to", "notebook",
-            "--ExecutePreprocessor.timeout=-1", f"--output={executed.name}",
-            f"--output-dir={output_dir}", str(notebook),
-        ], cwd=project_root, env=env, check=True)
-    set_notebook_title(executed, "Merged age-DE results | PBMC ageing")
-    subprocess.run([
-        sys.executable, "-m", "jupyter", "nbconvert", "--to", "html",
-        "--HTMLExporter.exclude_input=True",
-        "--HTMLExporter.exclude_input_prompt=True",
-        "--HTMLExporter.exclude_output_prompt=True",
-        f"--output={html.name}", f"--output-dir={output_dir}", str(executed),
-    ], cwd=project_root, env=env, check=True)
-    populate_html_toc(html)
-    return html
+    return render_notebook(
+        template_path=template_path, output_dir=output_dir, project_root=project_root,
+        environment={"TRAJECTORY_ANALYSIS_DIR": str(output_dir.resolve())},
+        title="Merged age-DE results | PBMC ageing",
+    )
 
 
 def main() -> None:

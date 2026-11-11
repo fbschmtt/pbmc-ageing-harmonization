@@ -20,7 +20,7 @@ downsampled source copies (currently 200–2,000 cells) used to exercise the
 study adapters; they are not production inputs. The deterministic 200-cell
 smoke-test fixtures are a separate layer under `test_data/`, created or
 refreshed with `make test-data`. A production checkout must provide the complete
-source artifacts described in [INPUT_FILES.md](../INPUT_FILES.md), not these
+source artifacts described in [INPUT_FILES.md](../docs/inputs/files.md), not these
 development copies or test fixtures. Generated conversions belong in `cache/`.
 
 Fachrul26 and Perez22 carry the metadata needed by their adapters in the H5AD
@@ -57,6 +57,6 @@ python scripts/prepare_auxiliary_metadata.py
 URLs where programmatic retrieval is appropriate, integrity information where
 available, and manual-source instructions where access conditions require it.
 Acquisition is strictly opt-in and is documented once in the top-level
-[Download inputs guide](../README.md#download-inputs); neither installation nor
-workflow execution downloads data. Consult [INPUT_FILES.md](../INPUT_FILES.md)
+[Download inputs guide](../docs/inputs/README.md#download-inputs); neither installation nor
+workflow execution downloads data. Consult [INPUT_FILES.md](../docs/inputs/files.md)
 for the exact paths, links, checksums, and reasons that a source is manual.

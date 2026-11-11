@@ -4,22 +4,15 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCUMENTS = (
-    ROOT / "AGENTS.md",
-    ROOT / "README.md",
-    ROOT / "IMPLEMENTATION.md",
-    ROOT / "INPUT_FILES.md",
-    ROOT / "input_data/README.md",
-    ROOT / "site/DATA_CONTRACT.md",
-    ROOT / "aifi_models/README",
-)
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
-MAKE_COMMAND = re.compile(r"^\s*make\s+([A-Za-z0-9_-]+)\b", re.MULTILINE)
-MAKE_TARGET = re.compile(r"^([A-Za-z0-9_-]+):", re.MULTILINE)
+MAKE_TARGET = re.compile(r"^([A-Za-z0-9_-]+(?:[ \t]+[A-Za-z0-9_-]+)*):", re.MULTILINE)
+SETTINGS_DOCUMENT = Path("docs/reference/analysis-settings.md")
 AGE_SETTINGS_START = "<!-- generated-age-trajectory-settings:start -->"
 AGE_SETTINGS_END = "<!-- generated-age-trajectory-settings:end -->"
 AGE_SETTING_MEANINGS = {
@@ -82,10 +75,10 @@ def generated_age_trajectory_table() -> str:
 
 
 def sync_age_trajectory_table(*, write: bool) -> list[str]:
-    document = ROOT / "IMPLEMENTATION.md"
+    document = ROOT / SETTINGS_DOCUMENT
     contents = document.read_text(encoding="utf-8")
     if AGE_SETTINGS_START not in contents or AGE_SETTINGS_END not in contents:
-        return ["IMPLEMENTATION.md: generated age-trajectory settings markers are missing"]
+        return [f"{SETTINGS_DOCUMENT}: generated age-trajectory settings markers are missing"]
     start = contents.index(AGE_SETTINGS_START) + len(AGE_SETTINGS_START)
     end = contents.index(AGE_SETTINGS_END)
     rendered = "\n\n" + generated_age_trajectory_table() + "\n"
@@ -95,33 +88,89 @@ def sync_age_trajectory_table(*, write: bool) -> list[str]:
         document.write_text(contents[:start] + rendered + contents[end:], encoding="utf-8")
         return []
     return [
-        "IMPLEMENTATION.md: age-trajectory settings table is stale; run `make docs-update`"
+        f"{SETTINGS_DOCUMENT}: age-trajectory settings table is stale; run `make docs-update`"
     ]
 
 
-def local_link_errors(document: Path) -> list[str]:
-    errors: list[str] = []
-    for destination in MARKDOWN_LINK.findall(document.read_text(encoding="utf-8")):
-        destination = destination.strip().strip("<>")
-        path, _, _fragment = destination.partition("#")
-        if not path or "://" in path or path.startswith(("mailto:", "/")):
+def documentation_files(root: Path = ROOT) -> list[Path]:
+    """Discover guides, reference pages and repository entry points."""
+    paths = {*root.glob("*.md"), *(root / "docs").rglob("*.md")}
+    paths.update((
+        root / "input_data/README.md", root / "site/DATA_CONTRACT.md", root / "aifi_models/README",
+    ))
+    return sorted(path for path in paths if path.is_file())
+
+
+def prose_lines(contents: str):
+    """Exclude fenced examples when interpreting headings and local links."""
+    fence = None
+    for line in contents.splitlines():
+        if match := re.match(r"^\s*(`{3,}|~{3,})", line):
+            marker = match.group(1)[0]
+            fence = None if fence == marker else marker if fence is None else fence
             continue
-        if not (document.parent / path).exists():
-            errors.append(f"{document.relative_to(ROOT)}: missing link target {path}")
-    return errors
+        if fence is None:
+            yield line
 
 
-def documented_make_target_errors() -> list[str]:
-    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-    targets = set(MAKE_TARGET.findall(makefile))
+def heading_anchors(contents: str) -> set[str]:
+    anchors = set()
+    counts: dict[str, int] = {}
+    for line in prose_lines(contents):
+        if heading := re.match(r"^#{1,6}\s+(.+?)\s*#*$", line):
+            text = re.sub(r"\[([^]]+)\]\([^)]*\)", r"\1", heading.group(1)).replace("`", "")
+            base = re.sub(r"[^\w\- ]", "", text.lower()).replace(" ", "-")
+            count = counts.get(base, 0)
+            anchors.add(base + (f"-{count}" if count else ""))
+            counts[base] = count + 1
+        anchors.update(re.findall(r'<a\s+[^>]*(?:id|name)=["\x27]([^"\x27]+)', line))
+    return anchors
+
+
+def local_link_errors(document: Path, root: Path = ROOT) -> list[str]:
     errors: list[str] = []
-    for document in DOCUMENTS:
-        for target in MAKE_COMMAND.findall(document.read_text(encoding="utf-8")):
-            if target not in targets:
-                errors.append(
-                    f"{document.relative_to(ROOT)}: documented Make target does not exist: {target}"
-                )
+    contents = "\n".join(prose_lines(document.read_text(encoding="utf-8")))
+    for destination in MARKDOWN_LINK.findall(contents):
+        destination = destination.strip().strip("<>")
+        path, _, fragment = destination.partition("#")
+        if "://" in path or path.startswith(("mailto:", "/")):
+            continue
+        target = document.parent / unquote(path) if path else document
+        if not target.exists():
+            errors.append(f"{document.relative_to(root)}: missing link target {path}")
+        elif (fragment and target.is_file() and (target.suffix == ".md" or target.name == "README")
+              and unquote(fragment) not in heading_anchors(target.read_text(encoding="utf-8"))):
+            errors.append(f"{document.relative_to(root)}: missing heading {destination}")
     return errors
+
+
+def documented_make_target_errors(root: Path = ROOT) -> list[str]:
+    makefile = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in [root / "Makefile", *sorted((root / "make").glob("*.mk"))]
+    )
+    targets = {target for group in MAKE_TARGET.findall(makefile) for target in group.split()}
+    errors: list[str] = []
+    for document in documentation_files(root):
+        contents = document.read_text(encoding="utf-8")
+        commands = re.findall(r"^\s*(make\s+[^\n]+)", contents, re.MULTILINE)
+        commands += re.findall(r"`(make\s+[^`\n]+)`", contents)
+        for command in commands:
+            try:
+                words = shlex.split(command)
+            except ValueError:
+                continue  # A continued shell example is checked one line at a time.
+            for target in words[1:]:
+                if target.startswith("#"):
+                    break
+                if "=" in target or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", target):
+                    continue
+                if target in targets:
+                    continue
+                errors.append(
+                    f"{document.relative_to(root)}: documented Make target does not exist: {target}"
+                )
+    return sorted(set(errors))
 
 
 def main() -> None:
@@ -136,13 +185,14 @@ def main() -> None:
     except (KeyError, ValueError) as error:
         print(f"Documentation generation failed: {error}", file=sys.stderr)
         raise SystemExit(1) from error
-    errors = [error for document in DOCUMENTS for error in local_link_errors(document)]
+    documents = documentation_files()
+    errors = [error for document in documents for error in local_link_errors(document)]
     errors.extend(documented_make_target_errors())
     errors.extend(generated_errors)
     if errors:
         print("Documentation checks failed:", *errors, sep="\n", file=sys.stderr)
         raise SystemExit(1)
-    print(f"Documentation checks passed for {len(DOCUMENTS)} files.")
+    print(f"Documentation checks passed for {len(documents)} files.")
 
 
 if __name__ == "__main__":

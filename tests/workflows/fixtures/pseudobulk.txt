@@ -1,0 +1,1 @@
+Publication test fixture. No biological counts or fitted results are included.

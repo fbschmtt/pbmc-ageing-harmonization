@@ -304,7 +304,7 @@ def clock_input(tmp_path):
         index=[f"gene_{i}" for i in range(matrix.shape[1])],
     )
     adata = ad.AnnData(sparse.csr_matrix(matrix), obs=obs, var=var)
-    config = {"differential_expression": {
+    config = {"schema_version": 1, "differential_expression": {
         "split_by": "aifi_l2_majority",
         "sample_inclusion": {
             "minimum_age_years_inclusive": 20,

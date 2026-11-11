@@ -1,7 +1,6 @@
 # %%
 import base64
 import os
-import re
 import warnings
 from html import escape
 from io import BytesIO
@@ -31,17 +30,26 @@ plt.rcParams.update({
     "grid.color": "#d9e2d8",
 })
 from pbmc_pipeline.cell_type import add_unintegrated_umap
-from pbmc_pipeline.config import read_json
+from pbmc_pipeline.cell_type_figures import (
+    natural_sort_key,
+    plot_cluster_fractions,
+)
+from pbmc_pipeline.cell_type_assets import CellTypeAssets
+from pbmc_pipeline.config import load_analysis_configuration, read_json
 from pbmc_pipeline.reporting import sample_cluster_fractions
 
 primitive = sc.read_h5ad(Path(os.environ["CELL_TYPE_H5AD"]))
 analysis_path = Path(os.environ["CELL_TYPE_ANALYSIS_H5AD"])
-output_dir = analysis_path.parent
-pipeline = read_json(Path(os.environ["CELL_TYPE_CONFIG"]))
+analysis_dir = analysis_path.parent
+output_dir = Path(os.environ["CELL_TYPE_OUTPUT_DIR"])
+pipeline = load_analysis_configuration(
+    Path(os.environ["CELL_TYPE_CONFIG"]), sections=("cell_type_analysis", "processing"),
+)
 sc.settings.verbosity = 0
-report = read_json(output_dir / "report.json")
+report = read_json(analysis_dir / "report.json")
 adata = sc.read_h5ad(analysis_path)
 cell_type_name = str(primitive.obs["aifi_l2_majority"].iloc[0])
+site_assets = CellTypeAssets(output_dir, cell_type_name)
 status_label = str(report.get("status", "unknown")).replace("_", " ").title()
 hero_samples = (
     primitive.obs.groupby(["study", "sample"], observed=True)
@@ -108,17 +116,11 @@ def display_collapsible_figure(figure, summary, *, open_by_default=False):
     ))
 
 
-def natural_sort_key(value):
-    """Sort labels naturally so numbered clusters follow numeric order."""
-    return tuple(
-        (1, int(part)) if part.isdigit() else (0, part.casefold())
-        for part in re.split(r"(\d+)", str(value))
-    )
 
 
 def plot_umap(
     adata, *, color, title=None, label_clusters=False, marker_area_scale=1.0,
-    basis="umap",
+    basis="umap", asset_name=None,
 ):
     """Render comparable, equal-aspect UMAP panels at a readable resolution."""
     # Scanpy's size controls marker area, so 4x area gives about 2x diameter.
@@ -145,6 +147,8 @@ def plot_umap(
         facecolor="none",
         edgecolor="none",
     )
+    if asset_name:
+        site_assets.image(asset_name, image_buffer.getvalue())
     display(DisplayImage(data=image_buffer.getvalue()))
     plt.close(figure)
 
@@ -195,12 +199,14 @@ def plot_age_de_gene_expression(adata, output_dir):
     """Show the strongest merged age-DE genes on the local UMAP, if available."""
     result_path = output_dir.parent / "differential_expression" / "merged.csv"
     if not result_path.is_file() or "X_umap" not in adata.obsm:
+        site_assets.note("ageDeNote", "Merged age differential-expression results are unavailable.")
         display(Markdown("_Merged age differential-expression results are unavailable._"))
         return
 
     results = pd.read_csv(result_path)
     required = {"gene", "log2FoldChange", "padj"}
     if not required <= set(results.columns):
+        site_assets.note("ageDeNote", "Merged age differential-expression results are incomplete.")
         display(Markdown("_Merged age differential-expression results are incomplete._"))
         return
     results["log2FoldChange"] = pd.to_numeric(results["log2FoldChange"], errors="coerce")
@@ -220,6 +226,7 @@ def plot_age_de_gene_expression(adata, output_dir):
     ).head(4)
     selected = pd.concat([higher, lower], ignore_index=True)
     if selected.empty:
+        site_assets.note("ageDeNote", "No FDR-significant merged age-DE genes are present in this cell type.")
         display(Markdown("_No FDR-significant merged age-DE genes are present in this cell type._"))
         return
 
@@ -251,6 +258,7 @@ def plot_age_de_gene_expression(adata, output_dir):
         axis.remove()
     figure.suptitle("Most significant age-associated genes", fontsize=16)
     figure.tight_layout(rect=(0, 0, 1, 0.97))
+    site_assets.figure("ageDeImage", figure)
     display_collapsible_figure(figure, "Age-DE gene expression on UMAP", open_by_default=True)
 
 
@@ -302,8 +310,6 @@ def plot_hvg_selection(adata):
     display_collapsible_table(top_hvg, "Top 20 genes by normalized dispersion")
 
 
-def has_age_span(data, *, min_samples=2):
-    return len(data) >= min_samples and data["age"].nunique() >= 2
 
 
 def facet_grid_shape(n_panels, *, max_columns=4):
@@ -312,95 +318,10 @@ def facet_grid_shape(n_panels, *, max_columns=4):
     return (n_panels + n_columns - 1) // n_columns, n_columns
 
 
-def draw_cluster_fraction_axis(axis, subset, studies, palette):
-    sns.scatterplot(
-        data=subset, x="age", y="fraction_within_cell_type", hue="study", palette=palette,
-        s=20, alpha=0.5, edgecolor="none", ax=axis, legend=False,
-    )
-    # study-specific linear trends
-    for study in studies:
-        study_data = subset.loc[subset["study"] == study]
-        if has_age_span(study_data):
-            sns.regplot(
-                data=study_data, x="age", y="fraction_within_cell_type", scatter=False,
-                ci=None, color=palette[study],
-                line_kws={"linewidth": 1.8, "linestyle": "--"}, ax=axis,
-            )
-    if has_age_span(subset):
-        sns.regplot(
-            data=subset, x="age", y="fraction_within_cell_type", scatter=False, ci=None,
-            color="#1f1f1f", line_kws={"linewidth": 2.6}, ax=axis,
-        )
-    axis.set_ylabel("Fraction within cell type")
 
 
-def cluster_fraction_fit_summary(data, study):
-    """Summarize plotted samples and an unadjusted fraction-per-decade slope."""
-    x = data["age"].to_numpy(dtype=float)
-    y = data["fraction_within_cell_type"].to_numpy(dtype=float)
-    finite = np.isfinite(x) & np.isfinite(y)
-    x, y = x[finite], y[finite]
-    if not len(y):
-        return None
-    slope = float(np.polyfit(x, y, 1)[0] * 1000) if len(x) >= 2 and np.unique(x).size >= 2 else None
-    return {"study": study, "samples": int(len(y)), "meanFraction": float(np.mean(y)), "slopePpPerDecade": slope}
 
 
-def plot_cluster_fractions(data, *, palette):
-    """Show descriptive pooled and study-specific linear trends."""
-    if data.empty:
-        display(Markdown("_No samples meet the denominator cutoff for cluster fractions._"))
-        return []
-    plot_data = data.assign(study=data["study"].astype(str))
-    clusters = sorted(plot_data["cluster"].astype(str).unique(), key=natural_sort_key)
-    n_columns = min(3, len(clusters))
-    n_rows = (len(clusters) + n_columns - 1) // n_columns
-    figure, axes = plt.subplots(
-        n_rows, n_columns, figsize=(5.5 * n_columns, 4.4 * n_rows), squeeze=False,
-        sharex=True, sharey=True,
-    )
-    studies = sorted(plot_data["study"].unique())
-    for axis, cluster in zip(axes.flat, clusters):
-        subset = plot_data.loc[plot_data["cluster"].astype(str) == cluster]
-        draw_cluster_fraction_axis(axis, subset, studies, palette)
-        axis.set_title(f"Cluster {cluster}")
-    for axis in axes.flat[len(clusters):]:
-        axis.remove()
-    handles = [
-        plt.Line2D([], [], marker="o", linestyle="--", color=palette[study], label=study, markersize=5)
-        for study in studies
-    ]
-    handles.append(plt.Line2D([], [], color="#1f1f1f", linewidth=2.6, label="Pooled"))
-    figure.legend(handles=handles, title="Study / trend", loc="upper center",
-                  ncol=min(4, len(handles)), frameon=False)
-    figure.suptitle("Cluster fractions: linear trends (study-unadjusted)", y=0.98)
-    figure.tight_layout(rect=(0, 0, 1, 0.91))
-    display_collapsible_figure(figure, "Show cluster-composition curves")
-    details = []
-    for cluster in clusters:
-        subset = plot_data.loc[plot_data["cluster"].astype(str) == cluster]
-        present_studies = sorted(subset["study"].unique())
-        detail_figure, axis = plt.subplots(figsize=(7, 4.5))
-        draw_cluster_fraction_axis(axis, subset, present_studies, palette)
-        axis.set_title(f"Cluster {cluster}")
-        detail_handles = [
-            plt.Line2D([], [], marker="o", linestyle="--", color=palette[study], label=study, markersize=5)
-            for study in present_studies
-        ]
-        detail_handles.append(plt.Line2D([], [], color="#1f1f1f", linewidth=2.6, label="Pooled"))
-        axis.legend(handles=detail_handles, title="Study / trend", fontsize=8, frameon=False)
-        detail_figure.tight_layout()
-        image_buffer = BytesIO()
-        detail_figure.savefig(
-            image_buffer, format="png", dpi=150, bbox_inches="tight", transparent=True,
-        )
-        plt.close(detail_figure)
-        fits = [cluster_fraction_fit_summary(subset, None)]
-        fits.extend(cluster_fraction_fit_summary(subset.loc[subset["study"] == study], study)
-                    for study in present_studies)
-        details.append({"cluster": cluster, "image": base64.b64encode(image_buffer.getvalue()).decode("ascii"),
-                        "fits": [fit for fit in fits if fit is not None]})
-    return details
 
 
 def directional_cluster_genes(markers, *, cluster, n_genes=8):
@@ -682,7 +603,7 @@ if report["status"] == "complete":
     plot_umap(
         adata, color="cluster",
         title="Harmony-integrated UMAP: cluster IDs",
-        label_clusters=True,
+        label_clusters=True, asset_name="umap",
     )
     plot_umap_split_by_study(adata)
     colors = ["study", "age"]
@@ -714,7 +635,7 @@ if report["status"] == "complete":
 
 # %%
 if report["status"] == "complete":
-    markers = pd.read_csv(output_dir / "markers.tsv", sep="\t")
+    markers = pd.read_csv(analysis_dir / "markers.tsv", sep="\t")
     clusters = sorted(markers["group"].astype(str).unique(), key=natural_sort_key)
     n_columns = min(3, len(clusters))
     n_rows = (len(clusters) + n_columns - 1) // n_columns
@@ -766,7 +687,14 @@ if report["status"] == "complete":
     ))
     studies = sorted(cluster_fractions["study"].unique())
     palette = dict(zip(studies, sns.color_palette("tab10", n_colors=len(studies))))
-    cluster_fraction_details = plot_cluster_fractions(cluster_fractions, palette=palette)
+    cluster_fraction_details = plot_cluster_fractions(
+        cluster_fractions, palette=palette, display_figure=display_collapsible_figure,
+    )
+    site_assets.fractions(
+        cluster_fraction_details,
+        note=f"{excluded_cluster_samples} sample(s) excluded from cluster fractions because the "
+             f"split cell-type denominator has fewer than {min_fraction_denominator} cells.",
+    )
     display({"application/vnd.pbmc.cluster-fractions+json": {"clusters": cluster_fraction_details}}, raw=True)
     display(Markdown(
         "_Each point is a sample-level cluster fraction. Differences among coloured study series "
@@ -817,7 +745,7 @@ if report["status"] == "complete":
 
 # %%
 if report["status"] == "complete":
-    pc_age = pd.read_csv(output_dir / "pc_age_correlations.tsv", sep="\t")
+    pc_age = pd.read_csv(analysis_dir / "pc_age_correlations.tsv", sep="\t")
     figure, axis = plt.subplots(figsize=(9, 4.5))
     sns.barplot(data=pc_age, x="pc", y="spearman_r", color="#4c72b0", ax=axis)
     axis.axhline(0, color="black", linewidth=0.8)
@@ -827,3 +755,6 @@ if report["status"] == "complete":
     display_collapsible_figure(figure, "Show PC–age correlations")
 
 # %%
+
+# %%
+site_assets.publish()

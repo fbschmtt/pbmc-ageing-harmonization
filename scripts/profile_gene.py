@@ -5,14 +5,16 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import warnings
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 from scipy.stats import t as student_t
 
-from pbmc_pipeline.config import read_json
+from pbmc_pipeline.config import load_analysis_configuration
 from pbmc_pipeline.covariates import categorical_levels
 from pbmc_pipeline.differential_expression import (
     _UNKNOWN,
@@ -414,6 +416,7 @@ def _load_or_fit_deseq2_model(
     *, input_path: Path, config_path: Path, cache_parent: Path, cell_type: str,
     genes: pd.Index, counts_df: pd.DataFrame, metadata: pd.DataFrame,
     design_matrix: pd.DataFrame, alpha: float, cpus: int,
+    prepared_model_dir: Path | None = None,
 ):
     """Fit once per exact cell-type input/design and reuse serialized model arrays."""
     import anndata as ad
@@ -421,10 +424,7 @@ def _load_or_fit_deseq2_model(
     from pydeseq2.ds import DeseqStats
 
     digest = hashlib.sha256()
-    digest.update(str(input_path.resolve()).encode())
-    for path in (input_path, config_path):
-        stat = path.stat()
-        digest.update(f"{stat.st_size}:{stat.st_mtime_ns}".encode())
+    digest.update(config_path.read_bytes())
     digest.update(cell_type.encode())
     digest.update(design_matrix.to_csv(index=True).encode())
     digest.update("\0".join(map(str, genes)).encode())
@@ -437,7 +437,7 @@ def _load_or_fit_deseq2_model(
     except Exception:  # noqa: BLE001 - cache misses safely if package metadata is unavailable
         digest.update(b"pydeseq2-version-unknown")
     cache_key = digest.hexdigest()
-    cache_dir = cache_parent / cache_key
+    cache_dir = prepared_model_dir if prepared_model_dir is not None else cache_parent / cache_key
     model_path = cache_dir / "fitted_model.h5ad"
     results_path = cache_dir / "age_results.csv"
     manifest_path = cache_dir / "manifest.json"
@@ -448,6 +448,9 @@ def _load_or_fit_deseq2_model(
             return ad.read_h5ad(model_path), pd.read_csv(
                 results_path, index_col="gene"
             ), cache_key, True
+
+    if prepared_model_dir is not None:
+        raise ValueError(f"{prepared_model_dir}: prepared gene-profile model does not match the inputs")
 
     dds = DeseqDataSet(
         counts=counts_df,
@@ -509,15 +512,11 @@ def _prepare_model_for_cache(dds) -> None:
     dds.uns.clear()
 
 
-def _fit_profile(
-    *, input_path: Path, config_path: Path, cell_type: str, gene: str,
-    output_dir: Path, cpus: int, differential_expression_dir: Path | None = None,
-) -> Path:
-    import statsmodels.api as sm
+def _prepare_profile_inputs(*, input_path: Path, config_path: Path, cell_type: str, gene: str | None = None):
+    """Prepare the unchanged merged design once for fitting or a focused profile."""
     from formulaic_contrasts import FormulaicContrasts
 
-    pipeline = read_json(config_path)
-    fit_diagnostics_rows = []
+    pipeline = load_analysis_configuration(config_path)
     adata, spec, labels = _load_pseudobulk(input_path, pipeline)
     available_types = sorted(labels.astype(str).unique())
     if cell_type not in available_types:
@@ -526,12 +525,10 @@ def _fit_profile(
             cell_type = matches[0]
     if cell_type not in available_types:
         raise ValueError(f"Cell type {cell_type!r} is not present in {input_path}")
-    if gene not in adata.var_names:
+    if gene is not None and gene not in adata.var_names:
         raise ValueError(f"Gene {gene!r} is not present in {input_path}")
 
-    profile_output_root = output_dir
     type_positions = np.flatnonzero(labels.astype(str).to_numpy() == cell_type)
-    output_dir = output_dir / slugify(cell_type) / slugify(gene)
     type_adata = adata[type_positions, :]
     obs = type_adata.obs.copy()
     all_type_total_counts = pd.to_numeric(
@@ -582,7 +579,7 @@ def _fit_profile(
             type_adata.var, studies, context=f"{cell_type}/merged"
         )
         fit_genes = type_adata.var_names[gene_mask]
-        if gene not in fit_genes:
+        if gene is not None and gene not in fit_genes:
             raise ValueError(
                 f"Gene {gene!r} is not available in every study used by the merged model "
                 f"({', '.join(studies)})"
@@ -596,7 +593,7 @@ def _fit_profile(
         nonzero_genes = counts.sum(axis=0) > 0
         counts = counts[:, nonzero_genes]
         fit_genes = fit_genes[nonzero_genes]
-        if gene not in fit_genes:
+        if gene is not None and gene not in fit_genes:
             raise ValueError(f"Gene {gene!r} has zero counts across included samples")
         nonzero_libraries = counts.sum(axis=1) > 0
         if nonzero_libraries.all():
@@ -628,6 +625,78 @@ def _fit_profile(
         raise ValueError(
             f"Merged design {design!r} is not estimable for {len(model_metadata)} samples"
         )
+    return SimpleNamespace(
+        pipeline=pipeline,
+        adata=adata,
+        spec=spec,
+        cell_type=cell_type,
+        type_adata=type_adata,
+        obs=obs,
+        all_samples_geometric_mean_total_counts=all_samples_geometric_mean_total_counts,
+        metadata=metadata,
+        exclusions=exclusions,
+        studies=studies,
+        fit_genes=fit_genes,
+        counts=counts,
+        model_metadata=model_metadata,
+        design=design,
+        design_matrix=design_matrix,
+        numeric_design=numeric_design,
+        design_terms=design_terms,
+        required_terms=required_terms,
+        varying_terms=varying_terms,
+        valid_all_type_totals=valid_all_type_totals,
+    )
+
+
+def prepare_profile_model(*, input_path: Path, config_path: Path, cell_type: str, output_dir: Path, cpus: int) -> Path:
+    """Publish an immutable fitted model for every selected gene in one cell type."""
+    prepared = _prepare_profile_inputs(input_path=input_path, config_path=config_path, cell_type=cell_type)
+    cache_parent = output_dir.parent / ".model_fit_cache"
+    _, _, key, _ = _load_or_fit_deseq2_model(
+        input_path=input_path, config_path=config_path, cache_parent=cache_parent,
+        cell_type=prepared.cell_type, genes=prepared.fit_genes,
+        counts_df=pd.DataFrame(prepared.counts, index=prepared.metadata.index, columns=prepared.fit_genes),
+        metadata=prepared.model_metadata, design_matrix=prepared.design_matrix,
+        alpha=float(prepared.spec["alpha"]), cpus=cpus,
+    )
+    shutil.copytree(cache_parent / key, output_dir, dirs_exist_ok=True)
+    return output_dir
+
+
+def _fit_profile(
+    *, input_path: Path, config_path: Path, cell_type: str, gene: str,
+    output_dir: Path, cpus: int, differential_expression_dir: Path | None = None,
+    prepared_model_dir: Path | None = None, render: bool = True,
+) -> Path:
+    import statsmodels.api as sm
+    from formulaic_contrasts import FormulaicContrasts
+
+    prepared = _prepare_profile_inputs(
+        input_path=input_path, config_path=config_path, cell_type=cell_type, gene=gene,
+    )
+    pipeline = prepared.pipeline
+    spec = prepared.spec
+    cell_type = prepared.cell_type
+    type_adata = prepared.type_adata
+    obs = prepared.obs
+    all_samples_geometric_mean_total_counts = prepared.all_samples_geometric_mean_total_counts
+    metadata = prepared.metadata
+    exclusions = prepared.exclusions
+    studies = prepared.studies
+    fit_genes = prepared.fit_genes
+    counts = prepared.counts
+    model_metadata = prepared.model_metadata
+    design = prepared.design
+    design_matrix = prepared.design_matrix
+    numeric_design = prepared.numeric_design
+    design_terms = prepared.design_terms
+    required_terms = prepared.required_terms
+    varying_terms = prepared.varying_terms
+    valid_all_type_totals = prepared.valid_all_type_totals
+    fit_diagnostics_rows = []
+    profile_output_root = output_dir
+    output_dir = output_dir / slugify(cell_type) / slugify(gene)
     gene_position = fit_genes.get_loc(gene)
 
     # Normalize to the geometric mean of the included samples' full-library
@@ -1163,7 +1232,7 @@ def _fit_profile(
         metadata=model_metadata,
         design_matrix=design_matrix,
         alpha=float(spec["alpha"]),
-        cpus=cpus,
+        cpus=cpus, prepared_model_dir=prepared_model_dir,
     )
     gene_result = age_results.loc[[gene]].reset_index(names="gene")
     exploratory_age_comparison = _exploratory_infant_adult_contrast(
@@ -1468,6 +1537,8 @@ def _fit_profile(
         ],
     }
     (output_dir / "fit_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    if not render:
+        return output_dir
     template_path = Path(__file__).resolve().parents[1] / "reports" / "gene_profile_report.py"
     project_root = Path(__file__).resolve().parents[1]
     return generate_gene_profile_report(
@@ -1484,7 +1555,7 @@ def main() -> None:
     parser.add_argument(
         "--cell-type", required=True, help="Configured cell-type label or unique slug"
     )
-    parser.add_argument("--gene", required=True, help="Exact gene identifier in the pseudobulk object")
+    parser.add_argument("--gene", help="Exact gene identifier in the pseudobulk object")
     parser.add_argument("--input", type=Path, default=Path("output/harmonization/merged/pseudobulk_merged.h5ad"))
     parser.add_argument("--config", type=Path, default=Path("config/pipeline.json"))
     parser.add_argument("--output-dir", type=Path, default=Path("output/analysis/per_gene"))
@@ -1493,11 +1564,32 @@ def main() -> None:
         help="Completed per-cell-type DE directory from run-de (optional)",
     )
     parser.add_argument("--cpus", type=int, default=1)
+    parser.add_argument("--render-only", action="store_true")
+    parser.add_argument("--template", type=Path)
+    parser.add_argument("--prepare-model", action="store_true")
+    parser.add_argument("--prepared-model", type=Path)
+    parser.add_argument("--no-render", action="store_true")
     args = parser.parse_args()
+    if args.render_only:
+        if args.template is None:
+            parser.error("--template is required with --render-only")
+        print(generate_gene_profile_report(
+            profile_dir=args.output_dir, template_path=args.template, project_root=Path.cwd(),
+        ))
+        return
+    if args.prepare_model:
+        print(prepare_profile_model(
+            input_path=args.input, config_path=args.config, cell_type=args.cell_type,
+            output_dir=args.output_dir, cpus=args.cpus,
+        ))
+        return
+    if not args.gene:
+        parser.error("--gene is required unless --prepare-model is used")
     report = _fit_profile(
         input_path=args.input, config_path=args.config, cell_type=args.cell_type,
         gene=args.gene, output_dir=args.output_dir, cpus=args.cpus,
         differential_expression_dir=args.differential_expression_dir,
+        prepared_model_dir=args.prepared_model, render=not args.no_render,
     )
     print(report)
 

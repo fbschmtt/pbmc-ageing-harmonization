@@ -1,0 +1,36 @@
+name: Repository checks
+
+on: [push, pull_request]
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements*.lock
+      - run: make install
+      - run: make lint test-unit docs-check
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make site-test site-test-browser
+  workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: nf-core/setup-nextflow@v2
+        with:
+          version: '26.04.6'
+      - run: make workflow-lint workflow-test-publication workflow-test-selection workflow-test-failures workflow-test-resume

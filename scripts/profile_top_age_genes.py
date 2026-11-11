@@ -1,18 +1,16 @@
 """Render focused gene profiles for top merged age-DE genes in each cell type."""
 from __future__ import annotations
 
-import argparse
 import math
-import subprocess
-import sys
 from pathlib import Path
 
 import pandas as pd
 
 
-def _top_genes_by_cell_type(results_dir: Path, top_n: int) -> list[tuple[str, str]]:
+def _top_genes_by_cell_type(results_dir: Path, top_n: int, *, result_paths: list[Path] | None = None) -> list[tuple[str, str]]:
     selected: list[tuple[str, str]] = []
-    result_paths = sorted(results_dir.glob("*/differential_expression/merged.csv"))
+    if result_paths is None:
+        result_paths = sorted(results_dir.glob("*/differential_expression/merged.csv"))
     if not result_paths:
         raise FileNotFoundError(f"No merged DE result files found under {results_dir}")
 
@@ -40,73 +38,3 @@ def _top_genes_by_cell_type(results_dir: Path, top_n: int) -> list[tuple[str, st
     if not selected:
         raise ValueError(f"No finite merged age-DE adjusted p-values found under {results_dir}")
     return selected
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Render detailed gene profiles for the top merged age-DE genes "
-            "within each cell type."
-        ),
-    )
-    parser.add_argument("--input", type=Path, required=True, help="Merged pseudobulk H5AD")
-    parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--differential-expression-dir", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--top-n", type=int, default=10)
-    parser.add_argument("--cpus", type=int, default=1)
-    args = parser.parse_args()
-    if args.top_n < 1:
-        parser.error("--top-n must be at least 1")
-    if not args.input.is_file():
-        parser.error(f"Merged pseudobulk input does not exist: {args.input}")
-    if not args.differential_expression_dir.is_dir():
-        parser.error(
-            "Differential-expression directory does not exist: "
-            f"{args.differential_expression_dir}"
-        )
-
-    scripts_dir = Path(__file__).resolve().parent
-    profile_script = scripts_dir / "profile_gene.py"
-    selected = _top_genes_by_cell_type(args.differential_expression_dir, args.top_n)
-    failures = []
-    print(
-        f"Rendering {len(selected)} gene profiles across "
-        f"{len({cell_type for cell_type, _ in selected})} cell types."
-    )
-    for cell_type, gene in selected:
-        print(f"\n=== {cell_type}: {gene} ===", flush=True)
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(profile_script),
-                "--input", str(args.input),
-                "--config", str(args.config),
-                "--cell-type", cell_type,
-                "--gene", gene,
-                "--output-dir", str(args.output_dir),
-                "--differential-expression-dir", str(args.differential_expression_dir),
-                "--cpus", str(args.cpus),
-            ],
-            check=False,
-        )
-        if result.returncode:
-            failures.append((cell_type, gene, result.returncode))
-            print(
-                f"Profile failed for {cell_type}: {gene} (exit {result.returncode}); "
-                "continuing with the remaining genes.",
-                flush=True,
-            )
-    if failures:
-        summary = "\n".join(
-            f"- {cell_type}: {gene} (exit {code})"
-            for cell_type, gene, code in failures
-        )
-        raise SystemExit(
-            "Some gene profiles failed after all selected genes were attempted:\n"
-            + summary
-        )
-
-
-if __name__ == "__main__":
-    main()

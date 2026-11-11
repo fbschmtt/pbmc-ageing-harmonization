@@ -19,39 +19,42 @@ process SPLIT_CELL_TYPES {
     """
     pbmc-cell-type split --input ${merged_input} --output-dir cell_types --manifest cell_types.json --config ${pipeline_config}
     """
+
+    stub:
+    """
+    mkdir cell_types
+    touch cell_types/test-type.h5ad cell_types/failed-type.h5ad
+    printf '%s\n' '{"cell_types":[{"slug":"test-type","cell_type":"Test type"},{"slug":"failed-type","cell_type":"Failed type"}]}' > cell_types.json
+    """
 }
 
 process ANALYSE_CELL_TYPE {
     tag { slug }
-    errorStrategy { params.merged_input && !params.split_only ? 'ignore' : 'terminate' }
+    errorStrategy 'ignore'
+    publishDir "${params.outdir}/analysis/per_type", mode: 'copy', overwrite: true,
+        saveAs: { filename -> "${slug}/analysis/${filename.tokenize('/').last()}" }
 
     input:
     tuple val(slug), path(primitive)
     path pipeline_config
 
     output:
-    tuple val(slug), path("${slug}"), emit: analysis
+    tuple val(slug), path("${slug}/*"), emit: analysis
 
     script:
     """
     mkdir -p ${slug}
     pbmc-cell-type analyse --input ${primitive} --output-dir ${slug} --config ${pipeline_config}
     """
-}
 
-workflow SPLIT_AND_ANALYSE_CELL_TYPES {
-    take:
-    merged_input
-    pipeline_config
-
-    main:
-    SPLIT_CELL_TYPES(merged_input, pipeline_config)
-    def primitives = SPLIT_CELL_TYPES.out.cells.flatten()
-        .map { primitive -> tuple(primitive.baseName, primitive) }
-    ANALYSE_CELL_TYPE(primitives, pipeline_config)
-
-    emit:
-    primitives.join(ANALYSE_CELL_TYPE.out.analysis)
+    stub:
+    def fail = params.stub_fail_all_cell_types || (params.stub_fail_cell_type && slug == 'failed-type') ? 'exit 23' : ''
+    """
+    ${fail}
+    mkdir -p ${slug}
+    touch ${slug}/analysis.h5ad
+    printf '%s\n' '{"status":"complete","cell_type":"Test type","aifi_l1_parent":"Monocyte","n_cells":50,"n_clusters":2}' > ${slug}/report.json
+    """
 }
 
 workflow ANALYSE_EXISTING_CELL_TYPE_SPLITS {
@@ -81,12 +84,12 @@ workflow RENDER_CELL_TYPE_REPORTS {
 
 process RENDER_CELL_TYPE_REPORT {
     tag { slug }
-    errorStrategy { params.merged_input && !params.split_only ? 'ignore' : 'terminate' }
+    errorStrategy 'ignore'
     publishDir "${params.outdir}/analysis/per_type", mode: 'copy', overwrite: true,
         saveAs: { filename -> "${filename}/analysis" }
 
     input:
-    tuple val(slug), path(primitive), path(analysis_dir, stageAs: 'analysis_result'),
+    tuple val(slug), path(primitive), path(analysis_files, stageAs: 'analysis_result/*'),
         val(has_merged_de), path(merged_de_input, stageAs: 'merged_de_input')
     path pipeline_config
     path report_template
@@ -97,7 +100,7 @@ process RENDER_CELL_TYPE_REPORT {
     script:
     """
     mkdir -p ${slug}
-    cp -a analysis_result/. ${slug}/
+    cp -aL analysis_result/. ${slug}/
     if [ "${has_merged_de}" = "true" ]; then
       mkdir -p differential_expression
       cp merged_de_input differential_expression/merged.csv
@@ -105,9 +108,20 @@ process RENDER_CELL_TYPE_REPORT {
     pbmc-cell-type-report --input ${primitive} --analysis ${slug}/analysis.h5ad \\
       --output-dir ${slug} --template ${report_template} --config ${pipeline_config}
     """
+
+    stub:
+    def fail = params.stub_fail_cell_report && slug == 'failed-type' ? 'exit 41' : ''
+    """
+    ${fail}
+    mkdir -p ${slug}
+    cp -aL analysis_result/. ${slug}/
+    printf '%s\n' '<html>Cell report stub</html>' > ${slug}/report.html
+    printf '%s\n' '{}' > ${slug}/executed.ipynb
+    """
 }
 
 process WRITE_CELL_TYPE_MANIFEST {
+    errorStrategy 'ignore'
     tag 'cell-type analysis manifest'
     publishDir "${params.outdir}/analysis/per_type", mode: 'copy', overwrite: true
 
@@ -133,6 +147,16 @@ process WRITE_CELL_TYPE_MANIFEST {
     """
     pbmc-cell-type-manifest --input ${merged_input} --config ${pipeline_config} --model ${models} \\
       --split-manifest ${split_manifest} ${analysed_args} ${selected_args} \\
+      --report-dir ${report_dirs} --output cell_type_manifest.json
+    """
+
+    stub:
+    def analysed_args = analysed_slugs.collect { slug -> "--analysed-slug ${slug}" }.join(' ')
+    def selected_args = selected_slugs.collect { slug -> "--selected-slug ${slug}" }.join(' ')
+    """
+    python3 ${params.project_dir}/src/pbmc_pipeline/cell_type_manifest.py \
+      --input ${merged_input} --config ${pipeline_config} --model ${models} \
+      --split-manifest ${split_manifest} ${analysed_args} ${selected_args} \
       --report-dir ${report_dirs} --output cell_type_manifest.json
     """
 }

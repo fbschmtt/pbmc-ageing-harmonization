@@ -3,14 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import subprocess
-import sys
-import tempfile
 from pathlib import Path
 
 from .logging_utils import configure_logging
-from .report_toc import populate_html_toc, set_notebook_title
+from .notebook import render_notebook
 
 
 def generate_merge_qc_report(
@@ -35,44 +31,23 @@ def generate_merge_qc_report(
     if "pseudobulk_merge" not in by_kind:
         raise ValueError("Combined merge QC requires a pseudobulk_merge report")
 
-    output_dir = output_dir.resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    template = (template_path or root / "reports" / "merge_qc_report.py").resolve()
-    env = os.environ.copy()
     pseudo_input, pseudo_report = by_kind["pseudobulk_merge"]
-    env.update({
+    environment = {
         "QC_PSEUDOBULK_H5AD": str(pseudo_input),
         "QC_PSEUDOBULK_REPORT": str(pseudo_report),
-        "QC_STUDIES_CONFIG": str((studies_config_path or root / "config" / "studies.json").resolve()),
-    })
+        "QC_STUDIES_CONFIG": str((studies_config_path or root / "config/studies.json").resolve()),
+        # Avoid inheriting optional inputs from a previous invocation.
+        "QC_SINGLE_CELL_H5AD": "", "QC_SINGLE_CELL_REPORT": "",
+    }
     if "single_cell_merge" in by_kind:
         single_input, single_report = by_kind["single_cell_merge"]
-        env.update({"QC_SINGLE_CELL_H5AD": str(single_input), "QC_SINGLE_CELL_REPORT": str(single_report)})
-    executed, html = output_dir / "executed.ipynb", output_dir / "report.html"
-    with tempfile.TemporaryDirectory(prefix="pbmc-merge-qc-notebook-") as temporary_dir:
-        matplotlib_cache = Path(temporary_dir) / "matplotlib"
-        matplotlib_cache.mkdir()
-        env["MPLCONFIGDIR"] = str(matplotlib_cache)
-        materialized_template = Path(temporary_dir) / f"{template.stem}.ipynb"
-        subprocess.run([
-            sys.executable, "-m", "jupytext", "--to", "notebook",
-            "--output", str(materialized_template), str(template),
-        ], cwd=root, env=env, check=True)
-        subprocess.run([
-            sys.executable, "-m", "jupyter", "nbconvert", "--execute", "--to", "notebook",
-            "--ExecutePreprocessor.timeout=-1", f"--output={executed.name}",
-            f"--output-dir={output_dir}", str(materialized_template),
-        ], cwd=root, env=env, check=True)
-    set_notebook_title(executed, "Merged data QC | PBMC ageing")
-    subprocess.run([
-        sys.executable, "-m", "jupyter", "nbconvert", "--to", "html",
-        "--HTMLExporter.exclude_input=True",
-        "--HTMLExporter.exclude_input_prompt=True",
-        "--HTMLExporter.exclude_output_prompt=True",
-        f"--output={html.name}", f"--output-dir={output_dir}", str(executed),
-    ], cwd=root, env=env, check=True)
-    populate_html_toc(html)
-    return html
+        environment.update({"QC_SINGLE_CELL_H5AD": str(single_input),
+                            "QC_SINGLE_CELL_REPORT": str(single_report)})
+    return render_notebook(
+        template_path=template_path or root / "reports/merge_qc_report.py",
+        output_dir=output_dir, project_root=root, environment=environment,
+        title="Merged data QC | PBMC ageing",
+    )
 
 
 def main() -> None:

@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from .config import read_json
+from .config import load_analysis_configuration
 from .embedding import prepare_sparse_pca
 from .harmonize import (
     _harmony_integrate,
@@ -273,7 +273,9 @@ def main() -> None:
     analyse.add_argument("--output-dir", type=Path, required=True)
     analyse.add_argument("--config", type=Path, required=True)
     args = parser.parse_args()
-    pipeline = read_json(args.config)
+    pipeline = load_analysis_configuration(
+        args.config, sections=("cell_type_analysis", "processing"),
+    )
     if args.command == "split":
         split_cell_types(args.input, args.output_dir, args.manifest, pipeline)
     else:

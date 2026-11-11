@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { readSingleCellAssets } from './single-cell-assets.mjs'
 import { createReadStream } from 'node:fs'
 import { access, readFile, readdir } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
@@ -51,6 +52,14 @@ export async function sourceInventory(input, onSlowHash) {
         result.push({ path: name, sha256: await hashFile(path, (bytesRead) => onSlowHash?.(name, bytesRead)) })
       }
     }
+    const analysisDirectory = join(input, entry.name, 'analysis')
+    if (await exists(join(analysisDirectory, 'site-assets.json'))) {
+      const assetManifest = await readSingleCellAssets(analysisDirectory)
+      for (const file of ['site-assets.json', ...Object.keys(assetManifest.assets)]) {
+        const path = join(analysisDirectory, file)
+        result.push({ path: relative(input, path), sha256: await hashFile(path) })
+      }
+    }
     const dir = join(input, entry.name, 'differential_expression')
     if (!(await exists(dir))) continue
     const metadataPath = join(dir, 'run_metadata.json')
@@ -58,6 +67,7 @@ export async function sourceInventory(input, onSlowHash) {
     const metadata = JSON.parse(await readFile(metadataPath, 'utf8'))
     const names = new Set([
       'run_metadata.json',
+      'diagnostics.json',
       'fraction_model_diagnostics.tsv',
       'fraction_model_coefficients.tsv',
       'fraction_age_bins.tsv',

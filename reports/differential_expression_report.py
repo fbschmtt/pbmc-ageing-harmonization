@@ -25,30 +25,21 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import statsmodels.api as sm
 from IPython import get_ipython
 from IPython.display import HTML, Markdown, display
 from matplotlib.colors import Normalize
-from scipy.stats import f_oneway, pointbiserialr, spearmanr
-from statsmodels.stats.multitest import multipletests
 
 from pbmc_pipeline.report_theme import render_report_header
+from pbmc_pipeline.de_diagnostics import read_diagnostics, read_table, read_wgcna
 
 sns.set_theme(style="whitegrid")
 plt.rcParams.update({"figure.dpi": 110, "savefig.dpi": 110})
-from pbmc_pipeline.config import AgeTrajectorySettings, ResidualWGCNASettings, read_json
+from pbmc_pipeline.config import AgeTrajectorySettings, load_analysis_configuration, read_json
 from pbmc_pipeline.covariates import (
     categorical_contrast_label,
-    categorical_levels,
-    normalize_cmv_status,
-    normalize_smoking_status,
 )
-from pbmc_pipeline.fraction_age import fit_fraction_age_bins
 from pbmc_pipeline.go_enrichment import (
-    GeneSetEnrichmentRun,
     leading_edge_gene_preview,
-    run_preranked_gsea,
-    save_go_specificity_outputs,
     signed_de_gene_ranking,
 )
 from pbmc_pipeline.reporting import (
@@ -56,13 +47,8 @@ from pbmc_pipeline.reporting import (
     sample_cell_type_fractions,
     signed_value_at_largest_absolute_magnitude,
 )
-from pbmc_pipeline.residual_wgcna import run_residual_wgcna, trait_associated_module_scores
 from pbmc_pipeline.trajectory_analysis import (
-    cluster_sample_residuals,
-    cluster_trajectory_profiles,
-    summarize_residual_cluster_markers,
     summarize_residual_clustering,
-    trajectory_merge_diagnostics,
 )
 
 report_progress_log_lock = threading.Lock()
@@ -373,7 +359,9 @@ if ipython is not None:
     ipython.events.register("pre_run_cell", _report_cell_start)
     ipython.events.register("post_run_cell", _report_cell_end)
     report_log("cell_tracking_enabled=true")
-pipeline = read_json(Path(os.environ["DE_REPORT_CONFIG"]))
+pipeline = load_analysis_configuration(Path(os.environ["DE_REPORT_CONFIG"]))
+diagnostics_dir = Path(os.environ["DE_REPORT_ANALYSIS_DIR"])
+diagnostics = read_diagnostics(diagnostics_dir, pipeline)
 de_metadata_path = de_dir / "run_metadata.json"
 de_run_metadata = read_json(de_metadata_path) if de_metadata_path.is_file() else {}
 result_record_path = de_dir / "cell_type_result.json"
@@ -520,142 +508,28 @@ def wgcna_display_caption(n_shown, n_total):
     )
 
 
-def load_residual_sample_clusters(de_dir, fit, settings):
-    """Cluster one cell type's fitted age-bin residuals for its report."""
-    if fit.get("status") != "complete":
-        return None, None, 0, None
-    residual_path = Path(de_dir) / fit.get("pearson_residuals", "")
-    metadata_path = Path(de_dir) / fit.get("pearson_residual_sample_metadata", "")
-    if not residual_path.is_file() or not metadata_path.is_file():
-        return None, None, 0, None
-    with np.load(residual_path, allow_pickle=False) as stored:
-        residuals = pd.DataFrame(
-            stored["residuals"],
-            index=stored["pseudobulk_id"].astype(str),
-            columns=stored["genes"].astype(str),
-        )
-    samples = pd.read_csv(metadata_path, dtype={"pseudobulk_id": str})
-    samples["sample_key"] = samples["study"].astype(str) + "|" + samples["sample"].astype(str)
-    sample_by_id = samples.drop_duplicates("pseudobulk_id").set_index("pseudobulk_id")
-    shared_ids = residuals.index.intersection(sample_by_id.index, sort=False)
-    residuals = residuals.loc[shared_ids]
-    sample_by_id = sample_by_id.loc[shared_ids]
-    residuals.index = sample_by_id["sample_key"].to_numpy()
-    keep = ~residuals.index.duplicated(keep="first")
-    residuals = residuals.loc[keep]
-    sample_by_key = sample_by_id.loc[~sample_by_id["sample_key"].duplicated()].set_index("sample_key")
-    annotations, pc_scores, n_components = cluster_sample_residuals(
-        residuals, sample_by_key, settings
-    )
-    residuals = residuals.loc[annotations["sample_key"].astype(str)].copy()
-    residuals.index = annotations["sample_key"].astype(str)
-    return annotations, pc_scores, n_components, residuals
 
 
-def load_merged_cmv_results(de_dir):
-    """Load the per-cell-type merged CMV model when it completed."""
-    if not de_dir:
-        return None
-    path = Path(de_dir) / "combined" / "cmv.csv"
-    if not path.is_file():
-        return None
-    return pd.read_csv(path)
 
 
-def load_merged_smoking_results(de_dir):
-    """Load the per-cell-type merged smoking-status model when it completed."""
-    if not de_dir:
-        return None
-    path = Path(de_dir) / "combined" / "smoking_status.csv"
-    if not path.is_file():
-        return None
-    return pd.read_csv(path)
 
 
-def publish_residual_wgcna(result):
-    """Publish residual-network artifacts beside the per-type report."""
-    wgcna_dir = output_dir / "residual_wgcna"
-    wgcna_dir.mkdir(parents=True, exist_ok=True)
-    (wgcna_dir / "metadata.json").write_text(json.dumps(result.metadata, indent=2) + "\n")
-    result.soft_threshold.to_csv(wgcna_dir / "soft_threshold.csv", index=False)
-    result.module_assignments.to_csv(wgcna_dir / "module_assignments.csv", index=False)
-    result.eigengenes.to_csv(wgcna_dir / "eigengenes.csv", index=False)
-    result.module_summary.to_csv(wgcna_dir / "module_summary.csv", index=False)
-    return wgcna_dir
 
 
-def wgcna_sample_connectivity(residuals, annotations):
-    """Summarize each sample's signed-residual-network connectivity."""
-    numeric = residuals.apply(pd.to_numeric, errors="coerce").dropna(axis=0, how="any")
-    if len(numeric) < 3:
-        return pd.DataFrame()
-    correlations = numeric.T.corr().clip(-1, 1)
-    adjacency = (correlations + 1) / 2
-    np.fill_diagonal(adjacency.values, 0)
-    connectivity = adjacency.sum(axis=1)
-    standard_deviation = connectivity.std(ddof=0)
-    standardized = (
-        (connectivity - connectivity.mean()) / standard_deviation
-        if standard_deviation > 0 else pd.Series(0.0, index=connectivity.index)
-    )
-    result = pd.DataFrame({
-        "sample_key": connectivity.index.astype(str),
-        "sample_connectivity": connectivity.to_numpy(),
-        "standardized_connectivity": standardized.to_numpy(),
-    })
-    metadata = annotations.drop_duplicates("sample_key")
-    columns = [column for column in ("sample_key", "study", "age", "sex") if column in metadata]
-    return result.merge(metadata[columns], on="sample_key", how="left", validate="one_to_one")
 
 
-def wgcna_module_membership(result, residuals):
-    """Calculate correlations between each gene and its assigned eigengene."""
-    assignments = result.module_assignments.copy()
-    eigengenes = result.eigengenes.set_index("sample_key")
-    shared_samples = residuals.index.intersection(eigengenes.index, sort=False)
-    assignments["module_membership"] = np.nan
-    for module, group in assignments.groupby("module", observed=True):
-        eigengene_column = f"ME{module}"
-        genes = [gene for gene in group["gene"] if gene in residuals.columns]
-        if eigengene_column not in eigengenes or not genes:
-            continue
-        eigengene = pd.to_numeric(eigengenes.loc[shared_samples, eigengene_column], errors="coerce")
-        values = residuals.loc[shared_samples, genes].apply(pd.to_numeric, errors="coerce")
-        assignments.loc[group.index, "module_membership"] = values.corrwith(eigengene).to_numpy()
-    return assignments
 
 
-def wgcna_module_rankings(result, residuals):
-    """Rank all network genes by correlation with each non-grey eigengene."""
-    eigengenes = result.eigengenes.set_index("sample_key")
-    shared_samples = residuals.index.intersection(eigengenes.index, sort=False)
-    rankings = {}
-    for module in result.module_summary["module"].astype(str):
-        if module.lower() == "grey":
-            continue
-        eigengene_column = f"ME{module}"
-        if eigengene_column not in eigengenes:
-            continue
-        eigengene = pd.to_numeric(eigengenes.loc[shared_samples, eigengene_column], errors="coerce")
-        values = residuals.loc[shared_samples].apply(pd.to_numeric, errors="coerce")
-        membership = values.corrwith(eigengene).replace([np.inf, -np.inf], np.nan).dropna()
-        membership = membership.sort_values(ascending=False, kind="stable")
-        if not membership.empty:
-            rankings[module] = membership
-    return rankings
 
 
-def run_wgcna_module_gsea(result, residuals):
-    """Run preranked GO BP GSEA for every retained WGCNA module."""
-    run = run_preranked_gsea(wgcna_module_rankings(result, residuals))
-    return GeneSetEnrichmentRun(
-        results=run.results.rename(columns={
-            "analysis_set": "module", "analysis_set_fdr": "module_fdr",
-        }),
-        gene_sets=run.gene_sets,
-        provenance=run.provenance,
-        failures=run.failures,
-    )
+
+
+
+
+
+
+
+
 
 
 def display_merged_age_go_enrichment(age_results, contrast):
@@ -670,39 +544,14 @@ def display_merged_age_go_enrichment(age_results, contrast):
         display(Markdown("_Too few finite age statistics for preranked enrichment._"))
         return
 
-    gsea_run = run_preranked_gsea({
-        f"Merged age ({contrast})": ranking,
-    })
-    if gsea_run.results.empty and gsea_run.failures:
-        display(Markdown(
-            "_GO enrichment could not run: "
-            f"{escape('; '.join(gsea_run.failures.values()))}._"
-        ))
+    enrichment = diagnostics.get("merged_age_enrichment", {}).get(str(contrast), {})
+    failures = enrichment.get("failures", {})
+    if failures:
+        display(Markdown(f"_GO enrichment diagnostics: {escape('; '.join(failures.values()))}._"))
+    if enrichment.get("summary_error"):
+        display(Markdown(f"_The GO-specific summary could not be built: {escape(enrichment['summary_error'])}._"))
         return
-    if gsea_run.results.empty:
-        display(Markdown("_No GO Biological Process terms met the GSEA size limits._"))
-        return
-
-    enrichment_dir = output_dir / "go_enrichment"
-    enrichment_dir.mkdir(parents=True, exist_ok=True)
-    gsea_run.results.to_csv(enrichment_dir / "merged_age_gsea.csv", index=False)
-    if gsea_run.failures:
-        display(Markdown(
-            "_Some enrichment rankings were skipped: "
-            f"{escape('; '.join(gsea_run.failures.values()))}. Details are recorded in provenance._"
-        ))
-    try:
-        summary, _ = save_go_specificity_outputs(
-            gsea_run, output_dir=enrichment_dir, prefix="merged_age_gsea",
-        )
-    except Exception as exc:  # noqa: BLE001 - keep DE report usable if ontology is unavailable
-        display(Markdown(
-            "_The complete GO results were saved, but the hierarchy-aware summary could not be "
-            f"built: {escape(f'{type(exc).__name__}: {exc}')}. "
-            "See [full GSEA results](go_enrichment/merged_age_gsea.csv)._"
-        ))
-        return
-
+    summary = read_table(diagnostics_dir / enrichment["summary"]) if enrichment.get("summary") else pd.DataFrame()
     if summary.empty:
         display(Markdown(
             "_No GO terms passed the native GSEA FDR threshold of 0.05. See [full ranked results]"
@@ -740,76 +589,10 @@ def display_merged_age_go_enrichment(age_results, contrast):
     )
 
 
-def wgcna_covariate_associations(result, annotations):
-    """Associate module eigengenes with recorded continuous and categorical covariates."""
-    eigengenes = result.eigengenes.copy()
-    metadata = annotations.drop_duplicates("sample_key").copy()
-    data = eigengenes.merge(metadata, on="sample_key", how="inner", validate="one_to_one")
-    continuous = [
-        column for column in ("age", "log10_total_counts", "bmi") if column in data
-    ]
-    categorical = [
-        column for column in (
-            "sex", "cmv", "smoking_status", "study", "study_site", "technology",
-            "batch_single_cell",
-            "include_intronic",
-        ) if column in data
-    ]
-    rows = []
-    eigengene_columns = [column for column in eigengenes if column.startswith("ME")]
-    for eigengene_column in eigengene_columns:
-        module = eigengene_column.removeprefix("ME")
-        for covariate in continuous:
-            values = data[[eigengene_column, covariate]].apply(pd.to_numeric, errors="coerce").dropna()
-            if len(values) < 3 or values[covariate].nunique() < 2:
-                continue
-            effect_size, pvalue = spearmanr(values[eigengene_column], values[covariate])
-            rows.append({
-                "module": module, "covariate": covariate, "association": "Spearman correlation",
-                "effect_size": effect_size, "pvalue": pvalue, "n_samples": len(values),
-                "n_levels": np.nan,
-            })
-        for covariate in categorical:
-            values = data[[eigengene_column, covariate]].dropna().copy()
-            counts = values[covariate].astype(str).value_counts()
-            counts = counts.loc[counts >= 2]
-            values = values.loc[values[covariate].astype(str).isin(counts.index)]
-            if len(values) < 3 or len(counts) < 2:
-                continue
-            codes, _ = pd.factorize(values[covariate].astype(str), sort=True)
-            if len(counts) == 2:
-                effect_size, pvalue = pointbiserialr(codes, values[eigengene_column])
-                association = "Point-biserial correlation"
-            else:
-                groups = [
-                    values.loc[codes == code, eigengene_column].to_numpy()
-                    for code in range(len(counts))
-                ]
-                _, pvalue = f_oneway(*groups)
-                overall_mean = values[eigengene_column].mean()
-                total_sum_squares = ((values[eigengene_column] - overall_mean) ** 2).sum()
-                between_sum_squares = sum(
-                    len(group) * (np.mean(group) - overall_mean) ** 2 for group in groups
-                )
-                effect_size = between_sum_squares / total_sum_squares if total_sum_squares else np.nan
-                association = "One-way ANOVA η²"
-            rows.append({
-                "module": module, "covariate": covariate, "association": association,
-                "effect_size": effect_size, "pvalue": pvalue, "n_samples": len(values),
-                "n_levels": len(counts),
-            })
-    associations = pd.DataFrame(rows)
-    if associations.empty:
-        return associations
-    associations["fdr"] = np.nan
-    valid = associations["pvalue"].notna()
-    associations.loc[valid, "fdr"] = multipletests(
-        associations.loc[valid, "pvalue"], method="fdr_bh",
-    )[1]
-    return associations.sort_values(["fdr", "module", "covariate"], na_position="last")
 
 
-def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results, smoking_results):
+
+def plot_residual_wgcna(result, cmv_results, smoking_results):
     """Show WGCNA diagnostics, covariates, hubs, and enrichment."""
     if result.metadata["status"] != "complete":
         status = result.metadata["status"]
@@ -819,7 +602,6 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results, s
         else:
             display(Markdown(f"_Residual WGCNA was not run: {message}._"))
         return
-    wgcna_dir = output_dir / "residual_wgcna"
 
     display(Markdown("#### Network diagnostics"))
     soft_threshold = result.soft_threshold
@@ -840,13 +622,7 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results, s
         display_collapsible_figure(figure, "Residual WGCNA soft-threshold diagnostics")
 
     display(Markdown("#### Sample connectivity"))
-    with report_phase(
-        "residual_wgcna_sample_connectivity",
-        n_samples=residuals.shape[0],
-        n_genes=residuals.shape[1],
-    ):
-        connectivity = wgcna_sample_connectivity(residuals, annotations)
-    connectivity.to_csv(wgcna_dir / "sample_connectivity.csv", index=False)
+    connectivity = read_table(diagnostics_dir / "residual_wgcna/sample_connectivity.csv")
     if connectivity.empty:
         display(Markdown("_Sample connectivity is unavailable for fewer than three residual samples._"))
     else:
@@ -959,15 +735,7 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results, s
         ("cmv", "CMV", "cmv_status"),
         ("smoking_status", "smoking", "smoking_status"),
     ):
-        score_data = trait_associated_module_scores(result, annotations, covariate=covariate)
-        if score_data.empty or not {"umap_1", "umap_2"}.issubset(annotations):
-            continue
-        score_data = score_data.rename(columns={"trait_status": status_field})
-        score_data = score_data.merge(
-            annotations[["sample_key", "umap_1", "umap_2"]].drop_duplicates("sample_key"),
-            on="sample_key", how="left", validate="one_to_one",
-        ).dropna(subset=["module_score", "umap_1", "umap_2"])
-        score_data.to_csv(wgcna_dir / f"{label}_associated_module_scores.csv", index=False)
+        score_data = read_table(diagnostics_dir / "residual_wgcna" / f"{label}_associated_module_scores.csv")
         if not score_data.empty:
             module = score_data["module"].iloc[0]
             figure, axes = plt.subplots(1, 2, figsize=(13, 5.2))
@@ -1024,9 +792,7 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results, s
         display_collapsible_figure(figure, "Show module-eigengene correlation heatmap")
 
     display(Markdown("#### Covariate associations"))
-    with report_phase("residual_wgcna_covariate_associations"):
-        associations = wgcna_covariate_associations(result, annotations)
-    associations.to_csv(wgcna_dir / "module_covariate_associations.csv", index=False)
+    associations = read_table(diagnostics_dir / "residual_wgcna/module_covariate_associations.csv")
     if associations.empty:
         display(Markdown("_No recorded covariates had sufficient variation for eigengene association tests._"))
     else:
@@ -1071,29 +837,15 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results, s
         )
 
     display(Markdown("#### Hub genes and CMV evidence"))
-    with report_phase(
-        "residual_wgcna_module_membership",
-        n_samples=residuals.shape[0],
-        n_genes=residuals.shape[1],
-        n_modules=len(result.module_summary),
-    ):
-        membership = wgcna_module_membership(result, residuals)
-    hub_genes = membership.assign(
-        absolute_module_membership=membership["module_membership"].abs()
-    ).sort_values(["module", "absolute_module_membership"], ascending=[True, False])
-    hub_genes["module_rank"] = hub_genes.groupby("module", observed=True).cumcount() + 1
-    hub_genes.to_csv(wgcna_dir / "hub_genes.csv", index=False)
+    hub_genes = read_table(diagnostics_dir / "residual_wgcna/hub_genes.csv")
+    membership = hub_genes.drop(columns=["absolute_module_membership", "module_rank"])
     display_collapsible_table(
         hub_genes.loc[hub_genes["module_rank"] <= 20], "Show top 20 hub genes per module", max_height=560,
     )
     display(Markdown("#### Gene-set enrichment (preranked GSEA)"))
-    with report_phase(
-        "residual_wgcna_module_gsea",
-        n_genes=residuals.shape[1],
-        n_modules=len(result.module_summary),
-    ):
-        gsea_run = run_wgcna_module_gsea(result, residuals)
-    gsea_results = gsea_run.results
+    enrichment = read_json(diagnostics_dir / "residual_wgcna/module_gsea_status.json")
+    gsea_run = SimpleNamespace(failures=enrichment["failures"])
+    gsea_results = read_table(diagnostics_dir / "residual_wgcna/module_gsea.csv")
     if gsea_results.empty and gsea_run.failures:
         display(Markdown(
             "_GO Biological Process GSEA could not run: "
@@ -1102,7 +854,6 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results, s
     elif gsea_results.empty:
         display(Markdown("_No GO Biological Process terms met the configured GSEA size limits._"))
     else:
-        gsea_results.to_csv(wgcna_dir / "module_gsea.csv", index=False)
         if gsea_run.failures:
             display(Markdown(
                 "_Some modules could not be enriched: "
@@ -1114,20 +865,12 @@ def plot_residual_wgcna(result, residuals, annotations, settings, cmv_results, s
             "GO Biological Process 2023; the full table includes the native GSEA FDR q-value "
             "within each module."
         ))
-        summary_error = None
-        try:
-            specific_gsea, _ = save_go_specificity_outputs(
-                gsea_run, output_dir=wgcna_dir, prefix="module_gsea", group_column="module",
-                fdr_column="module_fdr",
-            )
-        except Exception as exc:  # noqa: BLE001 - preserve the full GSEA output if GO is unavailable
-            summary_error = exc
-            specific_gsea = pd.DataFrame()
+        summary_error = enrichment.get("summary_error")
+        specific_gsea = read_table(diagnostics_dir / "residual_wgcna/module_gsea_specific_summary.csv")
+        if summary_error:
             display(Markdown(
                 "_The GO-specific summary could not be built from the bundled ontology: "
-                f"{escape(f'{type(exc).__name__}: {exc}')}. "
-                "The complete preranked results remain available in "
-                "[module_gsea.csv](residual_wgcna/module_gsea.csv)._"
+                f"{escape(summary_error)}. The complete preranked results remain available._"
             ))
         if specific_gsea.empty:
             if summary_error is None:
@@ -1205,7 +948,7 @@ def annotate_cluster_centroids(axis, table, label_column):
         )
 
 
-def plot_residual_cluster_markers(residuals, annotations, settings):
+def plot_residual_cluster_markers(annotations, settings):
     """Show the residual UMAP clusters and their largest mean-residual contrasts."""
     display(Markdown("### Residual Cluster Markers"))
     coordinates = annotations.dropna(subset=["umap_1", "umap_2"]).copy()
@@ -1239,18 +982,8 @@ def plot_residual_cluster_markers(residuals, annotations, settings):
         figure.tight_layout()
         plt.show()
 
-    with report_phase(
-        "residual_cluster_marker_summary",
-        n_samples=residuals.shape[0],
-        n_genes=residuals.shape[1],
-        maximum_clusters=settings.residual_marker_max_clusters,
-    ):
-        markers, _, reference_cluster = summarize_residual_cluster_markers(
-            residuals,
-            annotations,
-            settings.residual_marker_max_clusters,
-            progress=report_log,
-        )
+    markers = read_table(diagnostics_dir / "residual_cluster_markers.csv")
+    reference_cluster = diagnostics["residuals"]["reference_cluster"]
     if markers.empty:
         display(Markdown(
             "_No between-cluster marker contrasts are available; at least two residual "
@@ -1801,172 +1534,10 @@ def plot_study_fraction_curves(fraction_specs, *, palette):
     display_collapsible_figure(figure, "Show study-specific fraction curves")
 
 
-def _bootstrap_binomial_residual_sd(design, denominators, fitted_probabilities, *, rng, n_bootstrap):
-    """Estimate post-model residual SD expected from binomial cell sampling alone.
-
-    The fitted probabilities and design are fixed inputs.  Thus this is a
-    conditional measurement-noise reference: only finite cell sampling varies
-    between replicates, while the observed covariate structure is retained.
-    """
-    n_samples, n_terms = design.shape
-    if n_samples <= n_terms:
-        return np.nan
-    denominators = np.asarray(denominators, dtype=np.int64)
-    fitted_probabilities = np.asarray(fitted_probabilities, dtype=float)
-    simulated = rng.binomial(
-        denominators, fitted_probabilities, size=(n_bootstrap, n_samples),
-    ) / denominators
-    orthonormal_design, _ = np.linalg.qr(design, mode="reduced")
-    # Refit the same fixed design because the observed quantity is also a
-    # post-covariate-model residual SD.  This removes chance alignment between
-    # simulated binomial noise and the covariates, just as in the observed fit.
-    residuals = simulated - (simulated @ orthonormal_design) @ orthonormal_design.T
-    return float(np.sqrt(np.mean(np.sum(residuals**2, axis=1) / (n_samples - n_terms))))
 
 
-def fit_parent_fraction_models(
-    fractions, adata, *, fraction_column, bootstrap_replicates, bootstrap_seed,
-):
-    """Fit adult-only, study-specific OLS models and residual diagnostics."""
-    candidate_covariates = ["age", "sex", "bmi", "cmv", "smoking_status"]
-    present = [column for column in candidate_covariates if column in adata.obs]
-    metadata_columns = [column for column in present if column != "age"]
-    metadata = adata.obs.groupby(["study", "sample"], observed=True)[metadata_columns].first().reset_index()
-    # Repeated cell metadata must describe one sample consistently.
-    for column in present:
-        n_unique = adata.obs.groupby(["study", "sample"], observed=True)[column].nunique(dropna=False)
-        if (n_unique > 1).any():
-            raise ValueError(f"{column} must be constant within each study × sample")
-    data = fractions.merge(metadata, on=["study", "sample"], how="left", validate="one_to_one")
-    data["age"] = pd.to_numeric(data["age"], errors="coerce")
-    if "cmv" in present:
-        data["cmv"] = normalize_cmv_status(data["cmv"])
-    if "smoking_status" in present:
-        data["smoking_status"] = normalize_smoking_status(data["smoking_status"])
-    data = data.loc[data["age"] >= 20].copy()
-    results = []
-    residual_diagnostics = []
-    unavailable = {
-        "", "not_provided", "heterogeneous during bulk", "unknown", "nan", "none",
-    }
-    bootstrap_rng = np.random.default_rng(bootstrap_seed)
 
-    def valid_values(values, column):
-        if column == "smoking_status":
-            return normalize_smoking_status(values).notna()
-        if column in {"age", "bmi"}:
-            numeric = pd.to_numeric(values, errors="coerce")
-            return numeric.notna() & np.isfinite(numeric)
-        normalized = values.astype("string").str.strip().str.lower()
-        return normalized.notna() & ~normalized.isin(unavailable)
 
-    for study, subset in data.groupby("study", sort=True, observed=True):
-        eligible = subset.copy()
-        selected = []
-        for column in candidate_covariates:
-            if column not in present:
-                continue
-            valid = valid_values(eligible[column], column)
-            coverage = float(valid.mean()) if len(eligible) else np.nan
-            if coverage >= 0.95:
-                if column in {"sex", "cmv", "smoking_status"}:
-                    levels = categorical_levels(column, eligible.loc[valid, column])
-                    variable = len(levels) >= 2
-                else:
-                    variable = pd.to_numeric(eligible.loc[valid, column], errors="coerce").nunique() >= 2
-                if variable:
-                    selected.append(column)
-
-        if not selected:
-            continue
-        valid_rows = pd.Series(True, index=eligible.index)
-        for column in selected:
-            valid_rows &= valid_values(eligible[column], column)
-        model_data = eligible.loc[valid_rows].copy()
-        if model_data.empty:
-            continue
-        pieces = [pd.Series(1.0, index=model_data.index, name="intercept")]
-        term_covariates = {"intercept": "intercept"}
-        for column in selected:
-            if column in {"age", "bmi"}:
-                pieces.append(pd.to_numeric(model_data[column], errors="coerce").rename(column))
-                term_covariates[column] = column
-            else:
-                values = model_data[column].astype("string").str.strip().str.lower()
-                levels = categorical_levels(column, values)
-                values = pd.Series(pd.Categorical(values, categories=levels), index=model_data.index)
-                dummies = pd.get_dummies(values, prefix=column, drop_first=True, dtype=float)
-                for term in dummies:
-                    pieces.append(dummies[term].rename(term))
-                    term_covariates[term] = column
-        design = pd.concat(pieces, axis=1).astype(float)
-        if len(model_data) <= design.shape[1] or np.linalg.matrix_rank(design.to_numpy()) < design.shape[1]:
-            continue
-        design_array = design.to_numpy()
-        fit = sm.OLS(model_data[fraction_column].to_numpy(dtype=float), design_array).fit()
-        confidence = fit.conf_int()
-        mean_fraction = float(model_data[fraction_column].mean())
-        unbounded_fitted_probabilities = np.asarray(fit.predict(design_array), dtype=float)
-        n_clipped_probabilities = int(
-            ((unbounded_fitted_probabilities < 0) | (unbounded_fitted_probabilities > 1)).sum()
-        )
-        # OLS is retained as the reported fraction model.  Its fitted values
-        # provide donor-specific conditional means for the binomial null; clip
-        # only because binomial probabilities must lie in [0, 1].  The count is
-        # published so any material boundary correction is visible.
-        fitted_probabilities = np.clip(unbounded_fitted_probabilities, 0, 1)
-        residual_diagnostics.append({
-            "study": str(study),
-            "residual_sd": float(np.sqrt(fit.mse_resid)),
-            "binomial_sampling_sd": _bootstrap_binomial_residual_sd(
-                design_array,
-                model_data["denominator_cells"].to_numpy(),
-                fitted_probabilities,
-                rng=bootstrap_rng,
-                n_bootstrap=bootstrap_replicates,
-            ),
-            "n_samples": len(model_data),
-            "mean_fraction": mean_fraction,
-            "n_clipped_binomial_probabilities": n_clipped_probabilities,
-            "fraction_clipped_binomial_probabilities": n_clipped_probabilities / len(model_data),
-            "covariates": ";".join(selected),
-            "model_terms": ";".join(design.columns.drop("intercept")),
-        })
-        for index, term in enumerate(design.columns):
-            if term == "intercept":
-                continue
-            covariate = term_covariates[term]
-            if covariate in {"sex", "cmv", "smoking_status"}:
-                levels = categorical_levels(
-                    covariate,
-                    model_data[covariate].astype("string").str.strip().str.lower(),
-                )
-                contrast = f"{term.removeprefix(f'{covariate}_')} vs {levels[0]}"
-            else:
-                contrast = "per decade" if covariate == "age" else "per BMI unit"
-            effect_scale = 10 if covariate == "age" else 1
-            results.append({
-                "study": str(study), "covariate": covariate, "term": term,
-                "contrast": contrast, "estimate": fit.params[index] * effect_scale,
-                "ci_low": confidence[index, 0] * effect_scale,
-                "ci_high": confidence[index, 1] * effect_scale,
-                "n_samples": len(model_data),
-            })
-    coefficient_columns = [
-        "study", "covariate", "term", "contrast", "estimate", "ci_low", "ci_high",
-        "n_samples",
-    ]
-    diagnostic_columns = [
-        "study", "residual_sd", "binomial_sampling_sd", "n_samples", "mean_fraction",
-        "n_clipped_binomial_probabilities", "fraction_clipped_binomial_probabilities",
-        "covariates", "model_terms",
-    ]
-    # Keep the report-facing schema stable even when no study has enough adult
-    # samples or covariate variation for an estimable model.
-    return (
-        pd.DataFrame(results, columns=coefficient_columns),
-        pd.DataFrame(residual_diagnostics, columns=diagnostic_columns),
-    )
 
 
 def plot_parent_fraction_coefficients(
@@ -2180,17 +1751,8 @@ display(Markdown(
 
 # %%
 display(Markdown("**Model sample restriction:** adults aged ≥20 years only."))
-with report_phase("fraction_age_models", n_samples=len(adata.obs)):
-    fraction_age_results, fraction_age_status = fit_fraction_age_bins(
-        adata.obs,
-        settings=trajectory_settings,
-        min_denominator_cells=min_fraction_denominator,
-        minimum_samples_per_bin=int(pipeline["differential_expression"]["study_comparison_minimum_samples_per_bin"]),
-    )
-fraction_age_results.insert(0, "cell_type", cell_type_name)
-fraction_age_results.insert(1, "aifi_l1_parent", parent)
-fraction_age_results.to_csv(output_dir / "fraction_age_bins.tsv", sep="\t", index=False)
-(output_dir / "fraction_age_bins_metadata.json").write_text(json.dumps(fraction_age_status, indent=2) + "\n")
+fraction_age_results = read_table(diagnostics_dir / "fraction_age_bins.tsv", sep="\t")
+fraction_age_status = read_json(diagnostics_dir / "fraction_age_bins_metadata.json")
 display(Markdown(
     "### Study-specific adjusted fraction changes across age bins\n"
     f"Each point is a within-study age-bin contrast relative to {trajectory_settings.reference_bin_start_age}–"
@@ -2233,25 +1795,8 @@ display_collapsible_table(pd.DataFrame(fraction_age_status), "Show age-bin model
 parent_fraction_data = fraction_specs[1][0]
 parent_fraction_column = fraction_specs[1][1]
 fraction_model_settings = pipeline["differential_expression"]["abundance"]["fraction_model"]
-fraction_coefficients, fraction_residual_diagnostics = fit_parent_fraction_models(
-    parent_fraction_data, adata, fraction_column=parent_fraction_column,
-    bootstrap_replicates=fraction_model_settings["binomial_bootstrap_replicates"],
-    bootstrap_seed=fraction_model_settings["binomial_bootstrap_seed"],
-)
-# Publish the exact coefficients shown in the report for downstream presentation.
-fraction_coefficients.insert(0, "cell_type", cell_type_name)
-fraction_coefficients.insert(1, "aifi_l1_parent", parent)
-fraction_coefficients.insert(2, "response", parent_fraction_column)
-fraction_coefficients.to_csv(output_dir / "fraction_model_coefficients.tsv", sep="\t", index=False)
-fraction_residual_diagnostics.insert(0, "cell_type", cell_type_name)
-fraction_residual_diagnostics.insert(1, "aifi_l1_parent", parent)
-fraction_residual_diagnostics.insert(2, "response", parent_fraction_column)
-fraction_residual_diagnostics["binomial_bootstrap_replicates"] = (
-    fraction_model_settings["binomial_bootstrap_replicates"]
-)
-fraction_residual_diagnostics["binomial_bootstrap_seed"] = fraction_model_settings["binomial_bootstrap_seed"]
-fraction_diagnostics_path = output_dir / "fraction_model_diagnostics.tsv"
-fraction_residual_diagnostics.to_csv(fraction_diagnostics_path, sep="\t", index=False)
+fraction_coefficients = read_table(diagnostics_dir / "fraction_model_coefficients.tsv", sep="\t")
+fraction_residual_diagnostics = read_table(diagnostics_dir / "fraction_model_diagnostics.tsv", sep="\t")
 display(Markdown("#### Fraction-Model Residual and Sampling Diagnostics"))
 fraction_diagnostics_display = fraction_residual_diagnostics.rename(columns={
     "cell_type": "Cell type",
@@ -3641,34 +3186,10 @@ if de_dir:
                     profiles = profile_data.pivot(
                         index="gene", columns="age_bin", values="trajectory_scaled"
                     ).reindex(columns=retained_bins).dropna()
-                    with report_phase(
-                        "significant_trajectory_clustering",
-                        n_genes=len(profiles),
-                        n_age_bins=profiles.shape[1],
-                    ):
-                        cluster_labels, cluster_means = cluster_trajectory_profiles(
-                            profiles,
-                            trajectory_settings,
-                        )
-                    with report_phase(
-                        "trajectory_merge_diagnostics",
-                        n_genes=len(profiles),
-                        n_age_bins=profiles.shape[1],
-                    ):
-                        merge_diagnostics = trajectory_merge_diagnostics(
-                            profiles, trajectory_settings, maximum_merges=20
-                        )
-                    cluster_rows = profiles.join(cluster_labels).reset_index()
-                    cluster_rows.insert(1, "cell_type", cell_type_name)
-                    cluster_rows["omnibus_padj"] = cluster_rows["gene"].map(
-                        omnibus.set_index("gene")["omnibus_padj"]
-                    )
-                    cluster_rows.to_csv(output_dir / "age_trajectory_clusters.csv", index=False)
-                    cluster_means = cluster_means.reset_index()
-                    cluster_means.insert(0, "cell_type", cell_type_name)
-                    cluster_means.to_csv(
-                        output_dir / "age_trajectory_cluster_means.csv", index=False
-                    )
+                    cluster_rows = read_table(diagnostics_dir / "age_trajectory_clusters.csv")
+                    cluster_labels = cluster_rows.set_index("gene")[["trajectory_cluster", "umap_1", "umap_2"]]
+                    cluster_means = read_table(diagnostics_dir / "age_trajectory_cluster_means.csv")
+                    merge_diagnostics = read_table(diagnostics_dir / "age_trajectory_merge_diagnostics.csv")
                     figure, axes = plt.subplots(1, 4, figsize=(22, 4.8))
                     palette = sns.color_palette(
                         "husl", n_colors=max(len(cluster_means), 1)
@@ -3779,39 +3300,23 @@ if de_dir:
             "the same UMAP coordinates."
         ))
         display(Markdown("### Residual UMAP and PCA plots"))
-        if de_dir and age_trajectory_fit:
-            with report_phase("residual_sample_clustering"):
-                (
-                    residual_clusters, residual_pc_scores, residual_pcs, residual_matrix,
-                ) = load_residual_sample_clusters(de_dir, age_trajectory_fit, trajectory_settings)
+        residual_info = diagnostics.get("residuals")
+        if residual_info is None:
+            residual_clusters, residual_pc_scores, residual_pcs, residual_shape = None, None, 0, None
         else:
-            residual_clusters, residual_pc_scores, residual_pcs, residual_matrix = (
-                None, None, 0, None
-            )
+            residual_clusters = read_table(diagnostics_dir / "residual_sample_clusters.csv")
+            residual_pc_scores = read_table(diagnostics_dir / "residual_sample_pc_scores.csv")
+            residual_pcs = residual_info["n_components"]
+            residual_shape = tuple(residual_info["shape"])
         if residual_clusters is None:
             residual_reason = age_trajectory_fit.get(
                 "reason", "the age-bin model did not save Pearson residuals"
             )
             display(Markdown(f"_Residual clustering unavailable: {residual_reason}._"))
         else:
-            with report_phase(
-                "residual_cluster_artifact_writes",
-                n_samples=len(residual_clusters),
-                n_genes=residual_matrix.shape[1],
-            ):
-                residual_clusters.to_csv(
-                    output_dir / "residual_sample_clusters.csv", index=False
-                )
-                residual_pc_scores.to_csv(
-                    output_dir / "residual_sample_pc_scores.csv", index=False
-                )
-                report_log(
-                    f"residual_sample_clustering_result n_samples={len(residual_clusters)} "
-                    f"n_genes={residual_matrix.shape[1]} n_pcs={residual_pcs}"
-                )
             display(Markdown(
                 f"The embedding includes **{len(residual_clusters)} samples** and "
-                f"**{residual_matrix.shape[1]:,} genes**, with {residual_pcs} "
+                f"**{residual_shape[1]:,} genes**, with {residual_pcs} "
                 "principal components retained. The primary clusters use Leiden on a "
                 f"{trajectory_settings.residual_leiden_neighbors}-neighbor graph built from "
                 f"up to {trajectory_settings.residual_pc_hdbscan_components} PCs. The "
@@ -3839,35 +3344,18 @@ if de_dir:
                 plot_residual_alternative_clusterings(residual_clusters, trajectory_settings)
             with report_phase(
                 "residual_cluster_marker_plots",
-                n_samples=residual_matrix.shape[0],
-                n_genes=residual_matrix.shape[1],
+                n_samples=residual_shape[0],
+                n_genes=residual_shape[1],
             ):
                 plot_residual_cluster_markers(
-                    residual_matrix, residual_clusters, trajectory_settings
+                    residual_clusters, trajectory_settings
                 )
             display(Markdown(
                 "Download the [residual cluster assignments](residual_sample_clusters.csv) "
                 "or [sample PCA scores](residual_sample_pc_scores.csv)."
             ))
             display(Markdown("### Residual WGCNA modules"))
-            wgcna_settings = ResidualWGCNASettings.from_mapping(
-                pipeline["cell_type_analysis"]["residual_wgcna"]
-            )
-            with report_phase(
-                "residual_wgcna",
-                n_samples=residual_matrix.shape[0],
-                n_genes=residual_matrix.shape[1],
-                maximum_genes=wgcna_settings.maximum_genes,
-            ):
-                residual_wgcna = run_residual_wgcna(
-                    residual_matrix,
-                    residual_clusters,
-                    settings=wgcna_settings,
-                    cmv_results=load_merged_cmv_results(de_dir),
-                    smoking_results=load_merged_smoking_results(de_dir),
-                )
-            with report_phase("residual_wgcna_publish"):
-                publish_residual_wgcna(residual_wgcna)
+            residual_wgcna = read_wgcna(diagnostics_dir / "residual_wgcna")
             display(Markdown(
                 "PyWGCNA fits a signed correlation network to the age-bin-model Pearson "
                 "residuals, after retaining the configured most variable genes. The residual "
@@ -3895,11 +3383,8 @@ if de_dir:
             with report_phase("residual_wgcna_report_diagnostics"):
                 plot_residual_wgcna(
                     residual_wgcna,
-                    residual_matrix,
-                    residual_clusters,
-                    wgcna_settings,
-                    load_merged_cmv_results(de_dir),
-                    load_merged_smoking_results(de_dir),
+                    read_table(de_dir / "combined/cmv.csv", optional=True),
+                    read_table(de_dir / "combined/smoking_status.csv", optional=True),
                 )
 
 memory_monitor_stop.set()

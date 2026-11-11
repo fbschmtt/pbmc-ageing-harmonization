@@ -1,3 +1,5 @@
+import subprocess
+
 from pbmc_pipeline.qc import generate_qc_report
 
 
@@ -26,7 +28,9 @@ def test_qc_runner_materializes_executes_and_exports_report(tmp_path, monkeypatc
                 '<h2 id="run-provenance">Run provenance and dimensions</h2>'
             )
 
-    monkeypatch.setattr("pbmc_pipeline.qc.subprocess.run", record)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("pbmc_pipeline.notebook.subprocess.run", record)
     html = generate_qc_report(
         root=root,
         input_path=input_path,

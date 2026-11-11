@@ -39,6 +39,7 @@ pbmc-cell-type = "pbmc_pipeline.cell_type:main"
 pbmc-cell-type-report = "pbmc_pipeline.cell_type_report:main"
 pbmc-cell-type-manifest = "pbmc_pipeline.cell_type_manifest:main"
 pbmc-differential-expression = "pbmc_pipeline.differential_expression:main"
+pbmc-de-diagnostics = "pbmc_pipeline.de_diagnostics:main"
 pbmc-differential-expression-report = "pbmc_pipeline.differential_expression_report:main"
 pbmc-age-clock = "pbmc_pipeline.age_clock:main"
 pbmc-age-clock-report = "pbmc_pipeline.age_clock_report:main"
@@ -53,6 +54,8 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = "-m 'not external_models'"
+markers = ["external_models: compatibility checks requiring locally acquired AIFI model binaries"]
 
 [tool.ruff]
 line-length = 100

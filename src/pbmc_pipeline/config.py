@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import math
 import re
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
@@ -357,6 +358,285 @@ def validate_document(document: dict, schema: dict, *, document_name: str) -> No
     raise ConfigurationError(f"{document_name}:{location}: {error.message}")
 
 
+def _configuration_object(document: dict, key: str, parent: str = "pipeline") -> dict:
+    value = document.get(key)
+    if not isinstance(value, dict):
+        raise ConfigurationError(f"{parent}.{key} must be an object")
+    return value
+
+
+def load_analysis_configuration(
+    path: Path, *, sections: tuple[str, ...] = ("cell_type_analysis", "differential_expression"),
+) -> dict:
+    """Validate a staged pipeline file without opening study registries or input data.
+
+    Callers select the sections they consume. Age clocks share DE sample-inclusion
+    rules but do not require DE fitting or trajectory settings. Return the original
+    document unchanged so configuration digests and scientific defaults are stable.
+    """
+    try:
+        pipeline = read_json(path)
+    except json.JSONDecodeError as error:
+        raise ConfigurationError(f"{path}: invalid JSON: {error.msg}") from error
+    if not isinstance(pipeline, dict) or pipeline.get("schema_version") != 1:
+        raise ConfigurationError("Only configuration schema_version 1 is supported")
+    for section in sections:
+        if section == "cell_type_analysis":
+            _validate_cell_type_analysis(_configuration_object(pipeline, section))
+        elif section == "differential_expression":
+            _validate_differential_expression(_configuration_object(pipeline, section))
+        elif section == "age_clock":
+            spec = _configuration_object(pipeline, "differential_expression")
+            if spec.get("split_by") != "aifi_l2_majority":
+                raise ConfigurationError("differential_expression.split_by must be 'aifi_l2_majority'")
+            _validate_sample_inclusion(spec)
+        elif section == "processing":
+            _validate_analysis_processing(_configuration_object(pipeline, section))
+        else:
+            raise ValueError(f"Unknown analysis configuration section: {section!r}")
+    return pipeline
+
+
+def _validate_analysis_processing(processing: dict) -> None:
+    target_sum = processing.get("target_sum")
+    if (
+        not isinstance(target_sum, (int, float)) or isinstance(target_sum, bool)
+        or not math.isfinite(target_sum) or target_sum <= 0
+    ):
+        raise ConfigurationError("processing.target_sum must be a finite positive number")
+    _configuration_object(processing, "hvg", "processing")
+    expression = processing.get("exclude_vdj_regex")
+    if not isinstance(expression, str):
+        raise ConfigurationError("processing.exclude_vdj_regex must be a regular expression string")
+    try:
+        re.compile(expression)
+    except re.error as error:
+        raise ConfigurationError(f"processing.exclude_vdj_regex is invalid: {error}") from error
+    seed = processing.get("random_seed")
+    if not isinstance(seed, int) or isinstance(seed, bool) or seed < 0:
+        raise ConfigurationError("processing.random_seed must be a non-negative integer")
+    if "output_compression" not in processing or processing["output_compression"] not in (None, "gzip", "lzf"):
+        raise ConfigurationError("processing.output_compression must be null, 'gzip', or 'lzf'")
+    for key in ("n_neighbors", "n_pcs"):
+        value = _configuration_object(processing, "neighbors", "processing").get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 2:
+            raise ConfigurationError(f"processing.neighbors.{key} must be an integer of at least 2")
+
+
+def _validate_cell_type_analysis(cell_type_analysis: dict) -> None:
+    if not isinstance(cell_type_analysis.get("analysis_version"), int) or cell_type_analysis["analysis_version"] < 1:
+        raise ConfigurationError("cell_type_analysis.analysis_version must be a positive integer")
+    if cell_type_analysis.get("split_by") != "aifi_l2_majority":
+        raise ConfigurationError("cell_type_analysis.split_by must be 'aifi_l2_majority'")
+    if not isinstance(cell_type_analysis.get("min_cells"), int) or cell_type_analysis["min_cells"] < 3:
+        raise ConfigurationError("cell_type_analysis.min_cells must be an integer of at least 3")
+    minimum_cluster_fraction_denominator = cell_type_analysis.get(
+        "min_cluster_fraction_denominator_cells"
+    )
+    if (
+        not isinstance(minimum_cluster_fraction_denominator, int)
+        or isinstance(minimum_cluster_fraction_denominator, bool)
+        or minimum_cluster_fraction_denominator < 1
+    ):
+        raise ConfigurationError(
+            "cell_type_analysis.min_cluster_fraction_denominator_cells "
+            "must be a positive integer"
+        )
+    clustering = _configuration_object(cell_type_analysis, "clustering", "cell_type_analysis")
+    if clustering.get("method") != "leiden":
+        raise ConfigurationError("cell_type_analysis.clustering.method must be 'leiden'")
+    if not isinstance(clustering.get("resolution"), (int, float)) or clustering["resolution"] <= 0:
+        raise ConfigurationError("cell_type_analysis.clustering.resolution must be positive")
+    integration = _configuration_object(cell_type_analysis, "integration", "cell_type_analysis")
+    if integration.get("method") != "harmony":
+        raise ConfigurationError("cell_type_analysis.integration.method must be 'harmony'")
+    if integration.get("batch_key") != "study":
+        raise ConfigurationError("cell_type_analysis.integration.batch_key must be 'study'")
+    if integration.get("adjusted_basis") != "X_pca_harmony":
+        raise ConfigurationError(
+            "cell_type_analysis.integration.adjusted_basis must be 'X_pca_harmony'"
+        )
+    residual_wgcna = cell_type_analysis.get("residual_wgcna")
+    if not isinstance(residual_wgcna, dict):
+        raise ConfigurationError("cell_type_analysis.residual_wgcna must be an object")
+    ResidualWGCNASettings.from_mapping(residual_wgcna)
+    parent_map = cell_type_analysis.get("l2_parent_l1")
+    if not isinstance(parent_map, dict) or not parent_map or not all(
+        isinstance(l2, str) and l2 and isinstance(l1, str) and l1
+        for l2, l1 in parent_map.items()
+    ):
+        raise ConfigurationError("cell_type_analysis.l2_parent_l1 must map non-empty L2 labels to L1 labels")
+    provenance = cell_type_analysis.get("l2_parent_l1_provenance")
+    if not isinstance(provenance, str) or not provenance:
+        raise ConfigurationError("cell_type_analysis.l2_parent_l1_provenance must be non-empty")
+
+
+def _validate_differential_expression(
+    differential_expression: dict, *, study_ids: set[str] | None = None,
+) -> None:
+    _validate_sample_inclusion(differential_expression, study_ids=study_ids)
+    if differential_expression.get("method") != "pydeseq2":
+        raise ConfigurationError("differential_expression.method must be 'pydeseq2'")
+    if differential_expression.get("split_by") != "aifi_l2_majority":
+        raise ConfigurationError(
+            "differential_expression.split_by must be 'aifi_l2_majority'"
+        )
+    expected_de_design = "~ study_site + age + sex + log10_total_counts"
+    if differential_expression.get("per_study_design") != expected_de_design:
+        raise ConfigurationError(
+            "differential_expression.per_study_design must be "
+            f"'{expected_de_design}'"
+        )
+    if differential_expression.get("merged_design") != expected_de_design:
+        raise ConfigurationError(
+            "differential_expression.merged_design must be "
+            f"'{expected_de_design}'"
+        )
+    if differential_expression.get("age_term") != "age":
+        raise ConfigurationError("differential_expression.age_term must be 'age'")
+    abundance = _configuration_object(differential_expression, "abundance", "differential_expression")
+    minimum_fraction_denominator = abundance.get("min_fraction_denominator_cells")
+    if (
+        not isinstance(minimum_fraction_denominator, int)
+        or isinstance(minimum_fraction_denominator, bool)
+        or minimum_fraction_denominator < 1
+    ):
+        raise ConfigurationError(
+            "differential_expression.abundance.min_fraction_denominator_cells "
+            "must be a positive integer"
+        )
+    fraction_model = _configuration_object(abundance, "fraction_model", "differential_expression.abundance")
+    bootstrap_replicates = fraction_model.get("binomial_bootstrap_replicates")
+    if (
+        not isinstance(bootstrap_replicates, int)
+        or isinstance(bootstrap_replicates, bool)
+        or bootstrap_replicates < 1
+    ):
+        raise ConfigurationError(
+            "differential_expression.abundance.fraction_model."
+            "binomial_bootstrap_replicates must be a positive integer"
+        )
+    bootstrap_seed = fraction_model.get("binomial_bootstrap_seed")
+    if not isinstance(bootstrap_seed, int) or isinstance(bootstrap_seed, bool):
+        raise ConfigurationError(
+            "differential_expression.abundance.fraction_model."
+            "binomial_bootstrap_seed must be an integer"
+        )
+    age_trajectory = differential_expression.get("age_trajectory")
+    if not isinstance(age_trajectory, dict):
+        raise ConfigurationError(
+            "differential_expression.age_trajectory must be an object"
+        )
+    trajectory_settings = AgeTrajectorySettings.from_mapping(age_trajectory)
+    study_comparison_minimum = differential_expression.get(
+        "study_comparison_minimum_samples_per_bin"
+    )
+    if (
+        not isinstance(study_comparison_minimum, int)
+        or isinstance(study_comparison_minimum, bool)
+        or study_comparison_minimum < 2
+    ):
+        raise ConfigurationError(
+            "differential_expression."
+            "study_comparison_minimum_samples_per_bin must be an integer of at least 2"
+        )
+    expression_atlas = differential_expression.get("expression_atlas")
+    if not isinstance(expression_atlas, dict):
+        raise ConfigurationError(
+            "differential_expression.expression_atlas must be an object"
+        )
+    ExpressionAtlasSettings.from_mapping(expression_atlas)
+    reference_start = trajectory_settings.reference_bin_start_age
+    bin_width = trajectory_settings.bin_width_years
+    inclusion = _configuration_object(differential_expression, "sample_inclusion", "differential_expression")
+    minimum_age = inclusion.get("minimum_age_years_inclusive")
+    if reference_start != minimum_age or reference_start % bin_width:
+        raise ConfigurationError(
+            "differential_expression.age_trajectory reference bin must start at the "
+            "minimum included age and align with bin_width_years"
+        )
+    optional_covariates = differential_expression.get(
+        "optional_covariates", ["bmi", "cmv", "smoking_status"]
+    )
+    if (
+        not isinstance(optional_covariates, list)
+        or not all(isinstance(value, str) for value in optional_covariates)
+        or len(optional_covariates) != len(set(optional_covariates))
+        or not set(optional_covariates).issubset({"bmi", "cmv", "smoking_status"})
+    ):
+        raise ConfigurationError(
+            "differential_expression.optional_covariates must be a unique list "
+            "containing only 'bmi', 'cmv', and/or 'smoking_status'"
+        )
+    developmental_comparison = differential_expression.get("developmental_adult_comparison")
+    if not isinstance(developmental_comparison, dict):
+        raise ConfigurationError(
+            "differential_expression.developmental_adult_comparison must be an object"
+        )
+    developmental_minimum_age = developmental_comparison.get("minimum_age_years_inclusive")
+    developmental_maximum_age = developmental_comparison.get("maximum_age_years_exclusive")
+    if (
+        not isinstance(developmental_minimum_age, (int, float))
+        or isinstance(developmental_minimum_age, bool)
+        or developmental_minimum_age < 0
+        or not isinstance(developmental_maximum_age, (int, float))
+        or isinstance(developmental_maximum_age, bool)
+        or developmental_maximum_age <= developmental_minimum_age
+    ):
+        raise ConfigurationError(
+            "differential_expression.developmental_adult_comparison must define "
+            "non-negative minimum_age_years_inclusive and a larger "
+            "maximum_age_years_exclusive"
+        )
+    alpha = differential_expression.get("alpha")
+    if not isinstance(alpha, (int, float)) or not 0 < alpha < 1:
+        raise ConfigurationError("differential_expression.alpha must be between 0 and 1")
+    if developmental_maximum_age < minimum_age:
+        raise ConfigurationError(
+            "differential_expression.developmental_adult_comparison maximum age "
+            "must reach the adult-analysis minimum age"
+        )
+
+
+def _validate_sample_inclusion(
+    differential_expression: dict, *, study_ids: set[str] | None = None,
+) -> None:
+    inclusion = _configuration_object(differential_expression, "sample_inclusion", "differential_expression")
+    minimum_age = inclusion.get("minimum_age_years_inclusive")
+    if (
+        not isinstance(minimum_age, (int, float))
+        or isinstance(minimum_age, bool)
+        or not math.isfinite(minimum_age) or minimum_age < 0
+    ):
+        raise ConfigurationError(
+            "differential_expression.sample_inclusion.minimum_age_years_inclusive "
+            "must be a non-negative number"
+        )
+    minimum_cells = inclusion.get("minimum_cells_per_pseudobulk_inclusive")
+    if (
+        not isinstance(minimum_cells, int)
+        or isinstance(minimum_cells, bool)
+        or minimum_cells < 1
+    ):
+        raise ConfigurationError(
+            "differential_expression.sample_inclusion.minimum_cells_per_pseudobulk_inclusive "
+            "must be a positive integer"
+        )
+    excluded_subject_prefixes = inclusion.get("exclude_subject_prefixes_by_study", {})
+    if not isinstance(excluded_subject_prefixes, dict) or any(
+        (study_ids is not None and study_id not in study_ids)
+        or not isinstance(study_id, str) or not study_id
+        or not isinstance(prefixes, list)
+        or not prefixes
+        or any(not isinstance(prefix, str) or not prefix for prefix in prefixes)
+        for study_id, prefixes in excluded_subject_prefixes.items()
+    ):
+        raise ConfigurationError(
+            "differential_expression.sample_inclusion.exclude_subject_prefixes_by_study "
+            "must map configured study IDs to non-empty lists of subject prefixes"
+        )
+
+
 def validate_configuration(
     pipeline: dict,
     studies: dict,
@@ -452,211 +732,14 @@ def validate_configuration(
             raise ConfigurationError(
                 "integration_benchmark method must be harmony, none, scanorama, or bbknn"
             )
-    cell_type_analysis = pipeline.get("cell_type_analysis", {})
-    if cell_type_analysis:
-        if not isinstance(cell_type_analysis.get("analysis_version"), int) or cell_type_analysis["analysis_version"] < 1:
-            raise ConfigurationError("cell_type_analysis.analysis_version must be a positive integer")
-        if cell_type_analysis.get("split_by") != "aifi_l2_majority":
-            raise ConfigurationError("cell_type_analysis.split_by must be 'aifi_l2_majority'")
-        if not isinstance(cell_type_analysis.get("min_cells"), int) or cell_type_analysis["min_cells"] < 3:
-            raise ConfigurationError("cell_type_analysis.min_cells must be an integer of at least 3")
-        minimum_cluster_fraction_denominator = cell_type_analysis.get(
-            "min_cluster_fraction_denominator_cells"
+    if pipeline.get("cell_type_analysis"):
+        _validate_analysis_processing(_configuration_object(pipeline, "processing"))
+        _validate_cell_type_analysis(_configuration_object(pipeline, "cell_type_analysis"))
+    if pipeline.get("differential_expression"):
+        _validate_differential_expression(
+            _configuration_object(pipeline, "differential_expression"),
+            study_ids=set(studies["studies"]),
         )
-        if (
-            not isinstance(minimum_cluster_fraction_denominator, int)
-            or isinstance(minimum_cluster_fraction_denominator, bool)
-            or minimum_cluster_fraction_denominator < 1
-        ):
-            raise ConfigurationError(
-                "cell_type_analysis.min_cluster_fraction_denominator_cells "
-                "must be a positive integer"
-            )
-        clustering = cell_type_analysis.get("clustering", {})
-        if clustering.get("method") != "leiden":
-            raise ConfigurationError("cell_type_analysis.clustering.method must be 'leiden'")
-        if not isinstance(clustering.get("resolution"), (int, float)) or clustering["resolution"] <= 0:
-            raise ConfigurationError("cell_type_analysis.clustering.resolution must be positive")
-        integration = cell_type_analysis.get("integration", {})
-        if integration.get("method") != "harmony":
-            raise ConfigurationError("cell_type_analysis.integration.method must be 'harmony'")
-        if integration.get("batch_key") != "study":
-            raise ConfigurationError("cell_type_analysis.integration.batch_key must be 'study'")
-        if integration.get("adjusted_basis") != "X_pca_harmony":
-            raise ConfigurationError(
-                "cell_type_analysis.integration.adjusted_basis must be 'X_pca_harmony'"
-            )
-        residual_wgcna = cell_type_analysis.get("residual_wgcna")
-        if not isinstance(residual_wgcna, dict):
-            raise ConfigurationError("cell_type_analysis.residual_wgcna must be an object")
-        ResidualWGCNASettings.from_mapping(residual_wgcna)
-        parent_map = cell_type_analysis.get("l2_parent_l1")
-        if not isinstance(parent_map, dict) or not parent_map or not all(
-            isinstance(l2, str) and l2 and isinstance(l1, str) and l1
-            for l2, l1 in parent_map.items()
-        ):
-            raise ConfigurationError("cell_type_analysis.l2_parent_l1 must map non-empty L2 labels to L1 labels")
-        provenance = cell_type_analysis.get("l2_parent_l1_provenance")
-        if not isinstance(provenance, str) or not provenance:
-            raise ConfigurationError("cell_type_analysis.l2_parent_l1_provenance must be non-empty")
-
-    differential_expression = pipeline.get("differential_expression")
-    if differential_expression:
-        if differential_expression.get("method") != "pydeseq2":
-            raise ConfigurationError("differential_expression.method must be 'pydeseq2'")
-        if differential_expression.get("split_by") != "aifi_l2_majority":
-            raise ConfigurationError(
-                "differential_expression.split_by must be 'aifi_l2_majority'"
-            )
-        expected_de_design = "~ study_site + age + sex + log10_total_counts"
-        if differential_expression.get("per_study_design") != expected_de_design:
-            raise ConfigurationError(
-                "differential_expression.per_study_design must be "
-                f"'{expected_de_design}'"
-            )
-        if differential_expression.get("merged_design") != expected_de_design:
-            raise ConfigurationError(
-                "differential_expression.merged_design must be "
-                f"'{expected_de_design}'"
-            )
-        if differential_expression.get("age_term") != "age":
-            raise ConfigurationError("differential_expression.age_term must be 'age'")
-        abundance = differential_expression.get("abundance", {})
-        minimum_fraction_denominator = abundance.get("min_fraction_denominator_cells")
-        if (
-            not isinstance(minimum_fraction_denominator, int)
-            or isinstance(minimum_fraction_denominator, bool)
-            or minimum_fraction_denominator < 1
-        ):
-            raise ConfigurationError(
-                "differential_expression.abundance.min_fraction_denominator_cells "
-                "must be a positive integer"
-            )
-        fraction_model = abundance.get("fraction_model", {})
-        bootstrap_replicates = fraction_model.get("binomial_bootstrap_replicates")
-        if (
-            not isinstance(bootstrap_replicates, int)
-            or isinstance(bootstrap_replicates, bool)
-            or bootstrap_replicates < 1
-        ):
-            raise ConfigurationError(
-                "differential_expression.abundance.fraction_model."
-                "binomial_bootstrap_replicates must be a positive integer"
-            )
-        bootstrap_seed = fraction_model.get("binomial_bootstrap_seed")
-        if not isinstance(bootstrap_seed, int) or isinstance(bootstrap_seed, bool):
-            raise ConfigurationError(
-                "differential_expression.abundance.fraction_model."
-                "binomial_bootstrap_seed must be an integer"
-            )
-        age_trajectory = differential_expression.get("age_trajectory")
-        if not isinstance(age_trajectory, dict):
-            raise ConfigurationError(
-                "differential_expression.age_trajectory must be an object"
-            )
-        trajectory_settings = AgeTrajectorySettings.from_mapping(age_trajectory)
-        study_comparison_minimum = differential_expression.get(
-            "study_comparison_minimum_samples_per_bin"
-        )
-        if (
-            not isinstance(study_comparison_minimum, int)
-            or isinstance(study_comparison_minimum, bool)
-            or study_comparison_minimum < 2
-        ):
-            raise ConfigurationError(
-                "differential_expression."
-                "study_comparison_minimum_samples_per_bin must be an integer of at least 2"
-            )
-        expression_atlas = differential_expression.get("expression_atlas")
-        if not isinstance(expression_atlas, dict):
-            raise ConfigurationError(
-                "differential_expression.expression_atlas must be an object"
-            )
-        ExpressionAtlasSettings.from_mapping(expression_atlas)
-        reference_start = trajectory_settings.reference_bin_start_age
-        bin_width = trajectory_settings.bin_width_years
-        minimum_age = differential_expression.get("sample_inclusion", {}).get(
-            "minimum_age_years_inclusive"
-        )
-        if reference_start != minimum_age or reference_start % bin_width:
-            raise ConfigurationError(
-                "differential_expression.age_trajectory reference bin must start at the "
-                "minimum included age and align with bin_width_years"
-            )
-        optional_covariates = differential_expression.get(
-            "optional_covariates", ["bmi", "cmv", "smoking_status"]
-        )
-        if (
-            not isinstance(optional_covariates, list)
-            or not all(isinstance(value, str) for value in optional_covariates)
-            or len(optional_covariates) != len(set(optional_covariates))
-            or not set(optional_covariates).issubset({"bmi", "cmv", "smoking_status"})
-        ):
-            raise ConfigurationError(
-                "differential_expression.optional_covariates must be a unique list "
-                "containing only 'bmi', 'cmv', and/or 'smoking_status'"
-            )
-        developmental_comparison = differential_expression.get("developmental_adult_comparison")
-        if not isinstance(developmental_comparison, dict):
-            raise ConfigurationError(
-                "differential_expression.developmental_adult_comparison must be an object"
-            )
-        developmental_minimum_age = developmental_comparison.get("minimum_age_years_inclusive")
-        developmental_maximum_age = developmental_comparison.get("maximum_age_years_exclusive")
-        if (
-            not isinstance(developmental_minimum_age, (int, float))
-            or isinstance(developmental_minimum_age, bool)
-            or developmental_minimum_age < 0
-            or not isinstance(developmental_maximum_age, (int, float))
-            or isinstance(developmental_maximum_age, bool)
-            or developmental_maximum_age <= developmental_minimum_age
-        ):
-            raise ConfigurationError(
-                "differential_expression.developmental_adult_comparison must define "
-                "non-negative minimum_age_years_inclusive and a larger "
-                "maximum_age_years_exclusive"
-            )
-        alpha = differential_expression.get("alpha")
-        if not isinstance(alpha, (int, float)) or not 0 < alpha < 1:
-            raise ConfigurationError("differential_expression.alpha must be between 0 and 1")
-        inclusion = differential_expression.get("sample_inclusion", {})
-        minimum_age = inclusion.get("minimum_age_years_inclusive")
-        if (
-            not isinstance(minimum_age, (int, float))
-            or isinstance(minimum_age, bool)
-            or minimum_age < 0
-        ):
-            raise ConfigurationError(
-                "differential_expression.sample_inclusion.minimum_age_years_inclusive "
-                "must be a non-negative number"
-            )
-        if developmental_maximum_age < minimum_age:
-            raise ConfigurationError(
-                "differential_expression.developmental_adult_comparison maximum age "
-                "must reach the adult-analysis minimum age"
-            )
-        minimum_cells = inclusion.get("minimum_cells_per_pseudobulk_inclusive")
-        if (
-            not isinstance(minimum_cells, int)
-            or isinstance(minimum_cells, bool)
-            or minimum_cells < 1
-        ):
-            raise ConfigurationError(
-                "differential_expression.sample_inclusion.minimum_cells_per_pseudobulk_inclusive "
-                "must be a positive integer"
-            )
-        excluded_subject_prefixes = inclusion.get("exclude_subject_prefixes_by_study", {})
-        if not isinstance(excluded_subject_prefixes, dict) or any(
-            study_id not in studies["studies"]
-            or not isinstance(prefixes, list)
-            or not prefixes
-            or any(not isinstance(prefix, str) or not prefix for prefix in prefixes)
-            for study_id, prefixes in excluded_subject_prefixes.items()
-        ):
-            raise ConfigurationError(
-                "differential_expression.sample_inclusion.exclude_subject_prefixes_by_study "
-                "must map configured study IDs to non-empty lists of subject prefixes"
-            )
 
     for study_id, study in studies["studies"].items():
         missing_keys = {"input", "test_input", "publication_doi", "counts_source", "preparation", "annotation"} - study.keys()

@@ -22,6 +22,7 @@ process RUN_INTEGRATION_METHOD {
 }
 
 process AGGREGATE_INTEGRATION_METHODS {
+    errorStrategy 'ignore'
     tag 'aggregate integration benchmark methods'
     publishDir "${params.outdir}/harmonization/integration_benchmark", mode: 'copy', overwrite: true
 
@@ -46,6 +47,7 @@ process AGGREGATE_INTEGRATION_METHODS {
 }
 
 process RENDER_INTEGRATION_BENCHMARK_REPORT {
+    errorStrategy 'ignore'
     tag 'global integration benchmark report'
     publishDir "${params.outdir}/harmonization/integration_benchmark", mode: 'copy', overwrite: true
 
@@ -54,8 +56,8 @@ process RENDER_INTEGRATION_BENCHMARK_REPORT {
     path report_template
 
     output:
-    path 'report.html'
-    path 'executed.ipynb'
+    path 'report.html', emit: report
+    path 'executed.ipynb', emit: notebook
 
     script:
     """

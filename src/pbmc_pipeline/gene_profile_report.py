@@ -1,41 +1,11 @@
 """Execute and render the focused gene-profile notebook report."""
 from __future__ import annotations
 
-import os
-import shlex
-import subprocess
-import sys
-import tempfile
 from pathlib import Path
 
 import pandas as pd
 
-from .report_toc import populate_html_toc, set_notebook_title
-
-
-def _run_report_command(command, *, cwd: Path, env: dict[str, str], log_path: Path) -> None:
-    """Keep routine notebook-render output in the report log, surfacing failures."""
-    result = subprocess.run(
-        command, cwd=cwd, env=env, capture_output=True, text=True, check=False,
-    )
-    with log_path.open("a") as log:
-        log.write(f"$ {shlex.join(command)}\n")
-        if result.stdout:
-            log.write(result.stdout)
-            if not result.stdout.endswith("\n"):
-                log.write("\n")
-        if result.stderr:
-            log.write(result.stderr)
-            if not result.stderr.endswith("\n"):
-                log.write("\n")
-    if result.returncode:
-        if result.stdout:
-            sys.stdout.write(result.stdout)
-        if result.stderr:
-            sys.stderr.write(result.stderr)
-        raise subprocess.CalledProcessError(
-            result.returncode, command, output=result.stdout, stderr=result.stderr,
-        )
+from .notebook import render_notebook
 
 
 def format_model_results(table, *, digits: int = 4):
@@ -57,55 +27,16 @@ def format_model_results(table, *, digits: int = 4):
 def generate_gene_profile_report(
     *, profile_dir: Path, template_path: Path, project_root: Path,
 ) -> Path:
-    """Execute the gene-profile notebook and build its heading-based HTML TOC."""
-    for path in (profile_dir / "fit_summary.json", template_path):
-        if not path.is_file():
-            raise FileNotFoundError(path)
-    profile_dir = profile_dir.resolve()
-    project_root = project_root.resolve()
-    output_notebook = profile_dir / "executed.ipynb"
-    output_html = profile_dir / "report.html"
-    render_log = profile_dir / "report_render.log"
-    render_log.unlink(missing_ok=True)
-    environment = os.environ.copy()
-    environment["GENE_PROFILE_DIR"] = str(profile_dir)
-    source_path = str(project_root / "src")
-    environment["PYTHONPATH"] = os.pathsep.join(
-        path for path in (source_path, environment.get("PYTHONPATH", "")) if path
+    """Render fitted gene-profile artifacts and build their heading-based TOC."""
+    import json
+
+    summary_path = profile_dir / "fit_summary.json"
+    if not summary_path.is_file():
+        raise FileNotFoundError(summary_path)
+    summary = json.loads(summary_path.read_text())
+    return render_notebook(
+        template_path=template_path, output_dir=profile_dir, project_root=project_root,
+        environment={"GENE_PROFILE_DIR": str(profile_dir.resolve())},
+        title=f"{summary['gene']} · {summary['cell_type']} | PBMC ageing",
+        log_path=profile_dir / "report_render.log", minimum_heading_level=1,
     )
-
-    with tempfile.TemporaryDirectory(prefix="pbmc-gene-profile-notebook-") as temp_dir:
-        temp_path = Path(temp_dir)
-        matplotlib_cache = temp_path / "matplotlib"
-        jupyter_data = temp_path / "jupyter-data"
-        matplotlib_cache.mkdir()
-        jupyter_data.mkdir()
-        environment["MPLCONFIGDIR"] = str(matplotlib_cache)
-        environment["JUPYTER_DATA_DIR"] = str(jupyter_data)
-        materialized_template = temp_path / f"{template_path.stem}.ipynb"
-        _run_report_command([
-            sys.executable, "-m", "jupytext", "--to", "notebook",
-            "--output", str(materialized_template), str(template_path.resolve()),
-        ], cwd=project_root, env=environment, log_path=render_log)
-        _run_report_command([
-            sys.executable, "-m", "jupyter", "nbconvert", "--execute", "--to", "notebook",
-            "--ExecutePreprocessor.timeout=-1", f"--output={output_notebook.name}",
-            f"--output-dir={profile_dir}", str(materialized_template),
-        ], cwd=project_root, env=environment, log_path=render_log)
-        import json
-
-        summary = json.loads((profile_dir / "fit_summary.json").read_text())
-        set_notebook_title(
-            output_notebook,
-            f"{summary['gene']} · {summary['cell_type']} | PBMC ageing",
-        )
-        _run_report_command([
-            sys.executable, "-m", "jupyter", "nbconvert", "--to", "html",
-            "--HTMLExporter.exclude_input=True",
-            "--HTMLExporter.exclude_input_prompt=True",
-            "--HTMLExporter.exclude_output_prompt=True",
-            f"--output={output_html.name}", f"--output-dir={profile_dir}",
-            str(output_notebook),
-        ], cwd=project_root, env=environment, log_path=render_log)
-    populate_html_toc(output_html, minimum_heading_level=1)
-    return output_html

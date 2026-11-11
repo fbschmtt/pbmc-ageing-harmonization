@@ -3,131 +3,38 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import subprocess
-import sys
-import tempfile
 from pathlib import Path
 
-from .report_toc import populate_html_toc, set_notebook_title
+from .notebook import render_notebook
 from .utils import slugify
 
 
 def generate_age_clock_report(
     *, report_dir: Path, template_path: Path, project_root: Path,
 ) -> Path:
-    """Execute the report template and publish a standalone HTML report."""
-    for path in (report_dir, template_path, project_root):
-        if not path.exists():
-            raise FileNotFoundError(path)
-    if not (report_dir / "age_clock.json").is_file():
-        raise FileNotFoundError(report_dir / "age_clock.json")
-    report_dir = report_dir.resolve()
-    template_path = template_path.resolve()
-    project_root = project_root.resolve()
-    executed = report_dir / "executed.ipynb"
-    html = report_dir / "report.html"
-    env = os.environ.copy()
-    env["AGE_CLOCK_REPORT_DIR"] = str(report_dir)
-    env["MPLCONFIGDIR"] = str((report_dir / ".matplotlib").resolve())
-    env["JUPYTER_DATA_DIR"] = str((report_dir / ".jupyter-data").resolve())
-    source_path = str(project_root / "src")
-    env["PYTHONPATH"] = os.pathsep.join(
-        path for path in (source_path, env.get("PYTHONPATH", "")) if path
+    """Render one clock method or the cell-type method comparison."""
+    manifest = json.loads((report_dir / "age_clock.json").read_text())
+    record = manifest.get("cell_types", [{}])[0]
+    return render_notebook(
+        template_path=template_path, output_dir=report_dir, project_root=project_root,
+        environment={"AGE_CLOCK_REPORT_DIR": str(report_dir.resolve())},
+        title=f"{record.get('cell_type', 'cell type')} · "
+              f"{record.get('method_name', 'Transcriptomic')} age clock | PBMC ageing",
     )
-    Path(env["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
-    Path(env["JUPYTER_DATA_DIR"]).mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="pbmc-age-clock-report-") as temp_dir:
-        env["IPYTHONDIR"] = str(Path(temp_dir) / "ipython")
-        env["JUPYTER_CONFIG_DIR"] = str(Path(temp_dir) / "jupyter-config")
-        env["JUPYTER_RUNTIME_DIR"] = str(Path(temp_dir) / "jupyter-runtime")
-        for key in ("IPYTHONDIR", "JUPYTER_CONFIG_DIR", "JUPYTER_RUNTIME_DIR"):
-            Path(env[key]).mkdir()
-        notebook = Path(temp_dir) / f"{template_path.stem}.ipynb"
-        subprocess.run([
-            sys.executable, "-m", "jupytext", "--to", "notebook",
-            "--output", str(notebook), str(template_path),
-        ], cwd=project_root, env=env, check=True)
-        subprocess.run([
-            sys.executable, "-m", "jupyter", "nbconvert", "--execute", "--to", "notebook",
-            "--ExecutePreprocessor.timeout=-1", f"--output={executed.name}",
-            "--KernelManager.transport_encryption=required",
-            f"--output-dir={report_dir}", str(notebook),
-        ], cwd=project_root, env=env, check=True)
-        manifest = json.loads((report_dir / "age_clock.json").read_text())
-        first_record = manifest.get("cell_types", [{}])[0]
-        method_title = first_record.get("method_name", "Transcriptomic")
-        cell_type = first_record.get("cell_type", "cell type")
-        set_notebook_title(
-            executed,
-            f"{cell_type} · {method_title} age clock | PBMC ageing",
-        )
-        subprocess.run([
-            sys.executable, "-m", "jupyter", "nbconvert", "--to", "html",
-            "--HTMLExporter.exclude_input=True",
-            "--HTMLExporter.exclude_input_prompt=True",
-            "--HTMLExporter.exclude_output_prompt=True",
-            f"--output={html.name}", f"--output-dir={report_dir}", str(executed),
-        ], cwd=project_root, env=env, check=True)
-    populate_html_toc(html)
-    return html
 
 
 def generate_cross_type_age_clock_report(
     *, report_dir: Path, template_path: Path, project_root: Path,
 ) -> Path:
     """Render the cross-cell-type clock summary when an aggregate is available."""
-    for path in (report_dir, template_path, project_root):
-        if not path.exists():
-            raise FileNotFoundError(path)
-    summary_path = report_dir / "summary.json"
-    if not summary_path.is_file():
-        raise FileNotFoundError(summary_path)
-    summary = json.loads(summary_path.read_text())
+    summary = json.loads((report_dir / "summary.json").read_text())
     if not summary.get("methods"):
         raise ValueError(f"{report_dir}: cross-cell-type clock summary has no evaluated methods")
-    report_dir = report_dir.resolve()
-    template_path = template_path.resolve()
-    project_root = project_root.resolve()
-    executed = report_dir / "executed.ipynb"
-    html = report_dir / "report.html"
-    env = os.environ.copy()
-    env["AGE_CLOCK_CROSS_TYPE_DIR"] = str(report_dir)
-    env["MPLCONFIGDIR"] = str((report_dir / ".matplotlib").resolve())
-    env["JUPYTER_DATA_DIR"] = str((report_dir / ".jupyter-data").resolve())
-    source_path = str(project_root / "src")
-    env["PYTHONPATH"] = os.pathsep.join(
-        path for path in (source_path, env.get("PYTHONPATH", "")) if path
+    return render_notebook(
+        template_path=template_path, output_dir=report_dir, project_root=project_root,
+        environment={"AGE_CLOCK_CROSS_TYPE_DIR": str(report_dir.resolve())},
+        title="Cross-cell-type transcriptomic clocks | PBMC ageing",
     )
-    Path(env["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
-    Path(env["JUPYTER_DATA_DIR"]).mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="pbmc-cross-type-clock-report-") as temp_dir:
-        env["IPYTHONDIR"] = str(Path(temp_dir) / "ipython")
-        env["JUPYTER_CONFIG_DIR"] = str(Path(temp_dir) / "jupyter-config")
-        env["JUPYTER_RUNTIME_DIR"] = str(Path(temp_dir) / "jupyter-runtime")
-        for key in ("IPYTHONDIR", "JUPYTER_CONFIG_DIR", "JUPYTER_RUNTIME_DIR"):
-            Path(env[key]).mkdir()
-        notebook = Path(temp_dir) / f"{template_path.stem}.ipynb"
-        subprocess.run([
-            sys.executable, "-m", "jupytext", "--to", "notebook",
-            "--output", str(notebook), str(template_path),
-        ], cwd=project_root, env=env, check=True)
-        subprocess.run([
-            sys.executable, "-m", "jupyter", "nbconvert", "--execute", "--to", "notebook",
-            "--ExecutePreprocessor.timeout=-1", f"--output={executed.name}",
-            "--KernelManager.transport_encryption=required",
-            f"--output-dir={report_dir}", str(notebook),
-        ], cwd=project_root, env=env, check=True)
-        set_notebook_title(executed, "Cross-cell-type transcriptomic clocks | PBMC ageing")
-        subprocess.run([
-            sys.executable, "-m", "jupyter", "nbconvert", "--to", "html",
-            "--HTMLExporter.exclude_input=True",
-            "--HTMLExporter.exclude_input_prompt=True",
-            "--HTMLExporter.exclude_output_prompt=True",
-            f"--output={html.name}", f"--output-dir={report_dir}", str(executed),
-        ], cwd=project_root, env=env, check=True)
-    populate_html_toc(html)
-    return html
 
 
 def main() -> None:

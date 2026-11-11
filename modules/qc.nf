@@ -1,4 +1,5 @@
 process RENDER_STUDY_QC {
+    errorStrategy 'ignore'
     tag { study_id }
     publishDir "${params.outdir}/harmonization/harmonization_qc", mode: 'copy', overwrite: true
 
@@ -18,6 +19,7 @@ process RENDER_STUDY_QC {
 }
 
 process RENDER_MERGE_QC {
+    errorStrategy 'ignore'
     tag 'all merge outputs'
     publishDir "${params.outdir}/harmonization/harmonization_qc", mode: 'copy', overwrite: true
 

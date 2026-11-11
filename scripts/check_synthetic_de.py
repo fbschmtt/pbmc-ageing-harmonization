@@ -10,6 +10,7 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 
+from pbmc_pipeline.de_diagnostics import copy_diagnostics, validate_diagnostic_sources
 from pbmc_pipeline.trajectory_analysis import residual_leiden_label_column
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -349,6 +350,13 @@ def check_reports(
         )
         if not report_path.is_file():
             raise SystemExit(f"Missing per-type DE report: {report_path}")
+        # Diagnostics and rendered reports share a published directory with the
+        # original fit files. Publication must preserve all three contracts.
+        validate_diagnostic_sources(report_path.parent, report_path.parent)
+        copy_diagnostics(
+            report_path.parent, report_path.parent,
+            json.loads(config_path.read_text(encoding="utf-8")),
+        )
         de_html = report_path.read_text(errors="replace").lower()
         required = [
             "differential gene expression",

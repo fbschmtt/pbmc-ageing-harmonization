@@ -18,7 +18,7 @@ from .age_trajectory import (
     attach_trajectory_statistics,
     prepare_age_trajectory_metadata,
 )
-from .config import AgeTrajectorySettings, config_digest, read_json
+from .config import AgeTrajectorySettings, config_digest, load_analysis_configuration
 from .covariates import (
     categorical_levels,
     normalize_cmv_status,
@@ -1460,7 +1460,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.cpus < 1:
         parser.error("--cpus must be positive")
-    pipeline = read_json(args.config)
+    pipeline = load_analysis_configuration(args.config)
     if args.list_cell_types:
         if args.cell_types_output is None:
             parser.error("--list-cell-types requires --cell-types-output")

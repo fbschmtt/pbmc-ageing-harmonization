@@ -67,3 +67,43 @@ def test_cell_type_manifest_rejects_incomplete_report_directory(tmp_path):
             input_path=input_path, config_path=config_path, model_paths=[model_path],
             report_dirs=[report_dir], output_path=tmp_path / "manifest.json",
         )
+
+
+@pytest.fixture
+def manifest_run(tmp_path):
+    input_path = tmp_path / "merged.h5ad"
+    input_path.write_bytes(b"input")
+    config = tmp_path / "pipeline.json"
+    config.write_text(json.dumps({"cell_type_analysis": {"analysis_version": 1}}))
+    split = tmp_path / "cell_types.json"
+    split.write_text(json.dumps({"cell_types": [
+        {"slug": "cd14-monocyte", "cell_type": "CD14 monocyte"},
+        {"slug": "naive-cd4-t-cell", "cell_type": "Naive CD4 T cell"},
+    ]}))
+    return {"input_path": input_path, "config_path": config, "model_paths": [], "report_dirs": [],
+            "output_path": tmp_path / "manifest.json", "split_manifest_path": split}
+
+
+@pytest.mark.parametrize("selected", [["typo"], ["cd14-monocyte", "typo"], [""]])
+def test_manifest_rejects_unknown_selections_without_publishing(manifest_run, selected):
+    with pytest.raises(ValueError, match="Requested cell types are absent.*Available"):
+        write_cell_type_manifest(**manifest_run, selected_slugs=selected)
+    assert not manifest_run["output_path"].exists()
+
+
+def test_manifest_keeps_real_analysis_and_report_failures_visible(manifest_run):
+    document = write_cell_type_manifest(**manifest_run, analysed_slugs=["cd14-monocyte"])
+    assert document["status"] == "partial"
+    assert document["failed_cell_types"] == [
+        {"slug": "cd14-monocyte", "cell_type": "CD14 monocyte", "failed_stage": "report"},
+        {"slug": "naive-cd4-t-cell", "cell_type": "Naive CD4 T cell", "failed_stage": "analysis"},
+    ]
+    selected = write_cell_type_manifest(**manifest_run, selected_slugs=["cd14-monocyte"])
+    assert selected["status"] == "partial"
+    assert [record["slug"] for record in selected["failed_cell_types"]] == ["cd14-monocyte"]
+
+
+def test_manifest_cannot_publish_an_empty_run_as_complete(manifest_run):
+    manifest_run["split_manifest_path"].write_text('{"cell_types": []}')
+    with pytest.raises(ValueError, match="non-empty"):
+        write_cell_type_manifest(**manifest_run)

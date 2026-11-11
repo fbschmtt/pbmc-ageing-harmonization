@@ -29,7 +29,7 @@ from pbmc_pipeline.age_clock_features import (
     WithinSampleRankTransformer,
     within_study_gene_zscore,
 )
-from pbmc_pipeline.config import config_digest
+from pbmc_pipeline.config import config_digest, load_analysis_configuration
 from pbmc_pipeline.utils import slugify
 
 LOGGER = logging.getLogger(__name__)
@@ -240,10 +240,6 @@ def _clock_methods(alphas: list[float], l1_ratios: list[float]) -> list[ClockMet
             sex_adjusted_study_offset=True,
         ),
     ]
-
-
-def _load_config(path: Path) -> dict:
-    return json.loads(path.read_text())
 
 
 def _raw_library_sizes(adata, row_positions: np.ndarray) -> np.ndarray:
@@ -954,7 +950,7 @@ def fit_age_clocks(
         raise ValueError("n_jobs must be at least 1")
     if calibration_samples < 0:
         raise ValueError("calibration_samples must be zero or greater")
-    pipeline_config = _load_config(config_path)
+    pipeline_config = load_analysis_configuration(config_path, sections=("age_clock",))
     adata = ad.read_h5ad(input_path)
     available_studies = set(adata.obs["study"].astype(str).unique())
     unknown = sorted(set(external_studies) - available_studies)
@@ -1694,7 +1690,7 @@ def train_all_age_clocks(
     """Fit every type, isolating expected and unexpected fit failures per type."""
     import anndata as ad
 
-    pipeline_config = _load_config(config_path)
+    pipeline_config = load_analysis_configuration(config_path, sections=("age_clock",))
     split_by = pipeline_config["differential_expression"]["split_by"]
     adata = ad.read_h5ad(input_path, backed="r")
     if split_by not in adata.obs:

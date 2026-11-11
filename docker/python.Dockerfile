@@ -18,6 +18,11 @@ RUN apt-get update \
     && apt-get purge -y --auto-remove build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+# Nextflow's per-task trace monitor invokes ps inside the runtime container.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends procps \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY src ./src
 # Install the project itself without re-resolving locked dependencies.
 RUN python -m pip install --no-cache-dir --no-deps --no-build-isolation '.[qc]'

@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createRelease } from '../../scripts/release.mjs'
+import { writeSingleCellAssets } from '../single-cell-fixture.mjs'
 
 const bins = ['20-30', '30-40', '40-50', '50-60', '60-70', '70-80', '80-90']
 const write = async (path, content) => {
@@ -31,6 +32,11 @@ export async function makeFixture(root) {
     }
   }
   const analysis = join(input, 'cd14-monocyte/analysis')
+  await writeSingleCellAssets(analysis, 'CD14 monocyte', [
+    { cluster: '0', fits: [{ study: null, samples: 3, meanFraction: 0.25, slopePpPerDecade: 1.5 },
+      { study: 'study_a', samples: 1, meanFraction: 0.5, slopePpPerDecade: null }] },
+    { cluster: '1', fits: [{ study: null, samples: 3, meanFraction: 0.75, slopePpPerDecade: -1.5 }] },
+  ])
   await write(join(analysis, 'report.json'), JSON.stringify({ status: 'complete', cell_type: 'CD14 monocyte', n_cells: 42, n_clusters: 2, embedding: { integration: { method: 'harmony' } } }))
   await write(join(analysis, 'markers.tsv'), 'names\tscores\tlogfoldchanges\tpvals_adj\tgroup\nTESTMARKER\t3.2\t2.4\t0.01\t0\nOTHER\t-2\t-1.5\t0.1\t0\nSECOND\t3\t1\t0.01\t1\n')
   await write(join(analysis, 'executed.ipynb'), JSON.stringify({ cells: [
