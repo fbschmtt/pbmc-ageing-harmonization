@@ -21,6 +21,8 @@ profile_dir = Path(os.environ["GENE_PROFILE_DIR"])
 summary = json.loads((profile_dir / "fit_summary.json").read_text())
 cell_type = summary["cell_type"]
 gene = summary["gene"]
+age_bin_available = summary["age_bin_model"].get("status", "complete") == "complete"
+study_slope_available = summary["study_slope_model"].get("status", "complete") == "complete"
 gene_result = pd.read_csv(profile_dir / "gene_age_result.csv")
 exploratory_infant_adult_comparison_path = (
     profile_dir / "exploratory_infant_adult_comparison.csv"
@@ -770,26 +772,30 @@ plot_residuals(
 # %% [markdown]
 # ## Model and gene result
 # %%
-display(Markdown(
-    f"**Design:** `{summary['age_bin_model']['design']}`  \n"
-    f"**Samples:** {summary['age_bin_model']['n_samples']:,}  \n"
-    f"**Bin width:** {summary['age_bin_model']['bin_width_years']} years  \n"
-    f"**Reference bin:** {summary['age_bin_model']['reference_bin']}"
-))
-display_fit_diagnostics("Naive age-bin model")
-display(format_model_results(age_bin_model_result))
-display(Markdown(
-    "Residual correlations below use the fitted categorical age-bin design and the same "
-    "`log(normalized count + 1)` scale. They are exploratory associations; the DESeq2 age "
-    "coefficient and adjusted p-value are included to help identify correlated age-DE genes."
-))
-if age_bin_residual_correlations.empty:
-    display(Markdown("_No finite age-bin residual correlations were available._"))
+if age_bin_available:
+    display(Markdown(
+        f"**Design:** `{summary['age_bin_model']['design']}`  \n"
+        f"**Samples:** {summary['age_bin_model']['n_samples']:,}  \n"
+        f"**Bin width:** {summary['age_bin_model']['bin_width_years']} years  \n"
+        f"**Reference bin:** {summary['age_bin_model']['reference_bin']}"
+    ))
+    display_fit_diagnostics("Naive age-bin model")
+    display(format_model_results(age_bin_model_result))
+    display(Markdown(
+        "Residual correlations below use the fitted categorical age-bin design and the same "
+        "`log(normalized count + 1)` scale. They are exploratory associations; the DESeq2 age "
+        "coefficient and adjusted p-value are included to help identify correlated age-DE genes."
+    ))
+    if age_bin_residual_correlations.empty:
+        display(Markdown("_No finite age-bin residual correlations were available._"))
+    else:
+        display(format_model_results(age_bin_residual_correlations[[
+            "gene", "correlation_direction", "pearson_r",
+            "log2FoldChange", "pvalue", "padj",
+        ]]))
+
 else:
-    display(format_model_results(age_bin_residual_correlations[[
-        "gene", "correlation_direction", "pearson_r",
-        "log2FoldChange", "pvalue", "padj",
-    ]]))
+    display(Markdown("_Age-bin model unavailable: " + summary["age_bin_model"]["reason"] + "_"))
 
 # %% [markdown]
 # ## Residuals
@@ -797,20 +803,23 @@ else:
 # Age-bin OLS residuals are observed minus fitted normalized log expression.
 # Each panel is a study, with points colored by study site.
 # %%
-active_residual_plot_config = residual_plot_configs["Naive age-bin model"]
+if age_bin_available:
+    active_residual_plot_config = residual_plot_configs["Naive age-bin model"]
 
 # %% [markdown]
 # ### Against Age
 # %%
-plot_residuals(age_bin_samples["residual"], age_bin_samples["age"], "Age (years)")
+if age_bin_available:
+    plot_residuals(age_bin_samples["residual"], age_bin_samples["age"], "Age (years)")
 
 # %% [markdown]
 # ### Against Depth
 # %%
-plot_residuals(
-    age_bin_samples["residual"], age_bin_samples["log10_total_counts"],
-    "log10(total_counts)",
-)
+if age_bin_available:
+    plot_residuals(
+        age_bin_samples["residual"], age_bin_samples["log10_total_counts"],
+        "log10(total_counts)",
+    )
 
 # %% [markdown]
 # ## Sample-level expression and age-bin levels
@@ -819,32 +828,33 @@ plot_residuals(
 # confidence bars show age-bin fitted values standardized over the observed
 # non-age covariate distribution.
 # %%
-figure, axis = plt.subplots(figsize=(10, 6.0))
-for study, rows in age_bin_samples.groupby("study", observed=True, sort=True):
-    axis.scatter(
-        rows["age"], rows["naive_log_expression"],
-        color=study_palette.get(str(study)), s=32, alpha=0.3, label=str(study),
-    )
-for prediction in age_bin_predictions.itertuples(index=False):
-    midpoint = (prediction.age_bin_start + prediction.age_bin_end) / 2
-    half_width = summary["age_bin_model"]["bin_width_years"] * 0.38
-    axis.hlines(
-        prediction.fitted_expression, midpoint - half_width, midpoint + half_width,
-        color="#222222", linewidth=2.4, zorder=4,
-    )
-    axis.vlines(
-        midpoint, prediction.ci_lower, prediction.ci_upper,
-        color="#222222", linewidth=1.2, zorder=4,
-    )
-axis.set_xlabel("Age (years)")
-axis.set_ylabel("log(naive normalized count + 1)")
-axis.legend(title="Study", bbox_to_anchor=(1.02, 1), loc="upper left")
-axis.grid(True, alpha=0.2)
-figure.tight_layout()
-plt.show()
-display(age_bin_predictions.round({
-    "fitted_expression": 3, "ci_lower": 3, "ci_upper": 3,
-}))
+if age_bin_available:
+    figure, axis = plt.subplots(figsize=(10, 6.0))
+    for study, rows in age_bin_samples.groupby("study", observed=True, sort=True):
+        axis.scatter(
+            rows["age"], rows["naive_log_expression"],
+            color=study_palette.get(str(study)), s=32, alpha=0.3, label=str(study),
+        )
+    for prediction in age_bin_predictions.itertuples(index=False):
+        midpoint = (prediction.age_bin_start + prediction.age_bin_end) / 2
+        half_width = summary["age_bin_model"]["bin_width_years"] * 0.38
+        axis.hlines(
+            prediction.fitted_expression, midpoint - half_width, midpoint + half_width,
+            color="#222222", linewidth=2.4, zorder=4,
+        )
+        axis.vlines(
+            midpoint, prediction.ci_lower, prediction.ci_upper,
+            color="#222222", linewidth=1.2, zorder=4,
+        )
+    axis.set_xlabel("Age (years)")
+    axis.set_ylabel("log(naive normalized count + 1)")
+    axis.legend(title="Study", bbox_to_anchor=(1.02, 1), loc="upper left")
+    axis.grid(True, alpha=0.2)
+    figure.tight_layout()
+    plt.show()
+    display(age_bin_predictions.round({
+        "fitted_expression": 3, "ci_lower": 3, "ci_upper": 3,
+    }))
 
 # %% [markdown]
 # # Naive age model with study-specific slopes
@@ -855,15 +865,19 @@ display(age_bin_predictions.round({
 # %% [markdown]
 # ## Per-study age slopes
 # %%
-display(Markdown(f"**Design:** `{summary['study_slope_model']['design']}`"))
-display_fit_diagnostics("Naive age model with study-specific slopes")
-display(Markdown(
-    "The slopes above are direct fitted contrasts. In the full coefficient table below, "
-    "`age` is the reference-study slope and every `age:study[...]` row is that study's "
-    "deviation from the reference—not its standalone slope. The `parameter_role` and "
-    "`interpretation` columns make this coding explicit."
-))
-display(format_model_results(study_slopes))
+if study_slope_available:
+    display(Markdown(f"**Design:** `{summary['study_slope_model']['design']}`"))
+    display_fit_diagnostics("Naive age model with study-specific slopes")
+    display(Markdown(
+        "The slopes above are direct fitted contrasts. In the full coefficient table below, "
+        "`age` is the reference-study slope and every `age:study[...]` row is that study's "
+        "deviation from the reference—not its standalone slope. The `parameter_role` and "
+        "`interpretation` columns make this coding explicit."
+    ))
+    display(format_model_results(study_slopes))
+
+else:
+    display(Markdown("_Study-specific slope model unavailable: " + summary["study_slope_model"]["reason"] + "_"))
 
 # %% [markdown]
 # ## Residuals
@@ -871,24 +885,27 @@ display(format_model_results(study_slopes))
 # These are OLS residuals from the model with separate age slopes and
 # intercepts for each study. Panels are split by study and colored by site.
 # %%
-active_residual_plot_config = residual_plot_configs[
-    "Naive age model with study-specific slopes"
-]
+if study_slope_available:
+    active_residual_plot_config = residual_plot_configs[
+        "Naive age model with study-specific slopes"
+    ]
 
 # %% [markdown]
 # ### Against Age
 # %%
-plot_residuals(
-    gene_samples["study_slope_residual"], gene_samples["age"], "Age (years)",
-)
+if study_slope_available:
+    plot_residuals(
+        gene_samples["study_slope_residual"], gene_samples["age"], "Age (years)",
+    )
 
 # %% [markdown]
 # ### Against Depth
 # %%
-plot_residuals(
-    gene_samples["study_slope_residual"],
-    gene_samples["log10_total_counts"], "log10(total_counts)",
-)
+if study_slope_available:
+    plot_residuals(
+        gene_samples["study_slope_residual"],
+        gene_samples["log10_total_counts"], "log10(total_counts)",
+    )
 
 # %% [markdown]
 # ## Sample-level expression and fitted slopes
@@ -897,34 +914,35 @@ plot_residuals(
 # the observed age range for each study, evaluated at the reference sex and
 # mean log library depth. Slopes are on the log(normalized count + 1) scale.
 # %%
-figure, axis = plt.subplots(figsize=(10, 6.0))
-for study, rows in gene_samples.groupby("study", observed=True, sort=True):
-    color = study_palette.get(str(study))
-    axis.scatter(
-        rows["age"], rows["naive_log_expression"],
-        color=color, s=32, alpha=0.3, label=str(study),
-    )
-    predictions = study_slope_predictions.loc[
-        study_slope_predictions["study"].astype(str) == str(study)
-    ]
-    axis.plot(
-        predictions["age"], predictions["fitted_expression"],
-        color=color, linewidth=2.2,
-    )
-axis.set_xlabel("Age (years)")
-axis.set_ylabel("log(naive normalized count + 1)")
-axis.legend(title="Study", bbox_to_anchor=(1.02, 1), loc="upper left")
-axis.grid(True, alpha=0.2)
-figure.tight_layout()
-plt.show()
-display(format_model_results(study_slope_model_result))
-display(Markdown(
-    "Sample-level normalized counts, expression, fitted values, and residuals "
-    "are available in [gene_sample_counts.csv](gene_sample_counts.csv). The "
-    "age-bin sample data and adjusted levels are in "
-    "[naive_age_bin_samples.csv](naive_age_bin_samples.csv) and "
-    "[naive_age_bin_predictions.csv](naive_age_bin_predictions.csv)."
-))
+if study_slope_available:
+    figure, axis = plt.subplots(figsize=(10, 6.0))
+    for study, rows in gene_samples.groupby("study", observed=True, sort=True):
+        color = study_palette.get(str(study))
+        axis.scatter(
+            rows["age"], rows["naive_log_expression"],
+            color=color, s=32, alpha=0.3, label=str(study),
+        )
+        predictions = study_slope_predictions.loc[
+            study_slope_predictions["study"].astype(str) == str(study)
+        ]
+        axis.plot(
+            predictions["age"], predictions["fitted_expression"],
+            color=color, linewidth=2.2,
+        )
+    axis.set_xlabel("Age (years)")
+    axis.set_ylabel("log(naive normalized count + 1)")
+    axis.legend(title="Study", bbox_to_anchor=(1.02, 1), loc="upper left")
+    axis.grid(True, alpha=0.2)
+    figure.tight_layout()
+    plt.show()
+    display(format_model_results(study_slope_model_result))
+    display(Markdown(
+        "Sample-level normalized counts, expression, fitted values, and residuals "
+        "are available in [gene_sample_counts.csv](gene_sample_counts.csv). The "
+        "age-bin sample data and adjusted levels are in "
+        "[naive_age_bin_samples.csv](naive_age_bin_samples.csv) and "
+        "[naive_age_bin_predictions.csv](naive_age_bin_predictions.csv)."
+    ))
 
 # %% [markdown]
 # # Naive mixed age model with study fixed intercepts and random slopes

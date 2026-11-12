@@ -33,4 +33,4 @@ jobs:
       - uses: nf-core/setup-nextflow@v2
         with:
           version: '26.04.6'
-      - run: make workflow-lint workflow-test-publication workflow-test-selection workflow-test-failures workflow-test-resume
+      - run: make workflow-lint workflow-test-publication workflow-test-selection workflow-test-modes workflow-test-failures workflow-test-main-failures workflow-test-resume

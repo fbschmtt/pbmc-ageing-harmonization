@@ -1,3 +1,4 @@
+import { crossTypeSources } from './export-cross-type.mjs'
 import { createHash } from 'node:crypto'
 import { readSingleCellAssets } from './single-cell-assets.mjs'
 import { createReadStream } from 'node:fs'
@@ -93,7 +94,7 @@ export async function sourceInventory(input, onSlowHash) {
     }
   }
   const combined = resolve(input, '..', 'combined', 'trajectory')
-  for (const name of ['cross_cell_type_trajectory_clusters.csv', 'analysis_metadata.json']) {
+  for (const name of ['cross_cell_type_trajectory_clusters.csv', 'analysis_metadata.json', ...crossTypeSources]) {
     const path = join(combined, name)
     if (await exists(path))
       result.push({

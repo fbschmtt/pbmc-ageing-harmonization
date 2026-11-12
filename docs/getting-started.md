@@ -62,8 +62,11 @@ make run-all STUDIES=cima
 ```
 
 Replace `cima` with your selected IDs. `run-all` runs core harmonization,
-pseudobulk DE, profiles of top age-associated genes, and cell-type reports.
-Production stages resume completed tasks. For `make run`, an explicit list is
+pseudobulk DE, profiles of top age-associated genes, cell-type reports, and the
+integration benchmark. Benchmark methods run one at a time; set
+`RUN_BENCHMARK=false` to defer them on a constrained machine. `make run` selects
+harmonization only, and `make run-analysis` reuses existing merges for downstream
+analysis. Production stages resume completed tasks. For `make run`, an explicit list is
 strict about missing inputs; `STUDIES=all` instead selects available studies and
 records omissions. Review `output/run_manifest.json` to see what was included.
 
@@ -72,6 +75,37 @@ Open `output/index.html` for the report index. Count matrices live under
 and cross-type summaries under `output/analysis/combined/`. The
 [report guide](analysis/reports.md) explains the views; the
 [output reference](reference/outputs.md) lists individual artifacts.
+
+### Inspect an incomplete run
+
+The runner prints task errors and failed DE models after completion. To inspect
+the latest saved production run again without rerunning any tasks:
+
+```bash
+make workflow-failures OUTDIR=output
+```
+
+Use `OUTDIR=output/test` for test results. The output names the failed task or
+model, gives its error message, and points to its logs or metadata. Nextflow's
+`Ignored` and `Failed` counts can describe the same tasks; do not add them
+together. A task can also exit successfully while recording a failed individual
+DE fit, which this command reports separately.
+
+By default, a failed DE fit prevents combined DE collection from succeeding.
+To retain successful fits and continue combined reporting with explicit partial
+status, repeat your production command with the same study selection and:
+
+```bash
+make run-all STUDIES=cima ALLOW_PARTIAL_RESULTS=true
+```
+
+Replace `cima` with the studies from your original run. The failed model remains
+recorded as failed, and the workflow remains partial. Essential configuration,
+input and core-processing errors remain fatal; collection still fails if no DE
+model completes. Verification requires a complete run and rejects partial
+results. See [DE model statuses](analysis/differential-expression.md#model-status-and-partial-results)
+and [failure inspection](development/orchestration.md#failure-isolation) for
+details, archived runs and native Nextflow commands.
 
 ## 5. Explore existing results in the atlas
 

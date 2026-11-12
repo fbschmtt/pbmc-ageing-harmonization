@@ -48,7 +48,7 @@ async function choosePageFromGroup(page, parent, child) {
   await menu.locator('summary').click()
   // Submenu buttons include a descriptive second line in their accessible name,
   // so match the visible page label within the selected menu instead.
-  await menu.locator('.nav-menu-panel button').filter({ hasText: child }).click()
+  await menu.locator('.nav-menu-panel button').filter({ has: page.getByText(child, { exact: true }) }).click()
 }
 async function openApp(page, url) {
   await installOfflineRoutes(page, url)
@@ -130,6 +130,48 @@ test('built synthetic release supports atlas journeys and fails safely', { timeo
     browser = await chromium.launch({
       headless: true,
       executablePath: process.env.SITE_BROWSER_EXECUTABLE || undefined,
+    })
+
+    await runJourney('navigation', 'cross-type summaries distinguish shared signals and preserve gene selections', async () => {
+      const context = await browser.newContext()
+      try {
+        const page = await context.newPage()
+        await openApp(page, `${served.url}#crossType`)
+        await visible(page.getByRole('heading', { name: 'Across cell types', exact: true }))
+        await visible(page.getByRole('heading', { name: 'Shared age-bin signals' }))
+        await visible(page.getByRole('button', { name: 'GENE1', exact: true }))
+        await page.getByRole('button', { name: 'GENE1', exact: true }).click()
+        await visible(page.getByRole('heading', { name: 'GENE1', exact: true }))
+        await visible(page.getByText('−0.40', { exact: true }).or(page.getByText('-0.40', { exact: true })).or(page.getByText('-0.4', { exact: true })))
+        await visible(page.getByRole('img', { name: 'Mean standardized trajectory for pattern 1' }))
+        const patternAxes = await page.locator('[data-axis=pattern-extent]').allTextContents()
+        assert.ok(patternAxes.length > 1 && new Set(patternAxes).size === 1)
+        await page.getByRole('searchbox', { name: 'Find a gene' }).fill('GENE3')
+        await page.getByRole('button', { name: 'GENE3', exact: true }).click()
+        await visible(page.getByRole('cell', { name: 'Not tested', exact: true }))
+        await page.getByRole('button', { name: 'Open gene view', exact: true }).click()
+        assert.equal(new URL(page.url()).hash, '#genes')
+        await visible(page.getByRole('heading', { name: 'GENE3', exact: true }))
+        await page.goto(`${served.url}#crossType`)
+        await page.getByLabel('Minimum significant cell types').selectOption('2')
+        await visible(page.getByRole('button', { name: 'GENE1', exact: true }))
+        assert.equal(await page.getByRole('button', { name: 'GENE2', exact: true }).count(), 0)
+        await page.setViewportSize({ width: 390, height: 844 })
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1))
+      } finally { await context.close() }
+    })
+
+    await runJourney('release', 'cross-type summaries fail clearly when unavailable or invalid', async () => {
+      for (const invalid of [false, true]) {
+        const context = await browser.newContext()
+        try {
+          const page = await context.newPage()
+          await page.route('**/data/cross-type-index.json*', (route) => route.fulfill({ status: invalid ? 200 : 404,
+            contentType: 'application/json', body: invalid ? '{"schemaVersion":99}' : '{}' }))
+          await openApp(page, `${served.url}#crossType`)
+          await visible(page.getByRole('status').filter({ hasText: invalid ? 'could not be loaded' : 'not available' }))
+        } finally { await context.close() }
+      }
     })
 
     await runJourney('release', 'preloads combined age results and keeps developmental fits lazy', async () => {

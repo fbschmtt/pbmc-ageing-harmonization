@@ -18,7 +18,7 @@ async function choosePageFromGroup(page, parent, child) {
   const menu = page.locator('.site-nav .nav-menu').filter({ hasText: parent })
   await menu.locator('summary').click()
   // The submenu button's accessible name includes its descriptive second line.
-  await menu.locator('.nav-menu-panel button').filter({ hasText: child }).click()
+  await menu.locator('.nav-menu-panel button').filter({ has: page.getByText(child, { exact: true }) }).click()
 }
 
 test(
@@ -125,6 +125,17 @@ test(
       await choosePageFromGroup(page, 'Differential expression', 'By cell type')
       await page.locator('.de-warning').waitFor({ state: 'visible', timeout: 10000 })
       await page.locator('.de-statistics').waitFor({ state: 'visible', timeout: 10000 })
+      if (release.assets.some((asset) => asset.kind === 'crossType')) {
+        const cross = JSON.parse(await readFile(join(publicDir, 'data/cross-type-index.json'), 'utf8'))
+        await choosePageFromGroup(page, 'Differential expression', 'Across cell types')
+        await page.getByRole('heading', { name: 'Shared age-bin signals' }).waitFor({ state: 'visible', timeout: 10000 })
+        const selectedGene = cross.genes[0].gene
+        await page.getByRole('searchbox', { name: 'Find a gene' }).fill(selectedGene)
+        await page.getByRole('button', { name: selectedGene, exact: true }).click()
+        await page.getByRole('heading', { name: selectedGene, exact: true }).waitFor({ state: 'visible', timeout: 10000 })
+        await page.locator('.cross-type-detail table tbody tr').first().waitFor({ state: 'visible', timeout: 10000 })
+        assert.equal(await page.locator('.cross-type-detail table tbody tr').count(), cross.cellTypes.length)
+      }
       await page.getByRole('button', { name: 'Cell states', exact: true }).click()
       await page.getByRole('img', { name: /^UMAP of / }).waitFor({ state: 'visible', timeout: 10000 })
       assert.ok(await page.locator('.single-cell-stats strong').count() >= 2)

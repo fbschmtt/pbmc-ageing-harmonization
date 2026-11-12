@@ -19,6 +19,17 @@ process RUN_INTEGRATION_METHOD {
       --method-name ${method_name} --aifi-l2-model ${aifi_l2_model} \\
       --output method_${method_name}.h5ad --status-output method_${method_name}.json
     """
+
+    stub:
+    // The wildcard fails whichever method the executor starts first, independent of scheduling order.
+    def fail = params.stub_fail_benchmark_method == '*' ? """
+    if mkdir '${params.outdir}/.benchmark-failed-once' 2>/dev/null; then exit 53; fi
+    """ : (method_name == params.stub_fail_benchmark_method ? 'exit 53' : '')
+    """
+    ${fail}
+    printf '%s\n' 'Benchmark stub' > method_${method_name}.h5ad
+    printf '%s\n' '{"name":"${method_name}","status":"complete"}' > method_${method_name}.json
+    """
 }
 
 process AGGREGATE_INTEGRATION_METHODS {
@@ -44,6 +55,21 @@ process AGGREGATE_INTEGRATION_METHODS {
       ${method_artifacts ? "--method-artifacts ${method_artifacts.join(' ')}" : ''} \\
       --output integration_benchmark.h5ad --report-output integration_benchmark.json
     """
+
+    stub:
+    """
+    python3 - <<'PY_STUB'
+    import json
+    from pathlib import Path
+    expected = {method['name'] for method in json.loads(Path('${pipeline_config}').read_text())['integration_benchmark']['methods']}
+    methods = [json.loads(path.read_text()) for path in Path('statuses').glob('*.json')]
+    missing = sorted(expected - {method['name'] for method in methods})
+    Path('integration_benchmark.json').write_text(json.dumps({
+        'status': 'partial' if missing else 'complete', 'methods': methods, 'failed_methods': missing,
+    }))
+    Path('integration_benchmark.h5ad').write_text('Benchmark aggregate stub')
+    PY_STUB
+    """
 }
 
 process RENDER_INTEGRATION_BENCHMARK_REPORT {
@@ -63,5 +89,13 @@ process RENDER_INTEGRATION_BENCHMARK_REPORT {
     """
     pbmc-integration-benchmark-report --project-root . --input ${artifact} \\
       --run-report ${run_report} --template ${report_template} --output-dir .
+    """
+
+    stub:
+    """
+    test -f ${artifact}
+    test -f ${run_report}
+    printf '%s\n' '<html>Benchmark report stub</html>' > report.html
+    printf '%s\n' '{}' > executed.ipynb
     """
 }

@@ -372,6 +372,7 @@ export async function createRelease(inputPath, targetPath, options = {}) {
       pathwaySources: pathwayFiles,
       reportSources,
       availability: {
+        crossType: assets.some((a) => a.kind === 'crossType'),
         trajectory: assets.some((a) => a.kind === 'trajectory'),
         composition: assets.some((a) => a.kind === 'composition'),
         geneMetadata: assets.some((a) => a.kind === 'metadata'),

@@ -4,6 +4,8 @@ import { navigation, navigationItems } from './navigation'
 it('groups expression and age-analysis routes while keeping pathways as one page', () => {
   const ids = navigation.map((item) => item.id)
   const labels = navigationItems.filter((item) => 'pages' in item).map((item) => item.label)
+  expect(ids).toContain('crossType')
+  expect(navigationItems.some((item) => 'pages' in item && item.pages.some((page) => page.id === 'crossType'))).toBe(true)
   expect(ids).toContain('pathways')
   expect(ids).toContain('geneTypeMatrix')
   expect(ids.filter((id) => id === 'geneTypeMatrix')).toHaveLength(1)

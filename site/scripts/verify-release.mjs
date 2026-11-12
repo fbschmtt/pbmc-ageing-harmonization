@@ -4,6 +4,7 @@ import { isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
 import { validAsset } from '../src/data/contracts.mjs'
+import { geneBucket } from '../src/data/geneBucket.mjs'
 import { clockModelAssetPath } from './clock-assets.mjs'
 import { hashFile } from './release-sources.mjs'
 
@@ -254,6 +255,26 @@ export async function verifyRelease(directory) {
     if ((path === 'pipeline-trajectory-index.json' || path.startsWith('trajectory-details/')) &&
         value.records.some((record) => !labels.has(record.cellType)))
       throw new Error('Trajectory references an unknown cell type')
+  }
+  const crossType = parsed.get('cross-type-index.json')
+  if (crossType) {
+    const referenced = new Set(Object.values(crossType.geneBuckets))
+    for (const target of referenced)
+      if (!parsed.has(target)) throw new Error(`Missing cross-type gene chunk: ${target}`)
+    for (const row of crossType.genes) {
+      const detail = parsed.get(crossType.geneBuckets[geneBucket(row.gene)])?.genes[row.gene]
+      if (!detail || detail.records.some((record) => !labels.has(record.cellType) || !crossType.cellTypes.includes(record.cellType)) ||
+          row.tested !== detail.records.filter((record) => record.tested).length ||
+          row.significant !== detail.records.filter((record) => record.significant).length ||
+          detail.records.some((record) => record.significant !== (record.padj !== null && record.padj < crossType.deFdr) ||
+            record.clusterSignificant !== (record.padj !== null && record.padj <= crossType.clusterFdr)))
+        throw new Error(`Cross-type summary disagrees with gene results: ${row.gene}`)
+    }
+    const genes = new Set(crossType.genes.map((row) => row.gene))
+    for (const target of referenced)
+      for (const gene of Object.keys(parsed.get(target).genes))
+        if (!genes.has(gene) || crossType.geneBuckets[geneBucket(gene)] !== target)
+          throw new Error(`Unexpected cross-type gene: ${gene}`)
   }
   const composition = parsed.get('pipeline-composition-index.json')
   if (

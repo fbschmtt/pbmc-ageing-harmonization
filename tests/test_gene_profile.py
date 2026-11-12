@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import anndata as ad
 import numpy as np
@@ -19,8 +20,10 @@ from scripts.profile_gene import (
     _annotate_study_slope_coefficients,
     _collect_cross_cell_type_trajectories,
     _exploratory_infant_adult_contrast,
+    _fit_age_bin_profile,
     _fit_profile,
     _fit_study_age_bin_trajectories,
+    _fit_study_slope_profile,
     _prepare_model_for_cache,
 )
 
@@ -146,6 +149,112 @@ def test_profile_model_cache_drops_series_metadata_before_h5ad_write(tmp_path) -
     assert restored.layers["fitted"].tolist() == [[1.1], [1.9]]
     assert restored.obsm["design_matrix"].tolist() == [[1.0], [0.0]]
     assert restored.obs["status"].tolist() == ["yes", "no"]
+
+
+@pytest.mark.parametrize('dtype', ['string', object])
+@pytest.mark.parametrize('values', [['no', None], [None, None]])
+def test_profile_cache_preserves_missing_text_metadata(tmp_path, dtype, values) -> None:
+    obs = pd.DataFrame({
+        'smoking_status': pd.Series(values, dtype=dtype),
+        'age': [30.0, 50.0],
+        'size_factors': [0.8, 1.2],
+    })
+    model = ad.AnnData(X=np.array([[2], [3]]), obs=obs)
+    missing = model.obs['smoking_status'].isna().tolist()
+
+    _prepare_model_for_cache(model)
+    model.write_h5ad(tmp_path / 'model.h5ad')
+    restored = ad.read_h5ad(tmp_path / 'model.h5ad')
+
+    assert restored.obs['smoking_status'].isna().tolist() == missing
+    assert restored.obs['smoking_status'].dropna().tolist() == obs['smoking_status'].dropna().tolist()
+    assert restored.obs['age'].tolist() == [30.0, 50.0]
+    assert restored.obs['size_factors'].tolist() == [0.8, 1.2]
+    np.testing.assert_array_equal(restored.X, [[2], [3]])
+
+
+def age_bin_profile_inputs(ages, sexes, *, counts=None):
+    pipeline = json.loads(PIPELINE_PATH.read_text())
+    spec = pipeline['differential_expression']
+    spec['study_comparison_minimum_samples_per_bin'] = 2
+    obs = pd.DataFrame({
+        'study': 'study_a', 'study_site': 'site_a',
+        'sample': [f'sample_{i}' for i in range(len(ages))],
+        'age': ages, 'sex': sexes, 'total_counts': 100.0, 'n_cells': 20,
+    }, index=[f'pb_{i}' for i in range(len(ages))])
+    values = counts if counts is not None else np.array([[i + 2, i + 3] for i in range(len(ages))])
+    adata = ad.AnnData(
+        X=values, obs=obs,
+        var=pd.DataFrame({'available_in_study_a': True}, index=['GENE1', 'GENE2']),
+    )
+    return SimpleNamespace(
+        pipeline=pipeline, spec=spec, cell_type='CD14 monocyte', type_adata=adata,
+        obs=obs, design_terms=['age', 'sex'], required_terms=['age', 'sex'],
+        all_samples_geometric_mean_total_counts=100.0,
+        valid_all_type_totals=np.ones(len(ages), dtype=bool),
+    )
+
+
+def test_optional_age_bin_fit_skips_rank_deficiency_and_keeps_study_means(tmp_path) -> None:
+    prepared = age_bin_profile_inputs([20, 21, 30, 31], ['female', 'female', 'male', 'male'])
+
+    result = _fit_age_bin_profile(prepared, 'GENE1')
+
+    assert result.summary['status'] == 'skipped'
+    assert 'not estimable for 4 samples' in result.summary['reason']
+    assert result.diagnostic is None and result.comparison is None
+    assert result.coefficients.empty and result.predictions.empty and result.samples.empty
+    assert result.study_trajectories['age_bin'].tolist() == ['20-30', '30-40']
+    assert result.study_support['status'].tolist() == ['aligned']
+    for name in ('samples', 'coefficients', 'predictions', 'correlations', 'correlated_residuals'):
+        output = tmp_path / f'{name}.csv'
+        getattr(result, name).to_csv(output, index=False)
+        assert pd.read_csv(output).empty
+
+
+def test_optional_age_bin_fit_skips_saturated_design() -> None:
+    prepared = age_bin_profile_inputs([20, 30, 40], ['female'] * 3)
+
+    result = _fit_age_bin_profile(prepared, 'GENE1')
+
+    assert result.summary['status'] == 'skipped'
+    assert 'not estimable for 3 samples' in result.summary['reason']
+
+
+def test_optional_age_bin_fit_retains_estimable_results() -> None:
+    prepared = age_bin_profile_inputs([20, 21, 22, 30, 31, 32], ['female', 'male', 'female'] * 2)
+
+    result = _fit_age_bin_profile(prepared, 'GENE1')
+
+    assert result.summary['status'] == 'complete'
+    assert 'reason' not in result.summary
+    assert len(result.samples) == 6 and len(result.predictions) == 2
+    assert np.isfinite(result.samples['residual']).all()
+    assert result.diagnostic['n_samples'] == 6
+    np.testing.assert_allclose(result.samples['naive_log_expression'], np.log1p(np.arange(2, 8)))
+
+
+def test_optional_age_bin_fit_keeps_invalid_counts_fatal() -> None:
+    prepared = age_bin_profile_inputs([20, 21], ['female', 'male'], counts=np.full((2, 2), 1.5))
+
+    with pytest.raises(ValueError, match='integer'):
+        _fit_age_bin_profile(prepared, 'GENE1')
+
+
+def test_optional_study_slopes_skip_saturated_design() -> None:
+    prepared = SimpleNamespace(
+        model_metadata=pd.DataFrame({'study': ['a', 'a', 'b', 'b'], 'age': [20, 30, 20, 30]}),
+        varying_terms=['age'],
+    )
+
+    result = _fit_study_slope_profile(prepared, np.array([1.0, 2.0, 2.0, 4.0]))
+
+    assert result.summary['status'] == 'skipped'
+    assert 'not estimable for 4 samples' in result.summary['reason']
+    assert result.coefficients.empty and result.slopes.empty and result.predictions.empty
+    assert np.isnan(result.residuals).all()
+
+
 def test_profile_gene_rejects_study_specific_gene_before_fitting(tmp_path) -> None:
     rows = []
     for study in ("synthetic_study_a", "synthetic_study_b"):

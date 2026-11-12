@@ -1,5 +1,7 @@
 nextflow.enable.dsl = 2
 
+include { VALIDATE_CONFIGURATION; clockOptions } from './modules/configuration'
+
 include { AGE_CLOCKS } from './workflows/age_clocks'
 include { AGGREGATE_AGE_CLOCKS } from './modules/age_clocks'
 
@@ -17,9 +19,11 @@ workflow {
             channel.value(file(root.resolve('reports/age_clock_cross_type_report.py'), checkIfExists: true)),
         )
     } else {
+        VALIDATE_CONFIGURATION(channel.value(file(root.resolve('config/pipeline.json'), checkIfExists: true)),
+            ['age_clock'], clockOptions(params), [])
         AGE_CLOCKS(
             channel.value(file(params.pseudobulk_input, checkIfExists: true)),
-            channel.value(file(root.resolve('config/pipeline.json'), checkIfExists: true)),
+            VALIDATE_CONFIGURATION.out.config,
             params.clock_cell_type ?: '', root,
         )
     }

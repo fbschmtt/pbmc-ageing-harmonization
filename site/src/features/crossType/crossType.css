@@ -1,0 +1,159 @@
+.cross-type-page {
+  max-width: 1360px;
+}
+.cross-type-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+.cross-type-heading h1 {
+  margin-top: 0.25rem;
+}
+.cross-type-heading > button {
+  flex-shrink: 0;
+}
+.cross-type-scope,
+.cross-type-note {
+  color: var(--muted, #566660);
+  max-width: 90ch;
+}
+.cross-type-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 1.5rem 0 2rem;
+}
+.cross-type-stats > div {
+  background: #f0f4ef;
+  border-radius: 12px;
+  padding: 1rem 1.5rem;
+  display: grid;
+  gap: 0.3rem;
+}
+.cross-type-stats strong {
+  font-size: 1.7rem;
+}
+.cross-type-stats span {
+  font-size: 0.85rem;
+}
+.cross-type-controls {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin: 1rem 0;
+}
+.cross-type-controls label {
+  display: grid;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+.cross-type-controls input,
+.cross-type-controls select {
+  padding: 0.6rem;
+  border: 1px solid #bfcac3;
+  border-radius: 6px;
+  background: white;
+  min-width: 200px;
+}
+.cross-type-layout {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.8fr) minmax(0, 2fr);
+  gap: 2rem;
+  align-items: start;
+}
+.cross-type-detail {
+  border: 1px solid #dce2dc;
+  border-radius: 12px;
+  padding: 1.2rem;
+  min-width: 0;
+}
+.cross-type-page table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.85rem;
+}
+.cross-type-page th,
+.cross-type-page td {
+  padding: 0.65rem 0.4rem;
+  border-bottom: 1px solid #e2e7e1;
+  text-align: left;
+}
+.cross-type-page th button {
+  color: #236b5f;
+  border: 0;
+  background: none;
+  padding: 0.15rem;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.cross-type-page th button:hover {
+  text-decoration: underline;
+}
+.cross-type-gene-list .is-selected {
+  background: #e8f2ec;
+}
+.cross-type-table {
+  overflow-x: auto;
+}
+.cross-type-significant {
+  font-weight: 650;
+}
+.cross-type-positive {
+  color: #a54c34;
+}
+.cross-type-negative {
+  color: #346da2;
+}
+.cross-type-agreement {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+.cross-type-agreement dt {
+  font-size: 0.8rem;
+  color: #566660;
+}
+.cross-type-agreement dd {
+  margin: 0.3rem 0;
+  font-weight: 650;
+}
+.cross-type-patterns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 1rem;
+}
+.cross-type-patterns figure {
+  margin: 0;
+  padding: 1rem;
+  border: 1px solid #dce2dc;
+  border-radius: 12px;
+}
+.cross-type-patterns figcaption {
+  display: grid;
+  gap: 0.4rem;
+}
+.cross-type-patterns figcaption span {
+  color: #566660;
+  font-size: 0.8rem;
+}
+.cross-type-patterns svg {
+  width: 100%;
+}
+.cross-type-page details {
+  margin: 2rem 0;
+}
+.cross-type-page summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+@media (max-width: 850px) {
+  .cross-type-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+  .cross-type-layout {
+    grid-template-columns: 1fr;
+  }
+}

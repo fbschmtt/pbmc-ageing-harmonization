@@ -47,6 +47,14 @@ trajectory and composition exports and groups excluded rows by reason; export
 prints a warning when these differ. Review these counts and model statuses
 before release; the counts do not identify individual excluded rows.
 
+Cross-type summaries read named files under `analysis/combined/trajectory/`:
+`gene_recurrence.csv`, `gene_cell_type_significance.csv`,
+`gene_pattern_concordance.csv`, `cross_cell_type_cluster_means.csv`, and
+`analysis_metadata.json`. Those sources are included in the release's hashed
+inventory. The exporter does not interpret notebook or HTML content. A missing
+recurrence table leaves the optional view unavailable; partial or contradictory
+inputs fail export. No donor-level observations or WGCNA results are added.
+
 Single-cell views consume `analysis/site-assets.json` (schema version 1) and
 its indexed PNG files. This manifest records the cell-type label, named UMAP
 and optional age-DE images, fraction notes, explicit trend/zero-inclusion
@@ -68,6 +76,7 @@ a local cleanup list and is not a browser data asset.
 | Asset | Meaning and key fields |
 |---|---|
 | `de-index.json` and `de-models/*.json` | The index lists combined models plus the developmental `juvenile_age` and `age_25_vs_5` results and points to a default chunk containing adjusted p < 0.05 plus gene lookup chunks for all other records. A complete gene symbol retrieves its lookup chunk. `effect` is log2 fold change; `padj` and `pvalue` are probabilities, `se` is effect standard error, and `baseMean` is PyDESeq2’s mean size-factor-normalized count. `studySupport`, when available, counts per-study results for the same covariate and contrast with adjusted p < 0.05 and records the number with a finite adjusted p-value. The count ignores effect direction; studies with missing results or adjusted p-values are not counted as tested. It is descriptive, and per-study models can have different covariate adjustments. Null numeric values mean no finite estimate was supplied. |
+| `cross-type-index.json` and `cross-type-genes/*.json` | Prepared cross-type age-bin summaries: tested/significant counts per gene, shared bins and reference bin, FDR thresholds, exclusions, and mean standardized patterns. Gene chunks contain per-type finite/untested status, FDR, signed largest age-bin effects and optional trajectory-agreement metrics. Counts and flags are checked against chunk records; genes, paths and cell types are validated across the release. |
 | `clock-data.json` and `clock-models/<cell-type>/<method>.json` | The index lists every available clock method for each cell type in baseline-to-more-advanced order, includes performance metrics and a shared age-axis domain, and points to one prediction asset per method. The browser fetches prediction assets only when a method is selected. Training predictions are leave-one-study-out; held-out predictions come from studies excluded from fitting and tuning. Cross-type mean methods include donors with predictions from at least two types and consistent study/age metadata. Published points contain study, age and predicted age (plus the number of cell types for means); donor identifiers and model coefficients are not exported. |
 | `reference-expression/<cell-type>.json` | Study-balanced CPM for genes with reference-bin pseudobulk support, with the reference bin, method, and contributing sample and study counts. CPM is normalized expression, not an absolute molecule count. |
 | `de-downloads/<cell-type>/<model>-<covariate>.csv.gz` | Gzip-compressed combined-model gene-level differential-expression results, with no uncompressed duplicate. The browser extracts the archive on demand and saves a plain CSV; browsers without `DecompressionStream` receive a compressed download to extract manually. Available statistic columns are `gene`, `baseMean`, `log2FoldChange`, `lfcSE`, `stat`, `pvalue`, and `padj`. `#` metadata lines precede the CSV header with cell type, model, scope, analysis mode, covariate, contrast, design, sample counts, and any interpretation warning. Study and site sample-count maps identify the included studies and sites, so separate included-name lists are omitted. CSV does not standardize comments; programmatic readers must skip lines beginning with `#`. |

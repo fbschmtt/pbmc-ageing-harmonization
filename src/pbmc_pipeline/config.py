@@ -390,6 +390,8 @@ def load_analysis_configuration(
             if spec.get("split_by") != "aifi_l2_majority":
                 raise ConfigurationError("differential_expression.split_by must be 'aifi_l2_majority'")
             _validate_sample_inclusion(spec)
+        elif section == "integration_benchmark":
+            _validate_integration_benchmark(_configuration_object(pipeline, section))
         elif section == "processing":
             _validate_analysis_processing(_configuration_object(pipeline, section))
         else:
@@ -637,40 +639,7 @@ def _validate_sample_inclusion(
         )
 
 
-def validate_configuration(
-    pipeline: dict,
-    studies: dict,
-    schema: dict,
-    input_sources: dict | None = None,
-) -> None:
-    if pipeline.get("schema_version") != 1 or studies.get("schema_version") != 1:
-        raise ConfigurationError("Only configuration schema_version 1 is supported")
-    if not studies.get("studies"):
-        raise ConfigurationError("No studies are configured")
-    test_inputs: list[str] = []
-    merge = pipeline.get("merge", {})
-    groupby = merge.get("pseudobulk", {}).get("groupby", [])
-    if not groupby or not {"sample", "aifi_l2_majority"}.issubset(groupby):
-        raise ConfigurationError(
-            "merge.pseudobulk.groupby must include sample and aifi_l2_majority"
-        )
-    pseudobulk_metadata = schema.get("pseudobulk_metadata")
-    if (
-        not isinstance(pseudobulk_metadata, list)
-        or not pseudobulk_metadata
-        or len(set(pseudobulk_metadata)) != len(pseudobulk_metadata)
-        or not set(pseudobulk_metadata).issubset(schema.get("required", {}))
-    ):
-        raise ConfigurationError(
-            "obs_schema.pseudobulk_metadata must be a non-empty, unique list "
-            "of harmonized observation contract columns"
-        )
-    single_cell = merge.get("single_cell", {})
-    if single_cell.get("gene_join") not in {"inner"}:
-        raise ConfigurationError("merge.single_cell.gene_join currently supports only 'inner'")
-    if single_cell.get("annotation_level") != "l2":
-        raise ConfigurationError("merge.single_cell.annotation_level must be 'l2'")
-    benchmark = pipeline.get("integration_benchmark", {})
+def _validate_integration_benchmark(benchmark: dict) -> None:
     if benchmark.get("annotation_level") != "l2":
         raise ConfigurationError("integration_benchmark.annotation_level must be 'l2'")
     max_benchmark_cells = benchmark.get("max_cells")
@@ -732,6 +701,42 @@ def validate_configuration(
             raise ConfigurationError(
                 "integration_benchmark method must be harmony, none, scanorama, or bbknn"
             )
+
+
+def validate_configuration(
+    pipeline: dict,
+    studies: dict,
+    schema: dict,
+    input_sources: dict | None = None,
+) -> None:
+    if pipeline.get("schema_version") != 1 or studies.get("schema_version") != 1:
+        raise ConfigurationError("Only configuration schema_version 1 is supported")
+    if not studies.get("studies"):
+        raise ConfigurationError("No studies are configured")
+    test_inputs: list[str] = []
+    merge = pipeline.get("merge", {})
+    groupby = merge.get("pseudobulk", {}).get("groupby", [])
+    if not groupby or not {"sample", "aifi_l2_majority"}.issubset(groupby):
+        raise ConfigurationError(
+            "merge.pseudobulk.groupby must include sample and aifi_l2_majority"
+        )
+    pseudobulk_metadata = schema.get("pseudobulk_metadata")
+    if (
+        not isinstance(pseudobulk_metadata, list)
+        or not pseudobulk_metadata
+        or len(set(pseudobulk_metadata)) != len(pseudobulk_metadata)
+        or not set(pseudobulk_metadata).issubset(schema.get("required", {}))
+    ):
+        raise ConfigurationError(
+            "obs_schema.pseudobulk_metadata must be a non-empty, unique list "
+            "of harmonized observation contract columns"
+        )
+    single_cell = merge.get("single_cell", {})
+    if single_cell.get("gene_join") not in {"inner"}:
+        raise ConfigurationError("merge.single_cell.gene_join currently supports only 'inner'")
+    if single_cell.get("annotation_level") != "l2":
+        raise ConfigurationError("merge.single_cell.annotation_level must be 'l2'")
+    _validate_integration_benchmark(_configuration_object(pipeline, "integration_benchmark"))
     if pipeline.get("cell_type_analysis"):
         _validate_analysis_processing(_configuration_object(pipeline, "processing"))
         _validate_cell_type_analysis(_configuration_object(pipeline, "cell_type_analysis"))

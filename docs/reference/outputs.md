@@ -264,6 +264,23 @@ before using within-L1 fractions for inference.
 ## Workflow execution records
 
 Each Make workflow writes `workflow_summary.json` at the output root and keeps
-its trace and summary under `provenance/workflows/<target>-<run-id>/`. A `partial`
-summary identifies ignored analysis/report failures while preserving successful
-outputs. See [orchestration](../development/orchestration.md#failure-isolation).
+its `trace.tsv`, `nextflow.log` and `summary.json` under
+`provenance/workflows/<target>-<run-id>/`. The root summary is an atomic copy
+of the latest invocation. Schema version 1 includes:
+
+| Field | Contents |
+|---|---|
+| `status`, `exitcode` | Workflow state (`complete`, `partial`, or `failed`) and the underlying workflow command's exit code. Ignored task errors or recorded model failures can produce `partial` with exit code zero. |
+| `tasks`, `failed_tasks` | Current trace rows and the subset marked failed or aborted by Nextflow. |
+| `partial_artifacts` | Current application summaries with partial/error status, including unreadable required summaries. |
+| `task_diagnostics` | Failed task names, exit codes, work directories, available log paths, messages and log excerpts of at most 4 KiB per task. |
+| `analysis_failures` | Failed DE models with cell type, model, study, covariates, design, sample count, error message and current metadata path. Per-type and collector records of the same failure are deduplicated. |
+
+The diagnostic fields are additive; older summaries may not contain them.
+New summaries retain their captured diagnostics after task work directories are
+removed, although linked full logs and metadata then become unavailable.
+Inspect a saved run using `make workflow-failures OUTDIR=<outdir>`; older
+summaries require their work directories to recover those details. Successful
+outputs remain available after a partial run, but strict verification rejects
+that run. See [orchestration](../development/orchestration.md#failure-isolation)
+for the full inspection commands.

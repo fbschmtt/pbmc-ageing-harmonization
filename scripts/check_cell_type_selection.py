@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import subprocess
@@ -46,6 +47,25 @@ def check_selections(nextflow: str) -> None:
         if list(case.rglob(".command.sh")) or (case / "published").exists():
             raise RuntimeError(f"{name}: preflight dispatched work or published outputs")
         print(f"Passed preflight rejection: {name}", flush=True)
+    # A saved analysis is a directory; producer outputs are a list of files. Both must stage identically.
+    analysis = directory / 'analyses/cd14-monocyte/analysis'
+    (analysis / 'analysis.h5ad').write_text('Saved analysis must remain unchanged')
+    (analysis / 'report.json').write_text(json.dumps({'status': 'complete', 'cell_type': 'CD14 monocyte'}))
+    outdir = directory / 'rerender/published'
+    command = [*shlex.split(nextflow), 'run', 'cell_type_analysis.nf', '-c', 'nextflow.config',
+               '-profile', 'standard', '-stub-run', '-ansi-log', 'false',
+               '-work-dir', str(directory / 'rerender/work'), '--outdir', str(outdir),
+               '--cell_type_input', str(directory / 'inputs/cd14-monocyte/split.h5ad'),
+               '--cell_type_analysis_input', str(analysis)]
+    result = subprocess.run(command, cwd=ROOT, env=environment, text=True, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, check=False)
+    (directory / 'rerender.log').write_text(result.stdout)
+    published = outdir / 'analysis/per_type/cd14-monocyte/analysis'
+    if result.returncode or not (published / 'analysis.h5ad').is_file() or not (published / 'report.html').is_file():
+        raise RuntimeError(f'Saved analysis did not stage/render correctly\n{result.stdout}')
+    if (analysis / 'report.html').exists() or (analysis / 'analysis.h5ad').read_text() != 'Saved analysis must remain unchanged':
+        raise RuntimeError('Rerendering wrote back into the input analysis')
+    print('Passed existing-analysis directory staging and immutable-input check', flush=True)
     print(f"Selection logs: {directory}")
 
 

@@ -30,35 +30,32 @@ change that selection. Production `make run` still defaults to all studies.
 
 ## Choosing a Make target
 
-Choose the smallest target that directly exercises the changed contract. The
-repository instructions in [AGENTS.md](../../AGENTS.md) use this table when deciding
-which validation to run.
+Start with the [code-to-test map](test-map.md) and the
+[validation scope guide](testing.md#choosing-validation-scope). Select checks
+for the changed contract; do not use a whole scientific run to validate a mode
+name, Make argument, or documentation edit. Broaden only for a stated coverage
+gap, failure, or additional change, and stop once the relevant checks pass.
 
-| Change or goal | Preferred target | When to use a broader target |
+| Changed behavior | Start with | Add broader coverage only when |
 |---|---|---|
-| Python library, CLI, or deterministic test change | `make lint test-unit` | Run a focused workflow too if a task contract or published artifact changed. |
-| Nextflow workflow or configuration change | `make workflow-lint` | Add `make run-test STUDIES=<study>` when task wiring must execute. |
-| Shared scientific orchestration | `make workflow-lint workflow-test-failures`, then `make run-analysis-test` | Uses existing test merges; `make run-all-test` also exercises fresh core composition. |
-| Cell-type selection or split/analysis pairing | `make workflow-test-selection` | Checks valid subsets and production preflight errors without scientific inputs. Add `make run-cell-type-analysis-test CELL_TYPES=<slug,slug>` when analysis wiring changes. |
-| DE artifact publication or task staging | `make workflow-test-publication` | Uses production process definitions with tiny test stubs, then asserts that model files, nested diagnostics and rendered reports coexist. Run synthetic DE too when calculations or report inputs change. |
-| One single cell analysis report | `make run-cell-type-test CELL_TYPE=<slug>` (requires an existing split; create test splits with `make split-cell-types-test`) | Use `make render-cell-type-test CELL_TYPE=<slug>` to rerender one report from existing analysis artifacts, or `make render-cell-type-reports-test` to rerender all test reports. |
-| Rerender single cell analysis reports from existing analysis artifacts | `make render-cell-type-reports[-test]` | Use `make render-cell-type[-test] CELL_TYPE=<slug>` to refresh one report. |
-| Rerender per-type pseudobulk DE reports from existing model results | `make render-de-reports[-test] [CELL_TYPE=<slug>]` | Renders all types when `CELL_TYPE` is omitted, or one type when set. Requires current per-type model outputs and `abundance_input.tsv`. A separate diagnostics stage prepares abundance, clustering, WGCNA and enrichment artifacts; unchanged calculations are reused. Rendering reads those artifacts and does not fit models. Rerun `make run-de[-test]` to regenerate missing abundance inputs. |
-| Rebuild the central report index | `make render-report-index` | It is also refreshed automatically after core, integration-benchmark, DE, cell-type, and age-clock workflow targets. |
-| Cell-type splitting or shared analysis | `make run-test`, then `make run-cell-type-analysis-test CELL_TYPES=<slug,slug>` | Omit `CELL_TYPES` to analyze every type. Use `make run-all-test` only when the composed integration workflow is needed. |
-| Positive pseudobulk DE fitting | `make run-de-synthetic-test` and `make check-synthetic-de-results` | This fixture is independent of the core merge and renders per-type DE plus cross-cell-type reports. To also render single-cell reports, run `make run-test` followed by `make run-cell-type-analysis-test CELL_TYPES=<slug,slug>`; omit `CELL_TYPES` to analyze all types. |
-| Cell-type transcriptomic age clocks | `make run-age-clock` | Fit all types with `make run-age-clocks`; see [age clocks](../analysis/age-clocks.md#age-clocks) for selection and validation. |
-| Focused gene-by-cell-type profile | `make profile-gene CELL_TYPE=<label-or-slug> GENE=<gene-id>` | Use `make run-gene-profile-synthetic-test` to fit and render a planted synthetic gene and check the report end to end. |
-| Top merged age-DE gene profiles | `make profile-top-age-genes-test` | Uses the synthetic DE fixture and profiles two genes per cell type; included in `make run-all-test`. |
-| DE from an existing test pseudobulk merge | `make run-de-test` | Requires `make run-test` first; the small core fixture may not have enough independent samples for successful fits. Use the synthetic target above for positive fitting coverage. |
-| Focused profiles of top merged age-DE genes | `make profile-top-age-genes` | Runs ten profiles per cell type by adjusted p-value; set `TOP_AGE_GENE_COUNT` to change the number. Requires completed merged DE results and pseudobulk input. |
-| Core workflow for one or a few studies | `make run-test STUDIES=<list>` | Omit `STUDIES` for the representative AIDA25/CIMA/Terekhova26 set; use `STUDIES=all` for every available fixture. |
-| Global integration/annotation diagnostics | `make run-integration-benchmark[-test]` | Run after an existing single-cell merge; `make run-all-test` also exercises its test form. |
-| Composed Docker integration test | `make run-all-test` | Includes the synthetic DE, clock, and profile checks plus the default three single-cell types. |
-| Static atlas export, frontend, or data contract | `make site-test site-test-browser` | These run in the tracked frontend Docker images and need no host Node installation. Browser tests build an isolated synthetic release. Use `make site-test-workflow` to test existing workflow outputs; `make site-build` validates the existing export. |
-| Markdown documentation or Make target names | `make docs-check` | Also run the target described by changed commands. |
-| Broad cross-cutting or release validation | `make verify` | Reserve this non-resumed, full workflow for cross-cutting or release checks. Prefer the focused targets above for routine changes. Pass `STUDIES=all` to use every available fixture. |
-| Production analysis | `make run` | It is resumable; use only after the relevant focused checks pass. |
+| Documentation, including AGENTS.md | `make docs-check` | The checker itself changed: add `make test-unit PYTEST_ARGS=tests/test_docs.py`. Example production commands do not need execution just because their explanation changed. |
+| Python helper, configuration, or CLI | `make lint` plus `make test-unit PYTEST_ARGS="<affected test files or nodes>"` from the [test map](test-map.md) | Callers or runtime contracts also changed; add those tests or one affected scientific task. Full unit tests are useful when a shared change affects many consumers. |
+| Entry-point modes or Make routing | `make test-unit PYTEST_ARGS=tests/test_workflow_orchestration.py workflow-test-modes docs-check` | Task inputs, dependencies or output contracts changed beyond routing; use their checks below. |
+| Nextflow definitions or container profiles | `make workflow-lint`, then the affected contract check from the [workflow table](testing.md#workflow-contract-checks) | Stubs/previews cannot cover the changed runtime command, environment or data contract; execute that branch only. |
+| Cell-type selection or split/analysis pairing | `make workflow-test-selection` | Runtime splitting/analysis also changed: add one selected cell type against the existing merge. |
+| DE staging or publication ownership | `make workflow-test-publication`; add `make workflow-test-failures` for ownership/failure changes | Calculations or actual task inputs also changed; add focused synthetic DE. |
+| Producer/consumer wiring or failure policy | `make workflow-test-failures` and affected unit tests | A changed runtime input/calculation is not covered by the stubs; add the corresponding focused scientific check. |
+| Failure propagation through the main entry point | `make workflow-test-main-failures` | Actual calculations or CLI inputs changed beyond the stubs; add just that affected scientific task. |
+| Completed composed test task/selection coverage | `make check-workflow-inventory` using the existing output root | Scientific results changed; reuse the corresponding artifact validators before deciding whether a new calculation is needed. |
+| Gene-profile caching/template invalidation | `make workflow-test-resume` | Scientific model/cache contents also changed; add profile unit tests and one synthetic gene run. |
+| Scientific calculation or report template | Affected unit tests and one [focused scientific check](testing.md#focused-scientific-checks) | A shared producer-to-consumer contract affects more branches; test those consumers. Reuse existing inputs and prepared artifacts. |
+| Frontend logic or interaction | Matching `make site-test-unit SITE_TEST_FILE=<path>`; add the affected browser journey/group for interactions | Shared data/release contracts or changes across views need `make site-test site-test-browser`. |
+| Existing scientific outputs consumed by the atlas | `make site-test-workflow` | Required workflow outputs are absent or changed; create only those outputs. Never replace the local export merely to test. |
+| Multiple interacting scientific branches | `make run-analysis-test` when focused checks cannot cover their interaction | Fresh core-to-downstream composition is also affected: use `make run-all-test`. Both execute substantial calculations and rendering. |
+| Release or explicitly requested full verification | `make verify` | Full verification is deliberate, not the default after an edit. Use `STUDIES=all` only when every available fixture needs coverage. |
+
+Production commands are documented in [workflow modes](orchestration.md#entry-points).
+They are not substitutes for selecting focused validation.
 
 Nextflow submission alone is not a passing workflow check: confirm each task's
 `.exitcode` and the published deliverables. Development test targets use the

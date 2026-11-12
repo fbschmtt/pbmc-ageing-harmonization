@@ -1,3 +1,4 @@
+import { exportCrossType } from './export-cross-type.mjs'
 import { exportTrajectoryView } from './export-trajectory-view.mjs'
 import { exportFractionView } from './export-fraction-view.mjs'
 
@@ -12,6 +13,7 @@ export async function exportViews(input, output, cellTypes) {
   await exportTrajectoryView(input, output, cellTypes, counts)
   console.log('[site-export] Preparing cell-fraction and age-bin summaries')
   await exportFractionView(input, output, cellTypes, counts)
+  await exportCrossType(input, output, cellTypes)
   console.log(
     `Exported ${counts.trajectory.exported} trajectory records and ${counts.fractions.exported} study fraction summaries`,
   )

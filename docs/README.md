@@ -23,7 +23,8 @@ paths shown in code refer to that root unless stated otherwise.
 
 - [Development and Make targets](development/README.md): local setup and the smallest useful validation command.
 - [Orchestration](development/orchestration.md): composed workflows, caching, failure isolation, and finalization.
-- [Workflow testing](development/testing.md): test fixtures, synthetic coverage, and full verification.
+- [Testing guide](development/testing.md): minimal validation, fixture reuse, and when to broaden checks.
+- [Code-to-test map](development/test-map.md): which tests cover each module, workflow contract, and frontend area.
 - [Adding a study](development/studies.md): adapters, metadata joins, and provenance.
 
 ## Reference

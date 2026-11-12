@@ -29,7 +29,12 @@
 /** @typedef {{ gene: string; effect: number; padj: number | null }} ClusterMarker */
 /** @typedef {{ cluster: string; image: string; fits: { study: string | null; samples: number; meanFraction: number; slopePpPerDecade: number | null }[] }} ClusterFractionDetail */
 /** @typedef {{ schemaVersion: number; releaseId?: string; cellType: string; nCells: number; nClusters: number; integration: string; image: string; ageDeImage?: string | null; ageDeNote?: string | null; fractionNote?: string | null; fractionHasStudyTrends?: boolean; fractionIncludesZeros?: boolean; fractionDetails?: ClusterFractionDetail[] | null; groups: { cluster: string; higher?: ClusterMarker[]; lower?: ClusterMarker[]; markers?: { gene: string; score: number; padj: number | null }[] }[] }} SingleCell */
-/** @typedef {{ de: DifferentialRelease; trajectory: Atlas; trajectoryMap: TrajectoryMap; composition: FractionIndex; preview: Preview; pathways: { pathwaySets: PathwaySet[] }; metadata: GeneMetadataIndex; singleCell: SingleCell; singleCellIndex: SingleCellIndex; referenceExpression: ReferenceExpression; clock: ClockIndex; clockModel: ClockModelAsset }} Assets */
+/** @typedef {{ cellType: string; padj: number | null; tested: boolean; significant: boolean; clusterSignificant: boolean; effect: number | null; ageBin: string | null }} CrossTypeRecord */
+/** @typedef {{ types: number; dominantFraction: number | null; meanDistance: number | null; sameClusterFraction: number | null }} CrossTypePattern */
+/** @typedef {{ gene: string; records: CrossTypeRecord[]; pattern: CrossTypePattern | null }} CrossTypeGene */
+/** @typedef {{ schemaVersion: number; releaseId?: string; genes: Record<string, CrossTypeGene> }} CrossTypeGenes */
+/** @typedef {{ schemaVersion: number; releaseId?: string; cellTypes: string[]; genes: { gene: string; tested: number; significant: number }[]; geneBuckets: Record<string,string>; deFdr: number; clusterFdr: number; referenceBin: string; commonBins: string[]; exclusions: {cellType: string; reason: string}[]; clusters: {id: string; count: number; mean: number[]}[] }} CrossTypeIndex */
+/** @typedef {{ de: DifferentialRelease; trajectory: Atlas; trajectoryMap: TrajectoryMap; composition: FractionIndex; preview: Preview; pathways: { pathwaySets: PathwaySet[] }; metadata: GeneMetadataIndex; singleCell: SingleCell; singleCellIndex: SingleCellIndex; referenceExpression: ReferenceExpression; clock: ClockIndex; clockModel: ClockModelAsset; crossType: CrossTypeIndex; crossTypeGenes: CrossTypeGenes }} Assets */
 
 // Shared runtime contract for published JSON and browser loaders.
 const obj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x)
@@ -135,7 +140,25 @@ const geneMetadata = (x) =>
   arr(x.proteinClasses, term) &&
   obj(x.goTerms) &&
   ['biologicalProcesses', 'molecularFunctions', 'cellularComponents'].every((k) => arr(x.goTerms[k], term))
+const crossTypeRecord = (x) => obj(x) && str(x.cellType) && (x.padj === null || probability(x.padj)) &&
+  typeof x.tested === 'boolean' && typeof x.significant === 'boolean' && typeof x.clusterSignificant === 'boolean' &&
+  x.tested === (x.padj !== null) && (!x.significant || x.tested) && (!x.clusterSignificant || x.tested) &&
+  nullableNumber(x.effect) && nullableString(x.ageBin)
 const validators = {
+  crossType: (x) => base(x) && arr(x.cellTypes, str) && new Set(x.cellTypes).size === x.cellTypes.length &&
+    probability(x.deFdr) && probability(x.clusterFdr) && str(x.referenceBin) && /^[0-9]+-[0-9]+$/.test(x.referenceBin) && arr(x.commonBins, str) &&
+    obj(x.geneBuckets) && Object.values(x.geneBuckets).every((path) => /^cross-type-genes\/[0-3]\.json$/.test(path)) &&
+    arr(x.genes, (row) => obj(row) && str(row.gene) && count(row.tested) && count(row.significant) && row.significant <= row.tested) &&
+    new Set(x.genes.map((row) => row.gene)).size === x.genes.length &&
+    arr(x.exclusions, (row) => obj(row) && str(row.cellType) && str(row.reason)) &&
+    arr(x.clusters, (row) => obj(row) && str(row.id) && count(row.count) && arr(row.mean, num) && row.mean.length === x.commonBins.length),
+  crossTypeGenes: (x) => base(x) && obj(x.genes) && Object.entries(x.genes).every(([gene, row]) =>
+    obj(row) && row.gene === gene && arr(row.records, crossTypeRecord) &&
+    new Set(row.records.map((record) => record.cellType)).size === row.records.length &&
+    (row.pattern === null || (obj(row.pattern) && count(row.pattern.types) &&
+      (row.pattern.dominantFraction === null || probability(row.pattern.dominantFraction)) &&
+      (row.pattern.sameClusterFraction === null || probability(row.pattern.sameClusterFraction)) &&
+      (row.pattern.meanDistance === null || (num(row.pattern.meanDistance) && row.pattern.meanDistance >= 0))))),
   clock: (x) => base(x) && Array.isArray(x.ageDomain) && x.ageDomain.length === 2 &&
     x.ageDomain.every(num) && x.ageDomain[0] < x.ageDomain[1] && arr(x.cellTypes, (cellType) =>
       obj(cellType) && str(cellType.id) && str(cellType.label) &&

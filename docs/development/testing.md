@@ -1,124 +1,220 @@
 # Testing the workflows
 
-[Documentation](../README.md)
+[Documentation](../README.md) · [Code-to-test map](test-map.md)
+
+## Choosing validation scope
+
+Run the smallest checks that exercise the changed behavior. Start with the
+[code-to-test map](test-map.md), which names the relevant test files, workflow
+checks, and their limits. Choose tests by the contract they exercise, not just
+by filename or the number of files in the diff.
+
+1. Identify what changed: documentation, a Python function, CLI/routing,
+   scientific calculation, report execution, publication, or browser behavior.
+2. Select the affected tests or test nodes. Include callers of a changed shared
+   helper. For Python code, add `make lint`; for docs or Make-target changes,
+   add `make docs-check`.
+3. Add a workflow or browser check only for behavior the selected unit tests
+   cannot exercise. Say what gap the more expensive check will cover before
+   starting it. Reuse existing fixtures and prepared artifacts.
+4. Stop when those checks pass. Broaden only after a new change, a failure,
+   or an unresolved coverage gap. Do not repeat a passed workflow merely to
+   collect reassurance, or run every target that could touch the edited code.
+
+Documentation-only changes normally need **only `make docs-check`**. Editing
+commands in a guide does not require launching the production analyses they
+illustrate. If the documentation checker itself changes, also run its unit tests.
+
+Mode names, branch defaults and Make argument routing normally need focused
+orchestration unit tests, `make workflow-test-modes`, and `make docs-check`.
+Changing a command's routing does not by itself justify rerunning DE, clocks,
+gene fitting, or notebooks. Dataflow, publication and failure-policy changes
+need the corresponding stub contract check; add an actual scientific run when
+changed runtime behavior lies outside the stubs.
+
+Reserve `make verify` for an explicit request, release validation, or changes
+across scientific branches whose combined behavior cannot be covered with
+focused checks. A large diff is not sufficient reason on its own. It builds
+images and executes a fresh composed scientific graph plus frontend suites.
+`make run-all-test` and `make run-analysis-test` also run multiple scientific
+branches; they are not lightweight routing checks.
+
+## Focused unit tests
+
+Use Make entry points to retain the locked repository-local environment:
+
+```bash
+make test-unit PYTEST_ARGS=tests/test_workflow_orchestration.py
+make test-unit PYTEST_ARGS="tests/test_config.py tests/test_cell_type_manifest.py"
+make test-unit PYTEST_ARGS=tests/test_config.py::test_staged_analysis_config_needs_no_registries_and_preserves_digest
+make test-unit PYTEST_ARGS="tests/test_workflow_orchestration.py -k make_routes"
+```
+
+`PYTEST_ARGS` selects test files, nodes, or pytest options. Omit it to run the
+full deterministic unit suite. Default unit tests need no external study inputs
+or AIFI model binaries; some execute small fits while others mock fitting or
+notebook tools. `make test-models` separately checks locally acquired AIFI
+binaries; use it when model compatibility is affected.
+
+For frontend logic, select its adjacent Vitest file:
+
+```bash
+make site-test-unit SITE_TEST_FILE=src/app/navigation.test.ts
+```
+
+For changed interactions, add a matching browser journey using
+`make site-test-browser-focus SITE_BROWSER_FILTER=<journey-fragment>`, or a
+related navigation/release group. See the [frontend test map](test-map.md#frontend-and-export).
+Use `make site-test site-test-browser` when shared release contracts or changes
+across views need full coverage.
+
+## Workflow contract checks
+
+These use Nextflow and placeholder inputs or stubs, without Docker or scientific
+data. The real preflight check additionally uses the locked repository `.venv`. Select the row matching the changed contract; do not run every row by default.
+Their logs/artifacts remain under `output/tests/`.
+
+| Target | What it exercises | What it cannot establish |
+|---|---|---|
+| `make workflow-lint` | Syntax/structure of production and test entry points. | Runtime inputs, calculations or output publication. |
+| `make workflow-test-modes` | Production `main.nf` graph previews: harmonization/analysis/full branches, boolean overrides, benchmark defaults, required merges and preflight rejection. | Task execution, scientific results or notebook rendering. |
+| `make workflow-test-preflight` | Real Python validators in the locked `.venv`: unchanged valid config reaches a tiny consumer; invalid analysis/clock settings or core registries are fatal before scientific tasks, including conversion. | Scientific calculations or data-dependent eligibility. Requires the local dev environment. |
+| `make workflow-test-selection` | Valid cell-type subsets and production preflight rejection of empty, unknown, duplicate or unmatched inputs. | Cell-type fitting or rendering. |
+| `make workflow-test-publication` | Production DE processes with stubs: raw tables, nested diagnostics and report artifacts coexist after publication. | The correctness of calculations inside those tasks. |
+| `make workflow-test-failures` | Failed fits/renders and an all-failed cell-type branch: siblings continue, scientific artifacts survive, partial summaries remain visible. | Real scientific/task input compatibility beyond stub outputs. |
+| `make workflow-test-main-failures` | Actual `main.nf` analysis-mode connections: a single DE fit, DE report or first benchmark method fails; siblings and unrelated branches finish. Cell reports receive current DE tables independently of DE report success. Strict validation rejects the partial run. | Scientific calculations; fixtures use production process stubs. |
+| `make workflow-test-resume` | Production gene-profile graph with stubs: shared preparation, identical-run reuse and render-only invalidation. | Scientific fitting or automatic cache reuse across different entry points. |
+
+CI and `make verify` run the contract checks together. Local iteration can use
+just the affected check. See [orchestration](orchestration.md) for failure policy,
+publication ownership and run summaries.
+
+Some checks deliberately fail stub tasks or reject invalid configuration.
+They print `[EXPECTED FAILURE TEST]` before the case and `[PASS]` only when
+its assertions succeed. Raw error output is retained at the printed
+`console.log` path. An unexpected outcome prints `[FAIL]` with diagnostics
+and causes Make to fail. A recorded partial/failed workflow inside one of these
+cases is the expected fixture outcome, not the verdict for `make verify`.
+
+## Focused scientific checks
+
+Use these when a changed calculation, task input contract, or report template
+requires actual execution. Check existing artifacts first. Missing inputs
+justify creating only the missing prerequisite, not rebuilding the whole graph.
+The default single cell-type selection is `cd14-monocyte`.
+
+| Changed behavior | Focused check | Inputs and selection |
+|---|---|---|
+| Study adapter, harmonization or core task contract | `make run-test STUDIES=<affected-study>` | Existing small fixture and required annotation models. Create a missing fixture with `make test-data STUDIES=<affected-study>`. |
+| Local cell-type calculations | `make run-cell-type-test CELL_TYPE=cd14-monocyte` | Reuse its existing `split.h5ad`. If splitting changed, use `make run-cell-type-analysis-test CELL_TYPES=cd14-monocyte` against the existing merge. |
+| Cell-type report template | `make render-cell-type-test CELL_TYPE=cd14-monocyte` | Reuse its existing split and analysis; no need to refit local analysis or core. |
+| DE report template or prepared diagnostic consumption | `make render-de-reports-test CELL_TYPE=cd14-monocyte` | Existing DE tables and abundance input. Diagnostics reuse valid prepared calculations; missing/invalid diagnostics are regenerated. |
+| DE/trajectory fitting or inclusion rules | `make run-de-synthetic-test check-synthetic-de-results check-synthetic-de-reports` | Generates its synthetic input independently of core. If the DE-to-cell-report contract changes, also rerender the ordinary cell-type report to check that those artifacts reach it. |
+| Gene-profile calculation/report | `make run-gene-profile-synthetic-test` | One planted gene with output checks. For ranking/fan-out changes, use `make profile-top-age-genes-test` with existing synthetic DE outputs. |
+| Clock calculation/report | `make run-age-clock-synthetic-test check-age-clock-synthetic-test AGE_CLOCK_METHODS=elastic_net AGE_CLOCK_ALPHAS=0.1 AGE_CLOCK_L1_RATIOS=0.5 AGE_CLOCK_N_JOBS=1` | One type and small search grid. Select the affected method when changing a different clock. |
+| Integration benchmark calculation/report | `make run-integration-benchmark-test check-integration-benchmark-test` | Existing test single-cell merge; executes configured integration methods without other scientific branches. |
+| Scientific artifact-to-site contract | `make site-test-workflow` | Existing test workflow outputs. Builds an isolated export; no scientific fitting or replacement of local site data. |
+
+`make run-cell-type-analysis-test` validates its newly published manifest after
+Nextflow returns. It rejects stale success, ignored task failures, missing
+requested types, and missing/corrupt report images. Other focused report targets
+still require inspection of their task exit codes and expected deliverables;
+starting Nextflow successfully is not proof of a passing run.
+
+Notebook wrapper unit tests mock the toolchain. For a notebook-template change,
+execute the affected render and inspect its HTML/prepared artifacts. For
+scientific changes, a syntactically valid notebook or stub output is not enough.
+Use synthetic DE to obtain positive fitting coverage with production inclusion
+filters; the ordinary small study merge may legitimately yield no DE fits.
 
 ## Running and verification
 
-Use Make targets rather than raw Nextflow or Docker commands. For routine
-changes, choose the smallest focused validation target; reserve `make verify`
-for cross-cutting or release-level checks:
-
 The root `Makefile` owns common defaults and includes `make/checks.mk`,
-`make/workflows.mk`, and `make/site.mk`. The public target names are preserved;
-`scripts/image_context_hash.py` defines and hashes each Docker build context.
-Default unit tests require no external study inputs or AIFI binaries. The
-separate `make test-models` target runs compatibility checks against locally
-acquired models. CI runs Python static/unit/documentation checks and synthetic
-frontend checks without acquiring scientific inputs. A separate Nextflow CI job runs
-workflow lint, publication, selection, and failure-isolation checks.
-
-`make workflow-test-publication` exercises the production DE process definitions
-with small Nextflow stubs. It checks directory staging and verifies that model
-tables, diagnostic files, nested WGCNA artifacts and reports remain available
-after publication. It uses no scientific inputs or Docker containers, keeps its
-artifacts under `output/tests/`, and is included in `make verify`.
-
-`make workflow-test-selection` checks valid selection and pairing, then invokes
-the production cell-type workflow with empty, unknown, mixed, duplicate, and
-unmatched requests. It asserts failure before any task starts or output is
-published. These checks use placeholder files, require no Docker or scientific
-inputs, and keep their logs under `output/tests/`.
-
-`make workflow-test-failures` checks that failed fits and renders do not stop
-successful siblings or replace their artifacts. It also exercises an entirely
-failed cell-type branch, which must still publish a partial manifest. See
-[orchestration](orchestration.md) for the failure policy and per-run summaries.
-
-`make run-cell-type-analysis-test` checks the newly published manifest after
-Nextflow finishes. It rejects stale manifests, ignored task failures, missing
-requested types, changed reports, and missing or corrupt site images. An
-`insufficient_cells` report remains a valid outcome; a missing report does not.
-
-The documentation check discovers pages recursively under `docs/`, resolves
-links relative to each page, validates heading fragments, and checks every Make
-target in documented commands, including targets declared in `make/*.mk`.
-
-```bash
-make help
-make lint test-unit
-make workflow-lint
-make run-test STUDIES=wang25
-make run-cell-type-test CELL_TYPE=cd14-monocyte
-make run-all STUDIES=all
-make split-cell-types-test
-make render-cell-type-test CELL_TYPE=cd14-monocyte
-make docs-update
-make docs-check
-```
+`make/workflows.mk`, and `make/site.mk`. Docker images use build-context-derived
+tags. CI runs Python/static/docs, synthetic frontend, and Nextflow contract
+checks without downloading scientific inputs.
 
 `make test-data`, `make run-test`, `make run-all-test`, and `make verify`
-default to the representative `aida25,cima,terekhova26` set. It covers the
-AIDA supplementary-metadata join, CIMA counts-layer input, and Terekhova26
-raw-count input. Pass `STUDIES=all` to exercise every available fixture, or a
-comma-separated list for another focused selection. Production `make run`
-continues to default to all studies.
+default to `aida25,cima,terekhova26`, covering the AIDA supplementary-metadata
+join, CIMA counts-layer input, and Terekhova26 raw-count input. Unavailable
+fixtures are skipped. Select one affected study for focused checks; use
+`STUDIES=all` only when all available adapters/inputs need coverage. Production
+`make run` defaults to all available studies and remains resumable. Fresh test
+runs and `make verify` must not acquire `-resume`.
 
-Use the smallest check that covers the edit: `make lint test-unit` for
-Python-only work, `make workflow-lint` for workflow/configuration edits, and a
-focused `make run-test STUDIES=<study>` when core execution wiring needs
-testing. For a single cell-type report, reuse an existing split with
-`make run-cell-type-test CELL_TYPE=<slug>` rather than rebuilding the core
-workflow. When only the report template changes, use
-`make render-cell-type-test CELL_TYPE=<slug>` to consume the published split
-and analysis artifact without recomputing local analysis. `make docs-check`
-validates local Markdown links and documented Make targets without adding a
-documentation-tool dependency.
-`run-de` fits pseudobulk models, fans out per-type DE report tasks from the fit
-results, and renders the combined cross-cell-type analysis report separately.
-With `-resume`, completed PyDESeq2 fits remain cached when only a downstream
-report input changes. Use `make render-de-reports` to rerun per-type report
-notebooks from existing model outputs; this also runs one render task per type
-and skips PyDESeq2 fitting. The preceding diagnostics task reuses validated
-published calculations or regenerates them when their scientific inputs or
-implementation changed; notebook rendering itself only reads their results.
-Core, integration-benchmark, DE, and cell-type report targets update
-`<outdir>/index.html` after publishing. `make render-report-index OUTDIR=<outdir>`
-rebuilds the index using the cell-type manifest when available, or scanning
-published per-type reports otherwise, which keeps its links synchronized when
-cell types change. Harmonization and benchmark reports are linked when their
-published files are present.
-`make run-all-test` invokes one composed Nextflow graph. Its synthetic pseudobulk
-is generated once for DE, clocks, and gene profiles. `make run-analysis-test`
-exercises the same downstream graph using existing core test merges. Both finish
-with strict checks on the current run summary and published outputs.
+Use existing splits, analysis artifacts, and DE tables for report work.
+`run-cell-type-analysis-test` must not gain an implicit core-workflow prerequisite.
+When working in another output root, pass `OUTDIR=<path>` and reuse its inputs;
+keep exploratory inputs, logs and outputs under `output/experiments/<name>/`.
 
-`make verify` is a broad, non-resumed check for cross-cutting changes and
-release validation; routine changes should use the focused targets above.
-It runs linting, unit tests, Nextflow lint, documentation checks, image builds,
-and fresh Docker workflows for the representative test set by default. After
-the core merge it checks the integration benchmark, generates synthetic
-pseudobulk data for positive DE fits, checks the completed models and planted
-markers, runs the default one-method synthetic age-clock smoke test, profiles
-the top two merged age-DE genes per cell type, exercises the synthetic
-gene-profile report, renders per-type DE reports, and analyzes three
-single-cell types by default. Set `VERIFY_CELL_TYPES` to choose those types.
-Pass `STUDIES=all` for every available fixture. The synthetic fixture has
-only two cell types, so other reports exercise the ordinary no-DE path. It is
-workflow coverage rather than a realistic model of study balance or biological
-effects: covariate availability and gene presence are deliberately simple, and
-the planted effects have no study-specific heterogeneity.
-Its synthetic WGCNA output currently has two modules. Thus verification executes
-the ordinary WGCNA report path, but does not exercise
-the 25-module display cap or provide a production-scale runtime benchmark.
-`make run` is the resumable production entry point and merges single-cell data
-by default. Set `MERGE_SINGLE_CELL=false` to skip that optional branch.
-The current Nextflow profiles leave CPU and time requests unspecified except
-for one CPU per parallel cell-type DE task; they do not set per-process memory
-limits. Task traces and summaries are published under `<outdir>/provenance/workflows/`.
-Use measured peak RAM before sizing another runner or adding resource directives.
-Clock tasks run one type at a time while retaining their configured internal
-CV parallelism; gene model preparation and profile calculations are capped at two
-concurrent tasks each.
+When several changed scientific branches need to be exercised together,
+`make run-analysis-test` runs the downstream graph using existing core merges.
+It still refits DE, clocks, gene profiles and cell analyses, renders reports,
+and runs benchmarking. Use `make run-all-test` when the fresh core-to-analysis
+composition also needs validation. Both end with strict artifact checks and
+use synthetic pseudobulk generated once for positive DE, clock and gene checks.
+
+`make verify` adds full unit/model/static/documentation checks, workflow
+contracts, frontend unit/browser checks, a fresh composed Docker run, and the
+workflow-backed atlas check. `VERIFY_CELL_TYPES` selects its three default
+single-cell types. The synthetic fixture has only two types; other reports
+exercise the ordinary no-DE path. Its synthetic WGCNA currently has two modules,
+so this run does not cover the 25-module display cap or production-scale runtime.
+The fixture has balanced age support and planted age, sex, BMI, CMV, smoking,
+and study effects, but no realistic study-specific heterogeneity.
+
+This synthetic fixture provides positive fitting coverage; a passing run does
+not establish that sparsely supported study subsets can fit every model.
+Gene-profile unit tests separately cover nullable text with missing values,
+rank-deficient and saturated optional designs, and retention of independent
+per-study age-bin means. The workflow failure checks above use injected stub
+failures to test orchestration, not numerical fitting. Tests of report wrappers
+mock notebook execution; changes to unavailable-model report sections still
+need a focused real render using the affected prepared artifacts.
+
+Before the existing artifact validators, composed tests also run
+`make check-workflow-inventory`'s check. It requires the expected current
+processes (including core only for full mode), successful task exit codes, the
+requested cell/clock selections, and one preparation per profiled type. It reads
+this run's gene-selection files and requires matching fit/render tasks and
+published outputs for every selected gene plus the planted verification gene.
+It compares those outputs with their current producers, so old published files
+cannot substitute for missing tasks. It does not pin the graph's total task count.
+
+Rerun this read-only check against an existing completed composed test without
+any scientific or Docker execution:
+
+```bash
+make check-workflow-inventory OUTDIR=output/test
+```
+
+Use `PIPELINE_MODE=analysis` when the latest summary came from
+`run-analysis-test`. Keep its task work directories: the check reads their exit
+codes, selections and producer artifacts. The ordinary published outputs remain
+usable independently of this test's work-directory checks.
+
+Every Make workflow uses the shared runner to record task trace/exit codes and
+`complete`, `partial`, or `failed` summaries under
+`<outdir>/provenance/workflows/`. Strict validators reject partial current runs
+even when older published artifacts exist. Confirm task `.exitcode` and expected
+outputs. The runner refreshes `<outdir>/index.html` once, including after failure;
+`make render-report-index` refreshes the inventory without running notebooks.
+
+For diagnosis, `make workflow-failures OUTDIR=output/test` reads the latest
+saved test run and lists task errors and failed DE models, including fitting
+errors recorded by tasks that exited zero. This is a read-only inspection
+command, not a substitute for strict artifact validation. See
+[failure inspection](orchestration.md#failure-isolation) for archived runs and
+native Nextflow commands.
+
+Frontend tests use isolated synthetic releases. `make site-test-workflow` uses
+existing workflow outputs without changing the local export. `make site-build`
+validates/builds the current export; `make site-export` replaces it and must not
+be used merely for testing.
+
+Report the checks run and their outcomes, plus any relevant coverage gap or
+broader validation deliberately left out. Do not imply that a unit, preview, or
+stub check validated scientific execution.
 
 ## DE test fixtures
 

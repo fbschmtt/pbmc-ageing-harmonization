@@ -1,10 +1,17 @@
 nextflow.enable.dsl = 2
 
+include { VALIDATE_CONFIGURATION; profileCountError } from './modules/configuration'
+
 include { TOP_GENE_PROFILES; GENE_PROFILES } from './workflows/gene_profiles'
 
 workflow {
+    if (!params.profile_gene) {
+        def problem = profileCountError(params.top_age_gene_count)
+        if (problem) error(problem)
+    }
     def root = file(params.project_dir)
-    def config = channel.value(file(root.resolve('config/pipeline.json'), checkIfExists: true))
+    VALIDATE_CONFIGURATION(channel.value(file(root.resolve('config/pipeline.json'), checkIfExists: true)), ['differential_expression'], [:], [])
+    def config = VALIDATE_CONFIGURATION.out.config
     def input = channel.value(file(params.pseudobulk_input, checkIfExists: true))
     def de_root = file(params.per_type_de_dir ?: "${params.outdir}/analysis/per_type", checkIfExists: false)
     def context = channel.value(de_root.exists() ? de_root : file(root.resolve('config'), checkIfExists: true))
@@ -22,6 +29,7 @@ workflow {
     } else {
         def models = channel.fromPath("${de_root}/*/differential_expression", type: 'dir', checkIfExists: true)
             .map { directory -> tuple(directory.parent.name, directory) }
+            .combine(config).map { slug, directory, _config -> tuple(slug, directory) }
         TOP_GENE_PROFILES(input, config, models, params.top_age_gene_count as int, root)
     }
 }

@@ -36,7 +36,9 @@ The core merge writes no global normalization, embedding, graph, or prediction.
 
 ## Orchestration
 
-`pipeline.nf` composes the named scientific workflows under `workflows/`.
+`main.nf` selects `harmonization`, `analysis`, or `full` mode and composes the
+named scientific workflows under `workflows/`. Full mode includes integration
+benchmarking; analysis mode consumes existing merges.
 Standalone entry scripts use the same components. Make provides commands and
 operational setup, and its shared runner records task failures and refreshes the
 workspace report index once. See [workflow orchestration](../development/orchestration.md)
@@ -77,7 +79,8 @@ for dependency ownership, failure isolation, and test composition.
 - `src/pbmc_pipeline/merge.py`: creates raw-count pseudobulks, outer-joins
   pseudobulk genes, and runs the optional single-cell merge.
 - `modules/*.nf`: conversion, harmonization, merge, QC, and manifest process
-  modules; `main.nf` is limited to study selection and DAG composition.
+  modules; `main.nf` selects modes and composes workflows.
+  `workflows/core.nf` owns study selection and the harmonization graph.
 - `cell_type_analysis.nf`: a separate downstream entry workflow. It receives an
   existing merged single-cell H5AD, opens it in read-only backed mode, and
   materializes one retained per-study AIFI-L2 type at a time for splitting.

@@ -68,13 +68,17 @@ run-test: MERGE_SINGLE_CELL = true
 run-test: $(TEST_CONTAINER_PREREQS) ## Fresh core test; skips unavailable fixtures
 run run-test:
 	$(if $(NF_TEST_SUFFIX),$(BUILD_TEST_R_IMAGE),@:)
-	$(RUN_NEXTFLOW) run main.nf $(NF_COMMON_ARGS) --studies "$(STUDIES)" $(MERGE_ARGS) $(NF_RESUME)
+	$(RUN_NEXTFLOW) run main.nf $(NF_COMMON_ARGS) --mode harmonization --studies "$(STUDIES)" $(MERGE_ARGS) $(NF_RESUME)
 
-run-all run-all-test run-analysis-test: WORKFLOW_STAGE = core,cell_type_analysis,differential_expression,integration_benchmark,analysis
-run-all: $(CORE_CONTAINER_PREREQS) ## Compose core, DE, top-gene profiles and cell reports; optional RUN_CLOCKS/RUN_BENCHMARK
-run-all:
-	$(RUN_NEXTFLOW) run pipeline.nf $(NF_COMMON_ARGS) --merge_single_cell --studies "$(STUDIES)" \
-	  --top_age_gene_count "$(TOP_AGE_GENE_COUNT)" $(CELL_TYPE_FILTER_ARGS) --run_clocks "$(RUN_CLOCKS)" --run_benchmark "$(RUN_BENCHMARK)" \
+run-all run-analysis run-all-test run-analysis-test: WORKFLOW_STAGE = core,cell_type_analysis,differential_expression,integration_benchmark,analysis
+run-all: $(CORE_CONTAINER_PREREQS) ## Full pipeline including integration benchmarking; optional RUN_CLOCKS
+run-all: PIPELINE_MODE = full
+run-analysis: PIPELINE_MODE = analysis
+run-analysis: PIPELINE_INPUT_ARGS = --merged_input "$(MERGED_INPUT)" --pseudobulk_input "$(PSEUDOBULK_INPUT)"
+run-analysis: check-cell-type-analysis-prerequisites check-de-prerequisites $(PYTHON_CONTAINER_PREREQS) ## Downstream analyses from existing merges; optional RUN_BENCHMARK/RUN_CLOCKS
+run-all run-analysis:
+	$(RUN_NEXTFLOW) run main.nf $(NF_COMMON_ARGS) --mode $(PIPELINE_MODE) $(PIPELINE_INPUT_ARGS) --studies "$(STUDIES)" \
+	  --top_age_gene_count "$(TOP_AGE_GENE_COUNT)" $(CELL_TYPE_FILTER_ARGS) --run_clocks "$(RUN_CLOCKS)" $(if $(strip $(RUN_BENCHMARK)),--run_benchmark "$(RUN_BENCHMARK)",) \
 	  --allow_partial_results "$(ALLOW_PARTIAL_RESULTS)" --gene_profile_output "$(GENE_PROFILE_DIR)" --age_clock_output "$(AGE_CLOCK_DIR)" $(CLOCK_WORKFLOW_ARGS) $(NF_RESUME)
 
 run-all-test run-analysis-test: STUDIES = $(TEST_STUDIES)
@@ -85,12 +89,15 @@ run-all-test run-analysis-test: AGE_CLOCK_EXTERNAL_STUDIES = synthetic_study_c
 run-all-test run-analysis-test: $(TEST_CONTAINER_PREREQS)
 run-all-test: ## Fresh composed core plus benchmark, synthetic DE, clocks, profiles and selected cell reports
 run-analysis-test: check-cell-type-analysis-prerequisites check-de-prerequisites ## Exercise the composed downstream graph using existing test merges
-run-analysis-test: ANALYSIS_ONLY_ARGS = --analysis_only --merged_input "$(MERGED_INPUT)" --pseudobulk_input "$(PSEUDOBULK_INPUT)"
+run-all-test: PIPELINE_MODE = full
+run-analysis-test: PIPELINE_MODE = analysis
+run-analysis-test: PIPELINE_INPUT_ARGS = --merged_input "$(MERGED_INPUT)" --pseudobulk_input "$(PSEUDOBULK_INPUT)"
 run-all-test run-analysis-test:
 	$(if $(filter run-all-test,$@),$(BUILD_TEST_R_IMAGE),@:)
-	$(RUN_NEXTFLOW) run pipeline.nf $(NF_COMMON_ARGS) --merge_single_cell --studies "$(STUDIES)" \
-	  $(ANALYSIS_ONLY_ARGS) --synthetic_analysis --verify_gene_profile --run_benchmark --run_clocks --clock_cell_type "$(CELL_TYPE)" \
+	$(RUN_NEXTFLOW) run main.nf $(NF_COMMON_ARGS) --mode $(PIPELINE_MODE) --studies "$(STUDIES)" \
+	  $(PIPELINE_INPUT_ARGS) --synthetic_analysis --verify_gene_profile --run_benchmark --run_clocks --clock_cell_type "$(CELL_TYPE)" \
 	  --cell_types "$(VERIFY_CELL_TYPES)" --top_age_gene_count 2 $(CLOCK_WORKFLOW_ARGS)
+	$(WORKFLOW_INVENTORY_CHECK)
 	$(DOCKER_WORKSPACE) $(PYTHON_IMAGE) python scripts/check_workflow_suite.py --outdir "$(OUTDIR)" --cell-type "$(CELL_TYPE)" --cell-types "$(VERIFY_CELL_TYPES)" --methods "$(AGE_CLOCK_METHODS)"
 
 check-de-prerequisites:

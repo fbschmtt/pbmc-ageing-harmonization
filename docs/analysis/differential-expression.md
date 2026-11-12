@@ -225,11 +225,44 @@ report files into the DE directory. Named Nextflow subworkflows group splitting
 plus analysis, analysis of an existing split, and report rendering while
 retaining the separate single-cell and pseudobulk entry points.
 
-DE model failures are recorded in the manifest, and the workflow now fails when
-any requested model fails or when no model completes. To accept partial results
-when at least one model completes, run `make run-de ALLOW_PARTIAL_RESULTS=true`
-(or the corresponding `run-de-test` target). Per-type DE report-rendering
-failures also fail the workflow.
+## Model status and partial results
+
+Each cell type's `differential_expression/run_metadata.json` records the outcome
+of every requested fit. Model statuses differ from Nextflow task statuses:
+
+| Model status | Meaning |
+|---|---|
+| `complete` | The fit produced result tables for its requested contrasts. |
+| `skipped` | The available data cannot support the model, for example after inclusion filters or because the design is rank deficient. The record gives a `reason`. |
+| `failed` | Fitting raised an error, such as `LinAlgError: Singular matrix`. The record gives an `error`; it is not converted into an eligibility skip. |
+
+A per-type task can complete successfully after recording one failed fit and
+continuing its other models. Consequently, Nextflow's failed-task count is not
+the number of failed DE models. Inspect both levels with:
+
+```bash
+make workflow-failures OUTDIR=output
+```
+
+The collector writes a manifest with model outcomes in its work directory.
+By default, it then fails if any model failed or no model completed. Sibling
+analyses and available per-type reports continue, and the workflow records
+partial status; combined reporting cannot run without a successful collector.
+Independent report-rendering failures also make the workflow partial.
+
+To allow combined collection and reporting when at least one fit completes:
+
+```bash
+make run-de ALLOW_PARTIAL_RESULTS=true
+```
+
+The same option applies to `make run-all` and `make run-analysis`. Failed models
+retain their errors, successful results are published, and both the DE manifest
+and workflow summary remain `partial`. This option does not change inclusion
+filters, model designs, or fitting rules. Collection still fails when no model
+completes. Strict verification rejects partial results even when partial
+collection is allowed. See [failure inspection](../development/orchestration.md#failure-isolation)
+for archived summaries and Nextflow task-log commands.
 
 ## Per-type abundance in DE reports
 

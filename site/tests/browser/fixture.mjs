@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createRelease } from '../../scripts/release.mjs'
+import { writeCrossTypeFixture } from '../cross-type-fixture.mjs'
 import { writeSingleCellAssets } from '../single-cell-fixture.mjs'
 
 const bins = ['20-30', '30-40', '40-50', '50-60', '60-70', '70-80', '80-90']
@@ -142,7 +143,7 @@ export async function makeFixture(root) {
     join(dir, 'report.html'),
     '<!doctype html><title>Fixture DE report</title><h1>Fixture DE report</h1>',
   )
-  await write(join(trajectory, 'analysis_metadata.json'), JSON.stringify({ common_bins: bins }))
+  await writeCrossTypeFixture(trajectory)
   const header = [
     'gene',
     'cell_type',

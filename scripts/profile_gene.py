@@ -501,11 +501,16 @@ def _load_or_fit_deseq2_model(
 
 def _prepare_model_for_cache(dds) -> None:
     """Drop PyDESeq2 metadata that the fitted-profile cache does not consume."""
-    # Pandas' nullable StringArray is not portable across AnnData versions, so
-    # materialize those metadata columns as ordinary strings before writing.
-    for column in dds.obs.columns:
-        if isinstance(dds.obs[column].dtype, pd.StringDtype):
-            dds.obs[column] = dds.obs[column].astype(object)
+    # Categorical strings preserve missing values, including entirely missing
+    # columns, without passing pd.NA objects to HDF5's variable-length strings.
+    for frame in (dds.obs, dds.var):
+        for column in frame.columns:
+            values = frame[column]
+            if isinstance(values.dtype, pd.StringDtype) or (
+                pd.api.types.is_object_dtype(values.dtype)
+                and values.dropna().map(lambda value: isinstance(value, str)).all()
+            ):
+                frame[column] = pd.Categorical(values.astype(object))
     # PyDESeq2 stores trend_coeffs and vst_trend_coeffs as pandas Series in
     # ``uns``. AnnData cannot serialize Series values there. The profile cache
     # uses fitted values from ``var``, ``obsm``, ``layers``, and ``obs`` only.
@@ -664,76 +669,59 @@ def prepare_profile_model(*, input_path: Path, config_path: Path, cell_type: str
     return output_dir
 
 
-def _fit_profile(
-    *, input_path: Path, config_path: Path, cell_type: str, gene: str,
-    output_dir: Path, cpus: int, differential_expression_dir: Path | None = None,
-    prepared_model_dir: Path | None = None, render: bool = True,
-) -> Path:
+def _skip_profile_comparison(result, reason: str):
+    result.summary.update(status="skipped", reason=reason)
+    if hasattr(result, 'study_support') and result.study_support.empty:
+        result.study_support = pd.DataFrame([{
+            'study': None, 'age_bin': None, 'n_samples': 0,
+            'status': 'skipped', 'reason': reason,
+        }], columns=_STUDY_AGE_BIN_SUPPORT_COLUMNS)
+    return result
+
+
+def _fit_age_bin_profile(prepared, gene: str):
+    """Fit optional pooled bins, retaining independent per-study trajectories."""
     import statsmodels.api as sm
     from formulaic_contrasts import FormulaicContrasts
 
-    prepared = _prepare_profile_inputs(
-        input_path=input_path, config_path=config_path, cell_type=cell_type, gene=gene,
-    )
-    pipeline = prepared.pipeline
-    spec = prepared.spec
-    cell_type = prepared.cell_type
-    type_adata = prepared.type_adata
-    obs = prepared.obs
+    pipeline, spec = prepared.pipeline, prepared.spec
+    cell_type, type_adata, obs = prepared.cell_type, prepared.type_adata, prepared.obs
+    design_terms, required_terms = prepared.design_terms, prepared.required_terms
     all_samples_geometric_mean_total_counts = prepared.all_samples_geometric_mean_total_counts
-    metadata = prepared.metadata
-    exclusions = prepared.exclusions
-    studies = prepared.studies
-    fit_genes = prepared.fit_genes
-    counts = prepared.counts
-    model_metadata = prepared.model_metadata
-    design = prepared.design
-    design_matrix = prepared.design_matrix
-    numeric_design = prepared.numeric_design
-    design_terms = prepared.design_terms
-    required_terms = prepared.required_terms
-    varying_terms = prepared.varying_terms
     valid_all_type_totals = prepared.valid_all_type_totals
-    fit_diagnostics_rows = []
-    profile_output_root = output_dir
-    output_dir = output_dir / slugify(cell_type) / slugify(gene)
-    gene_position = fit_genes.get_loc(gene)
-
-    # Normalize to the geometric mean of the included samples' full-library
-    # totals, then fit log(normalized count + 1) with the same design matrix.
-    total_counts = pd.to_numeric(model_metadata["total_counts"], errors="coerce").to_numpy(
-        dtype=float,
+    bin_width = int(spec["age_trajectory"]["bin_width_years"])
+    coefficient_columns = ["term", "coefficient", "standard_error", "t_value", "p_value", "ci_lower", "ci_upper"]
+    result = SimpleNamespace(
+        summary={
+            "status": "skipped", "design": None, "n_samples": 0,
+            "bin_width_years": bin_width, "bins": [], "reference_bin": None,
+            "geometric_mean_total_counts": all_samples_geometric_mean_total_counts,
+            "normalization_n_samples": int(valid_all_type_totals.sum()),
+            "metadata_exclusions": {},
+        },
+        diagnostic=None, comparison=None,
+        samples=pd.DataFrame(columns=[*obs.columns, "pseudobulk_id", "age_bin", "raw_count",
+                                      "naive_normalized_count", "naive_log_expression",
+                                      "fitted_expression", "residual"]),
+        coefficients=pd.DataFrame(columns=coefficient_columns),
+        predictions=pd.DataFrame(columns=["age_bin", "age_bin_start", "age_bin_end", "n_samples",
+                                          "fitted_expression", "ci_lower", "ci_upper"]),
+        correlations=pd.DataFrame(columns=["gene", "pearson_r", "correlation_direction"]),
+        correlated_residuals=pd.DataFrame(columns=[*obs.columns, "pseudobulk_id", "age_bin", "target_gene",
+                                                   "target_gene_residual", "correlated_gene",
+                                                   "correlated_gene_residual", "pearson_r"]),
+        study_trajectories=pd.DataFrame(columns=_STUDY_AGE_BIN_COLUMNS),
+        study_support=pd.DataFrame(columns=_STUDY_AGE_BIN_SUPPORT_COLUMNS),
     )
-    if not np.isfinite(total_counts).all() or (total_counts <= 0).any():
-        raise ValueError("Naive normalization requires positive finite sample total_counts")
-    geometric_mean_total_counts = float(np.exp(np.mean(np.log(total_counts))))
-    naive_size_factors = total_counts / geometric_mean_total_counts
-    naive_normalized_count = counts[:, gene_position] / naive_size_factors
-    naive_log_expression = np.log(naive_normalized_count + 1.0)
-    naive_fit = sm.OLS(naive_log_expression, numeric_design).fit()
-    naive_residuals = np.asarray(naive_fit.resid, dtype=float)
-    fit_diagnostics_rows.append({
-        "model": "Naive linear age model",
-        "n_samples": len(naive_log_expression),
-        "residual_sd": _residual_sd(naive_residuals),
-        "residual_sd_scale": "log(normalized count + 1)",
-        "r_squared": float(naive_fit.rsquared),
-        "r_squared_label": "In-sample R²",
-        "fixed_effects_r_squared": np.nan,
-    })
-    naive_model_result = _ols_result_table(
-        naive_fit, design_matrix.columns.astype(str).tolist(),
-    )
-
     # Fit an age-bin model on all otherwise eligible samples, including those
     # below the configured continuous-age model's minimum age.
     age_bin_inclusion = {
         **spec["sample_inclusion"], "minimum_age_years_inclusive": -np.inf,
     }
     age_bin_metadata, age_bin_exclusions, _ = _prepare_metadata(obs, age_bin_inclusion)
+    result.summary["metadata_exclusions"] = age_bin_exclusions
     if age_bin_metadata.empty:
-        raise ValueError("No samples have valid metadata for the age-bin model")
-    bin_width = int(pipeline["differential_expression"]["age_trajectory"]["bin_width_years"])
+        return _skip_profile_comparison(result, "No samples have valid metadata for the age-bin model")
     age_bin_starts = (
         np.floor(age_bin_metadata["age"] / bin_width).astype(int) * bin_width
     )
@@ -748,7 +736,7 @@ def _fit_profile(
         )
         age_bin_genes = type_adata.var_names[age_bin_gene_mask]
         if gene not in age_bin_genes:
-            raise ValueError(
+            return _skip_profile_comparison(result,
                 f"Gene {gene!r} is not available in every study used by the age-bin model "
                 f"({', '.join(age_bin_studies)})"
             )
@@ -762,7 +750,7 @@ def _fit_profile(
         age_bin_counts = age_bin_counts[:, nonzero_age_bin_genes]
         age_bin_genes = age_bin_genes[nonzero_age_bin_genes]
         if gene not in age_bin_genes:
-            raise ValueError(f"Gene {gene!r} has zero counts in the age-bin model samples")
+            return _skip_profile_comparison(result, f"Gene {gene!r} has zero counts in the age-bin model samples")
         nonzero_age_bin_libraries = age_bin_counts.sum(axis=1) > 0
         if nonzero_age_bin_libraries.all():
             break
@@ -770,7 +758,7 @@ def _fit_profile(
             np.flatnonzero(nonzero_age_bin_libraries)
         ].copy()
         if age_bin_metadata.empty:
-            raise ValueError("All samples have zero counts over the age-bin model gene universe")
+            return _skip_profile_comparison(result, "All samples have zero counts over the age-bin model gene universe")
 
     observed_age_bins = sorted(
         age_bin_metadata["age_bin"].astype(str).unique(),
@@ -800,12 +788,6 @@ def _fit_profile(
         age_bin_model_metadata, age_bin_design,
     ).design_matrix
     age_bin_numeric_design = age_bin_design_matrix.to_numpy(dtype=float)
-    age_bin_rank = int(np.linalg.matrix_rank(age_bin_numeric_design))
-    if age_bin_rank < age_bin_numeric_design.shape[1] or len(age_bin_model_metadata) <= age_bin_rank:
-        raise ValueError(
-            f"Age-bin design {age_bin_design!r} is not estimable for "
-            f"{len(age_bin_model_metadata)} samples"
-        )
     age_bin_total_counts = pd.to_numeric(
         age_bin_model_metadata["total_counts"], errors="coerce",
     ).to_numpy(dtype=float)
@@ -818,6 +800,50 @@ def _fit_profile(
     age_bin_target_counts = age_bin_counts[:, age_bin_genes.get_loc(gene)]
     age_bin_normalized_counts = age_bin_target_counts / age_bin_size_factors
     age_bin_log_expression = np.log(age_bin_normalized_counts + 1.0)
+    study_trajectory_settings = pipeline["differential_expression"]["age_trajectory"]
+    study_age_bin_trajectories, study_age_bin_trajectory_support = (
+        _fit_study_age_bin_trajectories(
+            age_bin_model_metadata,
+            age_bin_log_expression,
+            minimum_samples_per_bin=int(
+                pipeline["differential_expression"][
+                    "study_comparison_minimum_samples_per_bin"
+                ]
+            ),
+            reference_bin_start_age=int(
+                study_trajectory_settings["reference_bin_start_age"]
+            ),
+            bin_width=bin_width,
+        )
+    )
+
+    result.summary.update({
+        "design": age_bin_design,
+        "bin_width_years": bin_width,
+        "bins": observed_age_bins,
+        "reference_bin": observed_age_bins[0],
+        "study_trajectory_minimum_samples_per_bin": int(
+            pipeline["differential_expression"][
+                "study_comparison_minimum_samples_per_bin"
+            ]
+        ),
+        "study_trajectory_reference_bin": (
+            f"{study_trajectory_settings['reference_bin_start_age']}-"
+            f"{int(study_trajectory_settings['reference_bin_start_age']) + bin_width}"
+        ),
+        "n_samples": len(age_bin_model_metadata),
+        "geometric_mean_total_counts": age_bin_geometric_mean,
+        "normalization_n_samples": int(valid_all_type_totals.sum()),
+        "metadata_exclusions": age_bin_exclusions,
+    })
+    result.study_trajectories = study_age_bin_trajectories
+    result.study_support = study_age_bin_trajectory_support
+    age_bin_rank = int(np.linalg.matrix_rank(age_bin_numeric_design))
+    if age_bin_rank < age_bin_numeric_design.shape[1] or len(age_bin_model_metadata) <= age_bin_rank:
+        return _skip_profile_comparison(result,
+            f"Age-bin design {age_bin_design!r} is not estimable for "
+            f"{len(age_bin_model_metadata)} samples"
+        )
     age_bin_fit = sm.OLS(age_bin_log_expression, age_bin_numeric_design).fit()
     age_bin_residuals = np.asarray(age_bin_fit.resid, dtype=float)
     # Exploratory gene-to-gene residual correlations under the categorical
@@ -880,7 +906,7 @@ def _fit_profile(
         pd.concat(age_bin_correlated_residuals, ignore_index=True)
         if age_bin_correlated_residuals else pd.DataFrame()
     )
-    fit_diagnostics_rows.append({
+    result.diagnostic = {
         "model": "Naive age-bin model",
         "n_samples": len(age_bin_log_expression),
         "residual_sd": _residual_sd(age_bin_residuals),
@@ -888,7 +914,7 @@ def _fit_profile(
         "r_squared": float(age_bin_fit.rsquared),
         "r_squared_label": "In-sample R²",
         "fixed_effects_r_squared": np.nan,
-    })
+    }
     age_bin_model_result = _ols_result_table(
         age_bin_fit, age_bin_design_matrix.columns.astype(str).tolist(),
     )
@@ -922,23 +948,25 @@ def _fit_profile(
         })
     age_bin_predictions = pd.DataFrame(age_bin_predictions)
 
-    study_trajectory_settings = pipeline["differential_expression"]["age_trajectory"]
-    study_age_bin_trajectories, study_age_bin_trajectory_support = (
-        _fit_study_age_bin_trajectories(
-            age_bin_model_metadata,
-            age_bin_log_expression,
-            minimum_samples_per_bin=int(
-                pipeline["differential_expression"][
-                    "study_comparison_minimum_samples_per_bin"
-                ]
-            ),
-            reference_bin_start_age=int(
-                study_trajectory_settings["reference_bin_start_age"]
-            ),
-            bin_width=bin_width,
-        )
+    result.summary['status'] = 'complete'
+    result.samples = age_bin_samples
+    result.coefficients = age_bin_model_result
+    result.predictions = age_bin_predictions
+    result.correlations = age_bin_top_correlations
+    result.correlated_residuals = age_bin_correlated_residuals
+    result.comparison = _exploratory_infant_adult_contrast(
+        age_bin_model_metadata, age_bin_design, observed_age_bins, age_bin_fit,
+        bin_width=bin_width,
     )
+    return result
 
+
+def _fit_study_slope_profile(prepared, naive_log_expression):
+    """Skip unsupported study-specific slopes without dropping the merged fit."""
+    import statsmodels.api as sm
+    from formulaic_contrasts import FormulaicContrasts
+
+    model_metadata, varying_terms = prepared.model_metadata, prepared.varying_terms
     # Allow study-specific age slopes with study intercepts. Study site is
     # omitted here because it is nested within study and would be redundant.
     slope_model_metadata = model_metadata.copy()
@@ -954,14 +982,25 @@ def _fit_profile(
     ).design_matrix
     slope_numeric_design = slope_design_matrix.to_numpy(dtype=float)
     slope_rank = int(np.linalg.matrix_rank(slope_numeric_design))
+    result = SimpleNamespace(
+        summary={"status": "complete", "design": slope_design, "studies": study_levels,
+                 "n_samples": len(slope_model_metadata)},
+        diagnostic=None,
+        residuals=np.full(len(model_metadata), np.nan),
+        coefficients=pd.DataFrame(columns=["term", "coefficient", "standard_error", "t_value",
+                                           "p_value", "ci_lower", "ci_upper", "parameter_role",
+                                           "study", "interpretation"]),
+        slopes=pd.DataFrame(columns=["study", "slope", "standard_error", "t_value", "p_value", "ci_lower", "ci_upper"]),
+        predictions=pd.DataFrame(columns=["study", "age", "fitted_expression"]),
+    )
     if slope_rank < slope_numeric_design.shape[1] or len(slope_model_metadata) <= slope_rank:
-        raise ValueError(
+        return _skip_profile_comparison(result,
             f"Study-slope design {slope_design!r} is not estimable for "
             f"{len(slope_model_metadata)} samples"
         )
     study_slope_fit = sm.OLS(naive_log_expression, slope_numeric_design).fit()
     study_slope_residuals = np.asarray(study_slope_fit.resid, dtype=float)
-    fit_diagnostics_rows.append({
+    result.diagnostic = {
         "model": "Naive age model with study-specific slopes",
         "n_samples": len(naive_log_expression),
         "residual_sd": _residual_sd(study_slope_residuals),
@@ -969,7 +1008,7 @@ def _fit_profile(
         "r_squared": float(study_slope_fit.rsquared),
         "r_squared_label": "In-sample R²",
         "fixed_effects_r_squared": np.nan,
-    })
+    }
     study_slope_model_result = _ols_result_table(
         study_slope_fit, slope_design_matrix.columns.astype(str).tolist(),
     )
@@ -1032,6 +1071,79 @@ def _fit_profile(
         study_slope_model_result, study_slope_result, study_levels,
     )
     study_slope_predictions = pd.concat(study_slope_lines, ignore_index=True)
+
+    result.residuals = study_slope_residuals
+    result.coefficients = study_slope_model_result
+    result.slopes = study_slope_result
+    result.predictions = study_slope_predictions
+    return result
+
+
+def _fit_profile(
+    *, input_path: Path, config_path: Path, cell_type: str, gene: str,
+    output_dir: Path, cpus: int, differential_expression_dir: Path | None = None,
+    prepared_model_dir: Path | None = None, render: bool = True,
+) -> Path:
+    import statsmodels.api as sm
+
+    prepared = _prepare_profile_inputs(
+        input_path=input_path, config_path=config_path, cell_type=cell_type, gene=gene,
+    )
+    spec = prepared.spec
+    cell_type = prepared.cell_type
+    metadata = prepared.metadata
+    exclusions = prepared.exclusions
+    studies = prepared.studies
+    fit_genes = prepared.fit_genes
+    counts = prepared.counts
+    model_metadata = prepared.model_metadata
+    design = prepared.design
+    design_matrix = prepared.design_matrix
+    numeric_design = prepared.numeric_design
+    varying_terms = prepared.varying_terms
+    fit_diagnostics_rows = []
+    profile_output_root = output_dir
+    output_dir = output_dir / slugify(cell_type) / slugify(gene)
+    gene_position = fit_genes.get_loc(gene)
+
+    # Normalize to the geometric mean of the included samples' full-library
+    # totals, then fit log(normalized count + 1) with the same design matrix.
+    total_counts = pd.to_numeric(model_metadata["total_counts"], errors="coerce").to_numpy(
+        dtype=float,
+    )
+    if not np.isfinite(total_counts).all() or (total_counts <= 0).any():
+        raise ValueError("Naive normalization requires positive finite sample total_counts")
+    geometric_mean_total_counts = float(np.exp(np.mean(np.log(total_counts))))
+    naive_size_factors = total_counts / geometric_mean_total_counts
+    naive_normalized_count = counts[:, gene_position] / naive_size_factors
+    naive_log_expression = np.log(naive_normalized_count + 1.0)
+    naive_fit = sm.OLS(naive_log_expression, numeric_design).fit()
+    naive_residuals = np.asarray(naive_fit.resid, dtype=float)
+    fit_diagnostics_rows.append({
+        "model": "Naive linear age model",
+        "n_samples": len(naive_log_expression),
+        "residual_sd": _residual_sd(naive_residuals),
+        "residual_sd_scale": "log(normalized count + 1)",
+        "r_squared": float(naive_fit.rsquared),
+        "r_squared_label": "In-sample R²",
+        "fixed_effects_r_squared": np.nan,
+    })
+    naive_model_result = _ols_result_table(
+        naive_fit, design_matrix.columns.astype(str).tolist(),
+    )
+
+    age_bin = _fit_age_bin_profile(prepared, gene)
+    if age_bin.diagnostic is not None:
+        fit_diagnostics_rows.append(age_bin.diagnostic)
+
+    study_slope = _fit_study_slope_profile(prepared, naive_log_expression)
+    if study_slope.diagnostic is not None:
+        fit_diagnostics_rows.append(study_slope.diagnostic)
+    slope_model_metadata = model_metadata.copy()
+    study_levels = categorical_levels("study", slope_model_metadata["study"])
+    slope_model_metadata["study"] = pd.Categorical(
+        slope_model_metadata["study"], categories=study_levels,
+    )
 
     # Keep study baselines as fixed effects while partially pooling age slopes
     # with a random slope deviation for each study. Centering age makes the
@@ -1235,13 +1347,7 @@ def _fit_profile(
         cpus=cpus, prepared_model_dir=prepared_model_dir,
     )
     gene_result = age_results.loc[[gene]].reset_index(names="gene")
-    exploratory_age_comparison = _exploratory_infant_adult_contrast(
-        age_bin_model_metadata,
-        age_bin_design,
-        observed_age_bins,
-        age_bin_fit,
-        bin_width=bin_width,
-    )
+    exploratory_age_comparison = age_bin.comparison
     if exploratory_age_comparison is not None:
         adult_age_log2_fold_change = _finite_or_none(
             gene_result["log2FoldChange"].iloc[0]
@@ -1262,7 +1368,7 @@ def _fit_profile(
     age_result_by_gene = age_results[age_result_columns].copy()
     age_result_by_gene.index = age_result_by_gene.index.astype(str)
     age_result_by_gene.index.name = "gene"
-    age_bin_top_correlations = age_bin_top_correlations.merge(
+    age_bin.correlations = age_bin.correlations.merge(
         age_result_by_gene.reset_index(), on="gene", how="left", validate="one_to_one"
     )
 
@@ -1366,7 +1472,7 @@ def _fit_profile(
     gene_samples["naive_log_expression"] = naive_log_expression
     gene_samples["naive_fitted"] = np.asarray(naive_fit.fittedvalues, dtype=float)
     gene_samples["naive_residual"] = np.asarray(naive_fit.resid, dtype=float)
-    gene_samples["study_slope_residual"] = study_slope_residuals
+    gene_samples["study_slope_residual"] = study_slope.residuals
     gene_samples["mixed_model_residual"] = mixed_model_residuals
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1392,26 +1498,26 @@ def _fit_profile(
         output_dir / "exploratory_infant_adult_comparison.csv", index=False,
     )
     naive_model_result.to_csv(output_dir / "naive_linear_model_result.csv", index=False)
-    age_bin_samples.to_csv(output_dir / "naive_age_bin_samples.csv", index=False)
-    age_bin_model_result.to_csv(output_dir / "naive_age_bin_model_result.csv", index=False)
-    age_bin_predictions.to_csv(output_dir / "naive_age_bin_predictions.csv", index=False)
-    study_age_bin_trajectories.to_csv(
+    age_bin.samples.to_csv(output_dir / "naive_age_bin_samples.csv", index=False)
+    age_bin.coefficients.to_csv(output_dir / "naive_age_bin_model_result.csv", index=False)
+    age_bin.predictions.to_csv(output_dir / "naive_age_bin_predictions.csv", index=False)
+    age_bin.study_trajectories.to_csv(
         output_dir / "study_age_bin_trajectories.csv", index=False,
     )
-    study_age_bin_trajectory_support.to_csv(
+    age_bin.study_support.to_csv(
         output_dir / "study_age_bin_trajectory_support.csv", index=False,
     )
-    age_bin_top_correlations.to_csv(
+    age_bin.correlations.to_csv(
         output_dir / "age_bin_residual_correlations.csv", index=False,
     )
-    age_bin_correlated_residuals.to_csv(
+    age_bin.correlated_residuals.to_csv(
         output_dir / "age_bin_correlated_gene_residuals.csv", index=False,
     )
-    study_slope_model_result.to_csv(
+    study_slope.coefficients.to_csv(
         output_dir / "naive_study_slope_model_result.csv", index=False,
     )
-    study_slope_result.to_csv(output_dir / "naive_study_slopes.csv", index=False)
-    study_slope_predictions.to_csv(
+    study_slope.slopes.to_csv(output_dir / "naive_study_slopes.csv", index=False)
+    study_slope.predictions.to_csv(
         output_dir / "naive_study_slope_predictions.csv", index=False,
     )
     cross_cell_type_trajectories.to_csv(
@@ -1478,30 +1584,8 @@ def _fit_profile(
         "input": str(input_path),
         "design": design,
         "geometric_mean_total_counts": geometric_mean_total_counts,
-        "age_bin_model": {
-            "design": age_bin_design,
-            "bin_width_years": bin_width,
-            "bins": observed_age_bins,
-            "reference_bin": observed_age_bins[0],
-            "study_trajectory_minimum_samples_per_bin": int(
-                pipeline["differential_expression"][
-                    "study_comparison_minimum_samples_per_bin"
-                ]
-            ),
-            "study_trajectory_reference_bin": (
-                f"{study_trajectory_settings['reference_bin_start_age']}-"
-                f"{int(study_trajectory_settings['reference_bin_start_age']) + bin_width}"
-            ),
-            "n_samples": len(age_bin_model_metadata),
-            "geometric_mean_total_counts": age_bin_geometric_mean,
-            "normalization_n_samples": int(valid_all_type_totals.sum()),
-            "metadata_exclusions": age_bin_exclusions,
-        },
-        "study_slope_model": {
-            "design": slope_design,
-            "studies": study_levels,
-            "n_samples": len(slope_model_metadata),
-        },
+        "age_bin_model": age_bin.summary,
+        "study_slope_model": study_slope.summary,
         "mixed_model": mixed_model_diagnostics,
         "n_samples": len(model_metadata),
         "n_studies": len(studies),

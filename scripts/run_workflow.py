@@ -9,9 +9,11 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TextIO
 from uuid import uuid4
 
 from scripts.render_report_index import render_report_index
+from scripts.workflow_diagnostics import failure_details, format_failures
 
 # These are declared output contracts, resolved only inside current task work directories.
 APPLICATION_SUMMARIES = {
@@ -45,15 +47,17 @@ def summarize_trace(trace: Path, *, returncode: int, command: list[str]) -> dict
             continue
         if document.get('status') in {'partial', 'failed', 'error'}:
             partial_artifacts.append({'process': row['name'], 'path': str(path), 'status': document['status']})
+    details = failure_details(records)
     return {
         'schema_version': 1, 'created_utc': datetime.now(timezone.utc).isoformat(),
-        'status': 'failed' if returncode else ('partial' if failed or partial_artifacts else 'complete'),
+        'status': 'failed' if returncode else ('partial' if failed or partial_artifacts or details['analysis_failures'] else 'complete'),
         'exitcode': returncode, 'command': command, 'tasks': records, 'failed_tasks': failed,
         'partial_artifacts': partial_artifacts,
+        **details,
     }
 
 
-def run_workflow(command: list[str], outdir: Path, name: str) -> int:
+def run_workflow(command: list[str], outdir: Path, name: str, *, output: TextIO | None = None) -> int:
     run_id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid4().hex[:8]
     record_dir = outdir.resolve() / 'provenance/workflows' / f'{name}-{run_id}'
     record_dir.mkdir(parents=True)
@@ -62,7 +66,8 @@ def run_workflow(command: list[str], outdir: Path, name: str) -> int:
     run_position = command.index('run')
     log = record_dir / 'nextflow.log'
     invocation = [*command[:run_position], '-log', str(log), *command[run_position:], '-with-trace', str(trace)]
-    result = subprocess.run(invocation, check=False)
+    result = subprocess.run(invocation, check=False, stdout=output,
+                            stderr=subprocess.STDOUT if output is not None else None)
     summary = summarize_trace(trace, returncode=result.returncode, command=invocation)
     summary.update(name=name, run_id=run_id)
     if log.is_file():
@@ -81,9 +86,11 @@ def run_workflow(command: list[str], outdir: Path, name: str) -> int:
     latest = outdir / f'.workflow_summary.{run_id}.tmp'
     latest.write_text(document)
     latest.replace(outdir / 'workflow_summary.json')
-    print(f"Workflow {summary['status']}: {record_dir / 'summary.json'}", flush=True)
+    print(f"Workflow {summary['status']}: {record_dir / 'summary.json'}", file=output, flush=True)
+    if summary['status'] != 'complete':
+        print(format_failures(summary), file=output, flush=True)
     if finalization_error:
-        print(f'Index finalization failed: {finalization_error}', file=sys.stderr)
+        print(f'Index finalization failed: {finalization_error}', file=output if output is not None else sys.stderr)
     return result.returncode or (1 if finalization_error else 0)
 
 

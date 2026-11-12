@@ -42,6 +42,29 @@ and prediction points load only for the selected model. The across-cell-types
 option shows donor-matched mean predictions when available. New or updated
 clock outputs must be exported before they appear in the site.
 
+### Compare age associations across cell types
+
+Open **Differential expression → Across cell types** to browse genes ranked by
+how many cell types have a significant omnibus age-bin test. The denominator is
+the number of finite tests for that gene; untested results remain distinct from
+nonsignificant results. Selecting a gene shows each type's FDR, its largest signed
+age-bin effect and the age bin for that contrast, with links to the ordinary gene
+and cell-type views. These effects are relative to the displayed reference bin,
+not linear-age effects per decade.
+
+Trajectory agreement and mean shared patterns come from the existing combined
+report tables. Agreement uses the stricter clustering threshold and eligible
+shared-bin profiles. Standardized shapes emphasize pattern, not effect size; pattern charts share a
+vertical scale so lower-amplitude means are not stretched to fill their panels.
+Recurrence across cell types is distinct from replication across studies;
+the existing DE views retain their per-study support counts. This page does not
+add WGCNA or new scientific fits.
+
+Refresh the export with `make site-export` to include the new assets from existing
+combined results. Older releases without those optional summaries show an
+unavailable message. Gene details load on selection; exporting and testing the
+new page do not require refitting DE or trajectories.
+
 ### Run and refresh the site
 
 The Docker-backed Make targets provide the locked Node environment; a local
@@ -99,13 +122,20 @@ artifacts without replacing the local export. Browser tests build an isolated
 synthetic release and do not change the export. They check downloaded CSV
 filenames and exact contents, decompression failures and fallback, matching
 volcano sizes on desktop and mobile, model values, and PNG image loading.
-Useful frontend checks are:
+Start with the affected unit file and, for browser behavior, one matching
+journey:
 
 ```bash
-make site-test
-make site-test-browser
-make site-test-workflow
+make site-test-unit SITE_TEST_FILE=src/app/navigation.test.ts
+make site-test-browser-focus SITE_BROWSER_FILTER="preloads combined age results"
 ```
+
+Choose the journey that exercises your change; names are in
+[`journeys.mjs`](../../site/tests/browser/journeys.mjs). For shared release/data
+contracts or changes spanning views, use `make site-test site-test-browser`.
+Use `make site-test-workflow` only when the contract between existing scientific
+artifacts and the atlas needs coverage. The [test map](../development/test-map.md#frontend-and-export)
+lists the relevant files and what each check proves.
 
 Use `make site-test-browser-navigation` for navigation and visualization
 journeys or `make site-test-browser-release` for release and loading behavior.

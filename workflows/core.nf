@@ -10,6 +10,8 @@ include { WRITE_RUN_MANIFEST } from '../modules/manifest'
 workflow CORE {
     take:
     root
+    merge_single_cell
+    validated_config
 
     main:
     def pipeline = new groovy.json.JsonSlurper().parse(root.resolve('config/pipeline.json'))
@@ -84,9 +86,9 @@ workflow CORE {
     def provenance_input_labels = provenance_inputs.unique().collect { input ->
         root.relativize(input).toString()
     }.join('\t')
-    def merge_config_ch = channel.value(file(root.resolve('config/pipeline.json'), checkIfExists: true))
+    def merge_config_ch = validated_config
     def obs_schema_ch = channel.value(file(root.resolve(pipeline.obs_schema as String), checkIfExists: true))
-    def expression_ch = channel.fromList(direct_inputs).mix(CONVERT_RDS(channel.fromList(conversion_inputs)))
+    def expression_ch = validated_config.flatMap { direct_inputs }.mix(CONVERT_RDS(validated_config.flatMap { conversion_inputs }))
 
     PREPARE_CELLS(expression_ch, dependency_ch)
     HARMONIZE(PREPARE_CELLS.out.prepared, dependency_ch)
@@ -95,7 +97,7 @@ workflow CORE {
 
     def single_cell_outputs = channel.empty()
     def merged_outputs = MERGE_PSEUDOBULKS.out.merged
-    if (params.merge_single_cell || pipeline.merge.single_cell.enabled) {
+    if (merge_single_cell || pipeline.merge.single_cell.enabled) {
         MERGE_SINGLE_CELLS(HARMONIZE.out.harmonized.map { _study_id, expression, _report -> expression }.collect(), merge_config_ch)
         single_cell_outputs = MERGE_SINGLE_CELLS.out.merged.map { _name, expression, _report -> expression }
         merged_outputs = merged_outputs.mix(MERGE_SINGLE_CELLS.out.merged)

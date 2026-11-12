@@ -10,7 +10,8 @@ NXF ?= nextflow
 WORK_DIR ?= work
 OUTDIR ?= output
 RUN_CLOCKS ?= false
-RUN_BENCHMARK ?= false
+# Empty uses the mode default: benchmark in full, skip in analysis.
+RUN_BENCHMARK ?=
 # IMAGE_TAG remains an optional common override for release builds. By default,
 # each image is tagged from only the files copied by its own Docker build context.
 IMAGE_TAG ?=
@@ -80,7 +81,7 @@ TEST_DATA_CONTAINER_PREREQS = image-python
 PYTHON_CONTAINER_PREREQS := $(if $(findstring docker,$(NF_PROFILE)),image-python,)
 MERGE_ARGS = $(if $(filter true 1 yes,$(MERGE_SINGLE_CELL)),--merge_single_cell,)
 
-.PHONY: run-analysis-test check-cell-type-analysis-prerequisites
+.PHONY: run-analysis run-analysis-test check-cell-type-analysis-prerequisites
 
 .PHONY: help install lint workflow-lint docs-check docs-update test-unit verify run-all-test \
 image-site image-site-browser \

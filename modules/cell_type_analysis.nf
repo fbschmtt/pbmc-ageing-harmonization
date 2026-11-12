@@ -115,6 +115,9 @@ process RENDER_CELL_TYPE_REPORT {
     ${fail}
     mkdir -p ${slug}
     cp -aL analysis_result/. ${slug}/
+    if [ "${has_merged_de}" = "true" ]; then
+      cp merged_de_input ${slug}/received_merged_de.csv
+    fi
     printf '%s\n' '<html>Cell report stub</html>' > ${slug}/report.html
     printf '%s\n' '{}' > ${slug}/executed.ipynb
     """

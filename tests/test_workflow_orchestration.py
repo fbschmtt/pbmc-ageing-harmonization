@@ -52,7 +52,7 @@ def test_index_failure_does_not_hide_the_original_workflow_failure(tmp_path, mon
 
 
 @pytest.mark.parametrize('target', [
-    'run-test', 'run-de-test', 'run-cell-type-analysis-test', 'run-integration-benchmark-test',
+    'run-test', 'run-analysis-test', 'run-de-test', 'run-cell-type-analysis-test', 'run-integration-benchmark-test',
     'run-cell-type-test', 'render-cell-type-test', 'split-cell-types-test',
     'check-age-clock-synthetic-test', 'check-synthetic-de-results', 'check-integration-benchmark-test',
 ])
@@ -71,9 +71,10 @@ def test_composed_suite_has_one_nextflow_invocation_and_no_direct_scientific_bat
         ['make', '-n', 'run-all-test', 'OUTDIR=output/custom-contract-test', 'STUDIES=cima'],
         cwd=ROOT, text=True, capture_output=True, check=True,
     )
-    assert result.stdout.count('nextflow run pipeline.nf') == 1
+    assert result.stdout.count('nextflow run main.nf') == 1
     assert result.stdout.count('docker build -f docker/python.Dockerfile') == 1
-    assert 'nextflow run main.nf' not in result.stdout
+    assert '--mode full' in result.stdout
+    assert result.stdout.index('nextflow run main.nf') < result.stdout.index('scripts.check_workflow_inventory')
     assert 'python -m pbmc_pipeline.synthetic_de' not in result.stdout
     assert 'python scripts/profile_top_age_genes.py' not in result.stdout
     assert 'output/test' not in result.stdout
@@ -170,3 +171,32 @@ def test_clock_aggregate_keeps_provenance_when_every_type_is_ineligible(tmp_path
     assert summary['timestamp_utc']
     assert len(summary['eligibility_skipped_cell_types']) == 1
     assert summary['failed_cell_types'] == []
+
+
+@pytest.mark.parametrize(('target', 'mode', 'extra'), [
+    ('run', 'harmonization', []),
+    ('run-test', 'harmonization', []),
+    ('run-all', 'full', []),
+    ('run-all-test', 'full', []),
+    ('run-analysis', 'analysis', ['RUN_BENCHMARK=true']),
+    ('run-analysis-test', 'analysis', []),
+])
+def test_make_routes_modes_to_the_shared_main_entry(target, mode, extra):
+    result = subprocess.run(
+        ['make', '-n', target, 'OUTDIR=output/custom-contract-test', 'STUDIES=cima', *extra],
+        cwd=ROOT, text=True, capture_output=True, check=True,
+    )
+    invocation = next(line for line in result.stdout.splitlines() if 'nextflow run main.nf' in line)
+    assert f'--mode {mode}' in invocation
+    if mode == 'analysis':
+        assert '--merged_input "output/custom-contract-test/harmonization/merged/single_cell_merged.h5ad"' in result.stdout
+        assert '--pseudobulk_input "output/custom-contract-test/harmonization/merged/pseudobulk_merged.h5ad"' in result.stdout
+    assert ('-resume' in result.stdout) == (not target.endswith('-test'))
+
+
+def test_full_make_run_allows_explicit_benchmark_opt_out():
+    result = subprocess.run(
+        ['make', '-n', 'run-all', 'RUN_BENCHMARK=false', 'NF_PROFILE=standard'],
+        cwd=ROOT, text=True, capture_output=True, check=True,
+    )
+    assert '--run_benchmark "false"' in result.stdout

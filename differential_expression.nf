@@ -1,5 +1,7 @@
 nextflow.enable.dsl = 2
 
+include { VALIDATE_CONFIGURATION } from './modules/configuration'
+
 include {
     RENDER_PER_TYPE_DIFFERENTIAL_EXPRESSION_REPORTS
     ANALYSE_CELL_TYPE_DE_DIAGNOSTICS
@@ -9,7 +11,8 @@ include { DIFFERENTIAL_EXPRESSION } from './workflows/differential_expression'
 
 workflow {
     def root = file(params.project_dir)
-    def pipeline_config = channel.value(file(root.resolve('config/pipeline.json'), checkIfExists: true))
+    VALIDATE_CONFIGURATION(channel.value(file(root.resolve('config/pipeline.json'), checkIfExists: true)), ['differential_expression', 'cell_type_analysis'], [:], [])
+    def pipeline_config = VALIDATE_CONFIGURATION.out.config
     def de_report_template = channel.value(
         file(root.resolve('reports/differential_expression_report.py'), checkIfExists: true)
     )

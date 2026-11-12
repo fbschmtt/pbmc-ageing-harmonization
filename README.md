@@ -43,12 +43,17 @@ Run the studies whose full inputs you have acquired. For example:
 make run-all STUDIES=cima
 ```
 
-This composes the scientific stages in one Nextflow run. Optional age clocks and
-the integration benchmark can be enabled with `RUN_CLOCKS=true RUN_BENCHMARK=true`.
+This runs the full pipeline, including integration benchmarking, in one Nextflow
+run. Benchmark methods run one at a time. On a constrained machine, use
+`RUN_BENCHMARK=false` and run `make run-integration-benchmark` later. Age clocks
+are optional: enable them with `RUN_CLOCKS=true`.
 
 Replace `cima` with your study ID or a comma-separated list. This runs
 harmonization, pseudobulk differential expression, focused gene profiles, and
-cell-type reports. Completed production tasks can be resumed on later runs.
+cell-type reports, plus the integration benchmark. Completed production tasks can
+be resumed on later runs. Use `make run` for harmonization only, or
+`make run-analysis` for downstream analyses from existing merged files. See
+[workflow modes](docs/development/orchestration.md#entry-points) for details.
 The [input guide](docs/inputs/README.md) explains how to check that a local file
 is a full study input rather than a development subset.
 
@@ -67,6 +72,11 @@ Open `output/index.html` in a browser to navigate the reports.
 See [the report guide](docs/analysis/reports.md) for reading and rerendering
 reports, and [the DE guide](docs/analysis/differential-expression.md) for model
 assumptions and interpretation.
+
+If a run reports failed or ignored tasks, use `make workflow-failures` to see
+task errors, affected DE models, and log paths. See
+[inspecting an incomplete run](docs/getting-started.md#inspect-an-incomplete-run)
+for partial-result options and verification behavior.
 
 ## Explore the interactive atlas
 

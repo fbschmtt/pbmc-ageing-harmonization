@@ -1,5 +1,6 @@
 import { useEffect, useReducer } from 'react'
 import type { PathwaySet } from '../data/pathways'
+import { CrossTypePage } from '../features/crossType/CrossTypePage'
 import { DifferentialPage } from '../features/differential/DifferentialPage'
 import { Explorer } from '../features/explorer/Explorer'
 import { PipelineComposition } from '../features/composition/PipelineComposition'
@@ -146,6 +147,10 @@ export function App() {
       {page === 'overview' && (
         <OverviewPage onNavigate={navigate} summary={release?.context?.singleCellSummary} />
       )}
+      {page === 'crossType' && <CrossTypePage preferredGene={session.selectedGene}
+        onSelectGene={(gene) => dispatch({ type: 'selectGene', gene })} onOpenGene={openGene}
+        onOpenCellType={(gene, cellType) => { dispatch({ type: 'selectGene', gene, cellType }); navigate('differential') }}
+        onOpenTrajectories={() => navigate('trajectories')} />}
       {page === 'differential' && (
         <DifferentialPage
           loadingPreviewPath={loadingPreviewPath}

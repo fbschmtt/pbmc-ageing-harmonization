@@ -1,4 +1,5 @@
 export type Page =
+  | 'crossType'
   | 'differential'
   | 'overview'
   | 'datasets'
@@ -24,6 +25,7 @@ export const navigation: NavPage[] = [
   { id: 'composition', label: 'Composition' },
   { id: 'differential', label: 'By cell type' },
   { id: 'genes', label: 'By gene' },
+  { id: 'crossType', label: 'Across cell types' },
   { id: 'singleCell', label: 'Cell states' },
   { id: 'pathways', label: 'Pathways' },
   // Retain the former matrix hash as a route alias, but do not show it as a
@@ -47,6 +49,7 @@ export const navigationItems: NavigationItem[] = [
     pages: [
       { id: 'differential', label: 'By cell type', description: 'Compare genes within a cell type' },
       { id: 'genes', label: 'By gene', description: 'Compare one gene across cell types' },
+      { id: 'crossType', label: 'Across cell types', description: 'Shared age-bin signals and trajectory patterns' },
     ],
   },
   pageItem('singleCell'),

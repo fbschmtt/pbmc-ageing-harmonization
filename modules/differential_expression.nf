@@ -54,7 +54,7 @@ process RUN_CELL_TYPE_PSEUDOBULK_DIFFERENTIAL_EXPRESSION {
     """
     ${fail}
     mkdir -p cell_type_result/${slug}
-    printf '%s\n' '{"cell_type":"Test type","analysis_mode":"test_only"}' > cell_type_result/${slug}/run_metadata.json
+    printf '%s\n' '{"cell_type":"${cell_type}","analysis_mode":"test_only"}' > cell_type_result/${slug}/run_metadata.json
     printf 'gene,log2FoldChange\nTEST_GENE,0.25\n' > cell_type_result/${slug}/merged.csv
     """
 }

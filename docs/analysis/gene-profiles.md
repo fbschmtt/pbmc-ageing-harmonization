@@ -80,11 +80,23 @@ run `make run-gene-profile-synthetic-test`. It writes the pseudobulk fixture to
 a notebook. The composed `make run-all-test` checks the same planted gene using
 the synthetic input shared with DE and clocks.
 
+If the optional age-bin or study-specific slope design is not estimable, the
+profile retains the merged DESeq2 and continuous-age results. Its
+`fit_summary.json` records the comparison's `status` and skip `reason`; the
+report displays that reason and omits unavailable fits and plots. The existing
+CSV paths remain present with column headers and no fitted rows for skipped
+comparisons. Independent per-study age-bin means remain available when their
+own sample requirements are met. Invalid input counts and failures of the
+required merged model still fail the profile.
+
 `make profile-top-age-genes` applies the same detailed report to the top age-DE
 genes from each cell type's merged model results. Ranking uses finite adjusted
 p-values in `<outdir>/analysis/per_type/<cell-type>/differential_expression/merged.csv`; it
 profiles up to ten genes per type by default, using the merged pseudobulk H5AD.
 The report paths follow the same `analysis/per_gene/<cell-type>/<gene>/` layout as
 the single-gene target.
+When `run_metadata.json` records a skipped merged model, the selector emits an
+empty gene selection and logs the model's skip reason. A missing `merged.csv`
+without that explicit skip remains an error.
 
 See [workflow testing](../development/testing.md#de-test-fixtures) for synthetic DE coverage and test-mode inclusion rules.
